@@ -610,20 +610,7 @@ function doLogin(){
     setTimeout(()=>{if(DB.config?.colores)aplicarColoresSistema();},1500);
     actualizarLogoSidebar();
     showPage('dashboard');
-    // Actualizar indicador Firebase al entrar
-    setTimeout(()=>{
-      const d=document.getElementById('fb-dot');
-      const t=document.getElementById('fb-text');
-      if(d&&t){
-        if(window._fbActivo){
-          d.style.background='#22c55e';
-          t.textContent='✓ Firebase';
-        } else {
-          d.style.background='#ef4444';
-          t.textContent='Sin conexión';
-        }
-      }
-    },500);
+    // El indicador Firebase se actualiza solo cuando fbCargar termina
     setTimeout(checkAlerts,1500);
     setTimeout(_verificarBackupAdmin,2500);
     setTimeout(_verificarCumpleanosHoy,3500);
@@ -9053,7 +9040,7 @@ async function fbGuardar(key){
 
 async function fbCargar(){
   const keys=['config','config_logo','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
-    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','log'];
+    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','presencia','cumpleanosMensajes','log'];
   let loaded=false;
   for(const key of keys){
     try {
@@ -9084,11 +9071,10 @@ async function fbCargar(){
           } else {
             DB[key]=val;
           }
-          // Verificar que el config no sea de otro sistema
+          // Verificar empresa
           if(key==='config'&&DB.config.empresa){
-            const emp=DB.config.empresa.toUpperCase();
-            if(emp.includes('JEYCO AUTO')||emp.includes('CHINITO')||emp.includes('FAYRE')){
-              console.warn('Config de otro sistema detectado, limpiando empresa...');
+            const _emp=DB.config.empresa.toUpperCase();
+            if(_emp.includes('MAEDIG')||_emp.includes('CHINITO')||_emp.includes('FAYRE')){
               DB.config.empresa='JEYCO AUTO';
               fbGuardar('config').catch(()=>{});
             }
@@ -9106,48 +9092,26 @@ window._fbActivo = false;
 window._fbCargado = false;
 window.sDB = function(key){
   try { _sDB_orig(key); } catch(e){}
-  const dot=document.getElementById('fb-dot');
-  const txt=document.getElementById('fb-text');
-  if(!window._fbActivo){
-    if(dot)dot.style.background='#ef4444';
-    if(txt)txt.textContent='Sin Firebase';
-    _mostrarErrorFirebase();
-    return;
+  if(window._fbActivo){
+    const dot=document.getElementById('fb-dot');
+    const txt=document.getElementById('fb-text');
+    if(dot) dot.style.background='#f59e0b';
+    if(txt) txt.textContent='Guardando...';
+    fbGuardar(key).then(()=>{
+      if(dot) dot.style.background='#22c55e';
+      if(txt) txt.textContent='✓ Guardado';
+    }).catch(()=>{
+      if(dot) dot.style.background='#ef4444';
+      if(txt) txt.textContent='Error al guardar';
+    });
   }
-  if(dot)dot.style.background='#f59e0b';
-  if(txt)txt.textContent='Guardando...';
-  fbGuardar(key).then(()=>{
-    if(dot)dot.style.background='#22c55e';
-    if(txt)txt.textContent='✓ Guardado';
-    clearTimeout(window._fbTxtTimer);
-    window._fbTxtTimer=setTimeout(()=>{const t=document.getElementById('fb-text');if(t)t.textContent='✓ Firebase';},2500);
-  }).catch((e)=>{
-    if(dot)dot.style.background='#ef4444';
-    if(e&&(e.code==='permission-denied'||e.code==='unauthenticated')){
-      if(txt)txt.textContent='Sesion expirada';
-      setTimeout(()=>{if(confirm('Tu sesion expiro. Volver a iniciar sesion?'))doLogout();},400);
-    } else {
-      if(txt)txt.textContent='Error al guardar';
-      _mostrarErrorFirebase();
-    }
-  });
 };
-
-function _mostrarErrorFirebase(){
-  if(window._fbErrorVisible)return;
-  window._fbErrorVisible=true;
-  const ov=document.createElement('div');
-  ov.id='fb-error-modal';
-  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px';
-  ov.innerHTML='<div style="background:#fff;border-radius:16px;padding:32px;max-width:420px;width:100%;text-align:center"><div style="font-size:56px;margin-bottom:12px">warning</div><div style="font-size:18px;font-weight:800;color:#dc2626;margin-bottom:8px">Sin conexion a Firebase</div><p style="font-size:14px;color:#64748b;margin-bottom:20px">No se pudo guardar. Contacte al administrador.</p><div style="background:#fef2f2;border:2px solid #fecaca;border-radius:10px;padding:14px;margin-bottom:20px"><div style="font-size:12px;color:#94a3b8;margin-bottom:4px">Llamar al administrador:</div><a href="tel:8498579190" style="font-size:24px;font-weight:900;color:#dc2626;text-decoration:none">849-857-9190</a></div><button onclick="document.getElementById('fb-error-modal').remove();window._fbErrorVisible=false;" style="padding:10px 28px;background:#0f172a;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer">Entendido</button></div>';
-  document.body.appendChild(ov);
-}
 
 // ══ FIREBASE LISTENERS TIEMPO REAL ══
 function fbActivarListeners(){
   const keys=['config','config_logo','users','vehiculos','clientes','suplidores',
     'ventas','cotizaciones','caja','gastos','nomina','nominaPagos',
-    'gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','presencia','cumpleanosMensajes'];
+    'gastosVehiculos','cxp','cxc','autorizaciones'];
   
   keys.forEach(key=>{
     _fbDB.collection(_fbCol).doc(key).onSnapshot(snap=>{
@@ -9262,22 +9226,16 @@ window.forzarSincronizacion = async function(){
 };
 
 window.fbIniciar = async function(){
-  const setStatus=(color,msg)=>{
-    const d=document.getElementById('fb-dot');
-    const t=document.getElementById('fb-text');
-    if(d)d.style.background=color;
-    if(t)t.textContent=msg;
-  };
-  setStatus('#f59e0b','Conectando...');
+  const dot=document.getElementById('fb-dot');
+  const txt=document.getElementById('fb-text');
+  const setStatus=(color,msg)=>{if(dot)dot.style.background=color;if(txt)txt.textContent=msg;};
+  setStatus('#f59e0b','Sincronizando...');
   try {
     const loaded = await fbCargar();
     window._fbActivo = true;
     if(loaded){
       setStatus('#22c55e','✓ Firebase');
       window._fbCargado=true;
-      // Si la página activa es usuarios, re-renderizar
-      const _apUsuarios=document.querySelector('.page.active');
-      if(_apUsuarios&&_apUsuarios.id==='page-usuarios')setTimeout(renderUsuarios,100);
       // Activar listeners de tiempo real
       if(typeof fbActivarListeners==='function') fbActivarListeners();
       // Actualizar sidebar con logo de Firebase
@@ -9317,3 +9275,4 @@ window.fbIniciar = async function(){
 </script>
 </body>
 </html>
+
