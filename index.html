@@ -613,6 +613,7 @@ function doLogin(){
     setTimeout(checkAlerts,1500);
     setTimeout(_verificarBackupAdmin,2500);
     setTimeout(_verificarCumpleanosHoy,3500);
+    if(typeof _iniciarPresenciaGlobal==='function')_iniciarPresenciaGlobal();
   };
   // Mostrar bienvenida con datos del localStorage primero
   _actualizarWelcome();
@@ -699,6 +700,41 @@ function guardarCambioContrasena(){
   sDB('users');
   closeModal();
   toast('Contraseña actualizada correctamente ✓','success');
+}
+function _iniciarPresenciaGlobal(){
+  if(!currentUser)return;
+  try{
+    if(_presenciaBC)_presenciaBC.close();
+    _presenciaBC=new BroadcastChannel('fayre_presencia');
+    _presenciaBC.onmessage=function(e){
+      if(e.data&&e.data.uid){
+        if(!DB.presencia)DB.presencia={};
+        if(e.data.ts===0){
+          delete DB.presencia[e.data.uid];
+          const p=_leerPresenciaGlobal();delete p[e.data.uid];localStorage.setItem('fayre_presencia',JSON.stringify(p));
+        }else{
+          DB.presencia[e.data.uid]=e.data.ts;
+          _escribirPresenciaGlobal(e.data.uid,e.data.ts);
+        }
+        const pU=document.getElementById('page-usuarios');
+        if(pU&&pU.classList.contains('active')){clearTimeout(window._presenciaRefreshTimer);window._presenciaRefreshTimer=setTimeout(renderUsuarios,400);}
+      }
+    };
+  }catch(e){console.warn('BroadcastChannel no disponible:',e.message);}
+  _sincPresencia();
+  _pingPresencia();
+  if(_presenciaGlobalInterval)clearInterval(_presenciaGlobalInterval);
+  _presenciaGlobalInterval=setInterval(()=>{
+    if(!currentUser){clearInterval(_presenciaGlobalInterval);return;}
+    _sincPresencia();
+    _pingPresencia();
+  },10000);
+  window.addEventListener('beforeunload',()=>{
+    if(currentUser){
+      const p=_leerPresenciaGlobal();delete p[currentUser.id];localStorage.setItem('fayre_presencia',JSON.stringify(p));
+      if(_presenciaBC)try{_presenciaBC.postMessage({uid:currentUser.id,ts:0});}catch{}
+    }
+  },{once:true});
 }
 function doLogout(){currentUser=null;document.getElementById('login-screen').style.display='flex';document.getElementById('app').style.display='none';document.getElementById('li-user').value='';document.getElementById('li-pass').value='';}
 
@@ -2322,7 +2358,7 @@ function guardarPermisosUsuarioConfig(i){
   if(currentUser?.role!=='admin'){toast('Solo el administrador puede editar usuarios','error');return;}
   const u=DB.users[i];
   if(!u)return;
-  const MODS_IDS=['dashboard','informes','suplidores','inventario','gastosVeh','cxp','clientes','ventas','cxc','gastos','nomina','caja','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','cuentas','cumpleanos','backup'];
+  const MODS_IDS=['dashboard','informes','suplidores','inventario','gastosVeh','cxp','clientes','ventas','cxc','gastos','nomina','caja','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','cuentas','cumpleanos'];
   const ALERT_IDS=['SIN_VIN','SIN_COSTO','CXP','CXC_VENCIDA','CXC','SIN_VENDER_6M','SIN_VENDER_1A','DOCS'];
   if(u.role!=='admin'){
     const mods=MODS_IDS.filter(id=>document.getElementById(`cfg-mod-${i}-${id}`)?.checked);
@@ -2351,6 +2387,7 @@ function guardarPermisosUsuarioConfig(i){
     if(_rm[_pid])setTimeout(_rm[_pid],100);
   }
 }
+
 function renderUsuarios(){
   if(currentUser?.role!=='admin'){
     document.getElementById('page-usuarios').innerHTML='<div style="text-align:center;padding:48px;color:var(--gray)">🔒 Solo el administrador puede gestionar usuarios</div>';
@@ -2441,17 +2478,25 @@ function renderUsuarios(){
       <div class="card-title">👥 Usuarios del sistema</div>
       <div class="table-wrap"><table>
         <thead><tr>
-          <th>Nombre</th><th>Usuario</th><th>Rol</th>
+          <th>Nombre</th><th>Usuario</th><th>Rol</th><th>Estado</th>
           <th>Módulos</th><th>Acciones</th>
         </tr></thead>
         <tbody>${DB.users.map((u,i)=>{
           const rolLabel=_getRolLabel(u.role);
           const mods=u.role==='admin'?['Dashboard','Nueva Venta','Ventas','Inventario','Clientes','Suplidores','Gastos','Nómina','Informes','Caja','CxC','CxP','Usuarios','Configuración']:(u.modulos||[]);
           const modsLabel=mods.map(id=>{const m=MODS.find(x=>x.id===id);return m?m.label:id;});
+          const ahora=Date.now();
+          let presGlobal={};try{presGlobal=JSON.parse(localStorage.getItem('fayre_presencia')||'{}');}catch{}
+          const ult=presGlobal[u.id]||(DB.presencia||{})[u.id]||0;
+          const enLinea=ult>0&&(ahora-ult)<30000;
+          const estadoHTML=enLinea
+            ?'<span style="display:inline-flex;align-items:center;gap:5px;background:#dcfce7;color:#16a34a;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:700"><span style="width:7px;height:7px;border-radius:50%;background:#16a34a;display:inline-block"></span>En línea</span>'
+            :'<span style="display:inline-flex;align-items:center;gap:5px;background:#f1f5f9;color:#64748b;border-radius:20px;padding:3px 10px;font-size:11px;font-weight:600"><span style="width:7px;height:7px;border-radius:50%;background:#94a3b8;display:inline-block"></span>Desconectado</span>';
           return `<tr>
             <td style="font-weight:600">${escHtml(u.nombre)}</td>
             <td class="mono" style="font-size:12px">${escHtml(u.username)}</td>
             <td><span class="badge ${u.role==='admin'?'badge-purple':'badge-blue'}">${escHtml(rolLabel)}</span></td>
+            <td>${estadoHTML}</td>
             <td style="max-width:320px">
               <div style="display:flex;flex-wrap:wrap;gap:3px">
                 ${modsLabel.map(m=>`<span class="badge badge-green" style="font-size:10px">${escHtml(m)}</span>`).join('')}
@@ -2572,7 +2617,8 @@ function editarUsuario(i){
     {id:'cxc',label:'📬 Cuentas por Cobrar'},{id:'gastos',label:'🏢 Gastos Empresa'},
     {id:'nomina',label:'👷 Nómina'},{id:'caja',label:'💳 Caja'},
     {id:'cotizaciones',label:'📋 Cotizaciones'},{id:'autorizaciones',label:'📝 Autorización Compra'},
-    {id:'seguros',label:'🛡️ Seguros'},{id:'facturaExterna',label:'🧾 Facturas Externas'},{id:'alertas',label:'🔔 Alertas'},{id:'verSaldoCaja',label:'💰 Ver Saldo Caja'},{id:'chat',label:'💬 Chat Interno'},{id:'cuentas',label:'🏦 Cuentas'},{id:'cumpleanos',label:'🎂 Cumpleaños'},{id:'backup',label:'💾 Backup'},
+    {id:'seguros',label:'🛡️ Seguros'},{id:'facturaExterna',label:'🧾 Facturas Externas'},{id:'alertas',label:'🔔 Alertas'},{id:'verSaldoCaja',label:'💰 Ver Saldo Caja'},{id:'chat',label:'💬 Chat Interno'},
+    {id:'cuentas',label:'🏦 Cuentas'},{id:'cumpleanos',label:'🎂 Cumpleaños'},
   ];
   const mods=u.modulos||[];
   const perms=u.permisos||{};
@@ -2609,11 +2655,11 @@ function editarUsuario(i){
       </div>
       <div style="font-size:11px;font-weight:700;margin-bottom:6px;color:var(--gray);text-transform:uppercase">✏️ Permisos de Editar por módulo:</div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:10px">
-        ${[{k:'editarVentas',l:'Ventas'},{k:'editarClientes',l:'Clientes'},{k:'editarSuplidores',l:'Suplidores'},{k:'editarGastos',l:'Gastos'},{k:'editarNomina',l:'Nómina'},{k:'editarGastosVeh',l:'Gastos Vehículo'},{k:'editarCobros',l:'Cobros'},{k:'editarVehiculos',l:'Vehículos'}].map(p=>`<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;padding:4px 6px;background:#eff6ff;border-radius:5px;border:1px solid #bfdbfe"><input type="checkbox" id="u-perm-${p.k}" ${(perms[p.k]||u.role==='admin')?'checked':''} style="accent-color:var(--blue)"> ${p.l}</label>`).join('')}
+        ${[{k:'editarVentas',l:'Ventas'},{k:'editarClientes',l:'Clientes'},{k:'editarSuplidores',l:'Suplidores'},{k:'editarGastos',l:'Gastos'},{k:'editarNomina',l:'Nómina'},{k:'editarGastosVeh',l:'Gastos Vehículo'},{k:'editarCobros',l:'CxC Cobros'},{k:'editarCxp',l:'CxP Pagos'},{k:'editarVehiculos',l:'Vehículos'},{k:'editarCaja',l:'Caja'},{k:'editarCotizaciones',l:'Cotizaciones'},{k:'editarAutorizaciones',l:'Autorizaciones'},{k:'editarSeguros',l:'Seguros'},{k:'editarFacturas',l:'Facturas Ext.'}].map(p=>`<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;padding:4px 6px;background:#eff6ff;border-radius:5px;border:1px solid #bfdbfe"><input type="checkbox" id="u-perm-${p.k}" ${(perms[p.k]||u.role==='admin')?'checked':''} style="accent-color:var(--blue)"> ${p.l}</label>`).join('')}
       </div>
       <div style="font-size:11px;font-weight:700;margin-bottom:6px;color:var(--gray);text-transform:uppercase">🗑 Permisos de Borrar por módulo:</div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px">
-        ${[{k:'borrarVentas',l:'Ventas'},{k:'borrarClientes',l:'Clientes'},{k:'borrarSuplidores',l:'Suplidores'},{k:'borrarGastos',l:'Gastos'},{k:'borrarNomina',l:'Nómina'},{k:'borrarGastosVeh',l:'Gastos Vehículo'},{k:'borrarCobros',l:'Cobros'},{k:'borrarVehiculos',l:'Vehículos'},{k:'borrarCxP',l:'CxP'},{k:'borrarCaja',l:'Caja'},{k:'borrarCotizaciones',l:'Cotizaciones'},{k:'borrarSeguros',l:'Seguros'},{k:'borrarFacturas',l:'Facturas'},{k:'borrarCuentas',l:'Cuentas'},{k:'borrarCumpleanos',l:'Cumpleanios'}].map(p=>`<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;padding:4px 6px;background:#fff1f2;border-radius:5px;border:1px solid #fecdd3"><input type="checkbox" id="u-perm-${p.k}" ${(perms[p.k]||u.role==='admin')?'checked':''} style="accent-color:var(--red)"> ${p.l}</label>`).join('')}
+        ${[{k:'borrarVentas',l:'Ventas'},{k:'borrarClientes',l:'Clientes'},{k:'borrarSuplidores',l:'Suplidores'},{k:'borrarGastos',l:'Gastos'},{k:'borrarNomina',l:'Nómina'},{k:'borrarGastosVeh',l:'Gastos Vehículo'},{k:'borrarCobros',l:'CxC Cobros'},{k:'borrarCxp',l:'CxP Pagos'},{k:'borrarVehiculos',l:'Vehículos'},{k:'borrarCaja',l:'Caja'},{k:'borrarCotizaciones',l:'Cotizaciones'},{k:'borrarAutorizaciones',l:'Autorizaciones'},{k:'borrarSeguros',l:'Seguros'},{k:'borrarFacturas',l:'Facturas Ext.'}].map(p=>`<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;padding:4px 6px;background:#fff1f2;border-radius:5px;border:1px solid #fecdd3"><input type="checkbox" id="u-perm-${p.k}" ${(perms[p.k]||u.role==='admin')?'checked':''} style="accent-color:var(--red)"> ${p.l}</label>`).join('')}
       </div>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="guardarUsuario(${i})">💾 Actualizar</button>`);
@@ -8767,6 +8813,8 @@ window.addEventListener('load', ()=>{
     fbCargar().then(()=>{
       window._fbActivo=true;
       window._fbCargado=true;
+      const _ap=document.querySelector('.page.active');
+      if(_ap&&_ap.id==='page-usuarios')setTimeout(renderUsuarios,200);
       if(typeof fbActivarListeners==='function') fbActivarListeners();
       if(btn){btn.textContent='Ingresar al sistema →';btn.disabled=false;}
       // Actualizar indicador Firebase
@@ -9085,7 +9133,7 @@ function _mostrarErrorFirebase(){
 function fbActivarListeners(){
   const keys=['config','config_logo','users','vehiculos','clientes','suplidores',
     'ventas','cotizaciones','caja','gastos','nomina','nominaPagos',
-    'gastosVehiculos','cxp','cxc','autorizaciones'];
+    'gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','presencia','cumpleanosMensajes'];
   
   keys.forEach(key=>{
     _fbDB.collection(_fbCol).doc(key).onSnapshot(snap=>{
