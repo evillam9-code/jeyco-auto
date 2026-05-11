@@ -610,6 +610,20 @@ function doLogin(){
     setTimeout(()=>{if(DB.config?.colores)aplicarColoresSistema();},1500);
     actualizarLogoSidebar();
     showPage('dashboard');
+    // Actualizar indicador Firebase al entrar
+    setTimeout(()=>{
+      const d=document.getElementById('fb-dot');
+      const t=document.getElementById('fb-text');
+      if(d&&t){
+        if(window._fbActivo){
+          d.style.background='#22c55e';
+          t.textContent='✓ Firebase';
+        } else {
+          d.style.background='#ef4444';
+          t.textContent='Sin conexión';
+        }
+      }
+    },500);
     setTimeout(checkAlerts,1500);
     setTimeout(_verificarBackupAdmin,2500);
     setTimeout(_verificarCumpleanosHoy,3500);
@@ -9248,10 +9262,13 @@ window.forzarSincronizacion = async function(){
 };
 
 window.fbIniciar = async function(){
-  const dot=document.getElementById('fb-dot');
-  const txt=document.getElementById('fb-text');
-  const setStatus=(color,msg)=>{if(dot)dot.style.background=color;if(txt)txt.textContent=msg;};
-  setStatus('#f59e0b','Sincronizando...');
+  const setStatus=(color,msg)=>{
+    const d=document.getElementById('fb-dot');
+    const t=document.getElementById('fb-text');
+    if(d)d.style.background=color;
+    if(t)t.textContent=msg;
+  };
+  setStatus('#f59e0b','Conectando...');
   try {
     const loaded = await fbCargar();
     window._fbActivo = true;
