@@ -9259,8 +9259,8 @@ window.fbIniciar = async function(){
       setStatus('#22c55e','✓ Firebase');
       window._fbCargado=true;
       // Si la página activa es usuarios, re-renderizar
-      const _activePage=document.querySelector('.page.active');
-      if(_activePage&&_activePage.id==='page-usuarios')setTimeout(renderUsuarios,100);
+      const _apUsuarios=document.querySelector('.page.active');
+      if(_apUsuarios&&_apUsuarios.id==='page-usuarios')setTimeout(renderUsuarios,100);
       // Activar listeners de tiempo real
       if(typeof fbActivarListeners==='function') fbActivarListeners();
       // Actualizar sidebar con logo de Firebase
