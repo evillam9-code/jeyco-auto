@@ -413,8 +413,9 @@ let DB={
 };
 function sDB(k){ss(k,DB[k]);}
 
-const fmt=n=>(DB.config.moneda||'RD$')+' '+parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
-const fmtUSD=n=>'USD '+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const _fmtN=(n,loc,opts)=>{try{return n.toLocaleString(loc,opts);}catch(e){return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');}};
+const fmt=n=>(DB.config.moneda||'RD$')+' '+_fmtN(parseFloat(n||0),'es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtUSD=n=>'USD '+_fmtN(parseFloat(n||0),'en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const today=()=>new Date().toISOString().split('T')[0];
 const fmtDate=d=>{if(!d)return '—';try{return new Date(d+'T12:00:00').toLocaleDateString('es-DO',{day:'2-digit',month:'short',year:'numeric'})}catch{return d}};
 const uid=()=>'id'+Date.now()+Math.random().toString(36).slice(2,6);
@@ -615,12 +616,35 @@ function doLogin(){
     setTimeout(_verificarBackupAdmin,2500);
     setTimeout(_verificarCumpleanosHoy,3500);
     if(typeof _iniciarPresenciaGlobal==='function')_iniciarPresenciaGlobal();
+    // Fix 2D — si es admin, publicar nueva versión silenciosamente (marca que este código es el actual)
+    if(user.role==='admin'){
+      setTimeout(async function(){
+        if(typeof publicarNuevaVersion==='function'&&window._fbActivo){
+          await publicarNuevaVersion(true);
+        }
+      },3000);
+    }
   };
   // Mostrar bienvenida con datos del localStorage primero
   _actualizarWelcome();
+  // Helper — refrescar currentUser desde DB.users (permisos/módulos actualizados de Firebase)
+  const _refrescarCurrentUser=()=>{
+    if(!currentUser)return;
+    const fresh=DB.users.find(u=>u.id===currentUser.id);
+    if(fresh){
+      currentUser=Object.assign({},currentUser,{
+        modulos:fresh.modulos,
+        permisos:fresh.permisos,
+        role:fresh.role,
+        activo:fresh.activo,
+        nombre:fresh.nombre
+      });
+    }
+  };
   ws.classList.add('show');
   // Si Firebase ya precargó al arrancar, ir directo al dashboard
   if(window._fbCargado){
+    _refrescarCurrentUser();
     _actualizarWelcome();
     setTimeout(_entrarDashboard, 2000);
   } else if(typeof fbIniciar==='function'){
@@ -632,6 +656,7 @@ function doLogin(){
     fbIniciar().then(()=>{
       _localFbCargado=true;
       clearTimeout(_fbTimeout);
+      _refrescarCurrentUser(); // ← permisos actualizados de Firebase
       _actualizarWelcome();
       setTimeout(_entrarDashboard, 1500);
     }).catch(()=>{
@@ -661,7 +686,18 @@ function canDo(action){
   // Roles con acceso total (dueño, gerente, etc.)
   const rolesAdmin=['admin','dueño','dueno','gerente','owner'];
   if(rolesAdmin.some(r=>currentUser.role?.toLowerCase()===r.toLowerCase()))return true;
-  return (currentUser.permisos||{})[action]===true;
+  const p=currentUser.permisos||{};
+  // Permiso general
+  if(p[action]===true)return true;
+  // Si piden 'editar', aceptar también si tiene CUALQUIER permiso de editar por módulo
+  if(action==='editar'){
+    return Object.keys(p).some(k=>k.startsWith('editar')&&p[k]===true);
+  }
+  // Si piden 'eliminar', aceptar también si tiene CUALQUIER permiso de borrar por módulo
+  if(action==='eliminar'){
+    return Object.keys(p).some(k=>k.startsWith('borrar')&&p[k]===true);
+  }
+  return false;
 }
 function aplicarPermisosNav(){
   if(!currentUser)return;
@@ -1454,21 +1490,13 @@ function eliminarGastoVeh(gid,vid){if(currentUser?.role!=='admin'&&!canDo('elimi
 function imprimirGastosVehiculo(vid){
   const v=DB.vehiculos.find(x=>x.id===vid);if(!v)return;
   const gastos=(DB.gastosVehiculos||[]).filter(g=>g.vehiculoId===vid);
-  const tasaActual=DB.config.tasaCambio||60;
-  const tasaStr=prompt('💱 Ingresa la tasa del dólar del día (RD$ por 1 USD):',tasaActual);
-  if(tasaStr===null)return;
-  const tasa=parseFloat(tasaStr)||tasaActual;
-  // Usar función general con gastos de este vehículo
-  _generarPDFGastosVeh(gastos,tasa,'',vid,true);
+  // Cada gasto USD usa su propia tasa — no se pide más
+  const tasaRespaldo=parseFloat(DB.config.tasaCambio||60);
+  _generarPDFGastosVeh(gastos,tasaRespaldo,'',vid,true);
 }
 
 
 // ══ CAJA ══
-function actualizarTasaCaja(){
-  const val=parseFloat(document.getElementById('caja-tasa-input')?.value||0);
-  if(val>0){DB.config.tasaCambio=val;sDB('config');renderCaja();toast('Tasa actualizada ✓','success');}
-  else toast('Ingrese una tasa válida','error');
-}
 function renderCaja(){
   const mes=document.getElementById('caja-mes')?.value||today().slice(0,7);
   const tab=document.getElementById('caja-tab')?.value||'TODO';
@@ -1609,18 +1637,6 @@ function renderCaja(){
           <div style="font-size:10px;color:#94a3b8;margin-top:4px">RD$ + (USD × ${tasa.toLocaleString('es-DO',{minimumFractionDigits:2})})</div>
         </div>
 
-      </div>
-    </div>
-
-    <!-- Tasa editable + vista -->
-    <div style="background:var(--amber2);border:1px solid var(--amber);border-radius:8px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <span style="font-size:13px">💱 <strong>Tasa USD:</strong></span>
-      <div style="display:flex;align-items:center;gap:6px">
-        <span style="font-size:13px;color:var(--gray)">1 USD =</span>
-        <input type="number" id="caja-tasa-input" value="${tasa}" step="0.01" min="1"
-          style="width:90px;padding:5px 8px;border:1.5px solid var(--amber);border-radius:6px;font-size:13px;font-weight:700;font-family:'Outfit',sans-serif">
-        <span style="font-size:13px;color:var(--gray)">RD$</span>
-        <button class="btn btn-amber btn-sm" onclick="actualizarTasaCaja()">✓ Aplicar</button>
       </div>
     </div>
 
@@ -2710,7 +2726,7 @@ function guardarUsuario(idx){
   if(idx===undefined&&DB.users.find(u=>u.username===user)){toast('El usuario ya existe','error');return;}
   const MODS_IDS=['dashboard','informes','suplidores','inventario','gastosVeh','cxp','clientes','ventas','cxc','gastos','nomina','caja','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','cuentas','cumpleanos','backup'];
   const nuevosMods=MODS_IDS.filter(m=>{const el=document.getElementById('u-mod-'+m);return el&&el.checked;});
-  const permKeys=['editar','eliminar','imprimir','pdf','editarVentas','editarClientes','editarSuplidores','editarGastos','editarNomina','editarGastosVeh','editarCobros','editarVehiculos','borrarVentas','borrarClientes','borrarSuplidores','borrarGastos','borrarNomina','borrarGastosVeh','borrarCobros','borrarVehiculos','editarCxP','editarCaja','editarCotizaciones','editarAutorizaciones','editarSeguros','editarFacturas','editarCuentas','editarCumpleanos','borrarCxP','borrarCaja','borrarCotizaciones','borrarAutorizaciones','borrarSeguros','borrarFacturas','borrarCuentas','borrarCumpleanos'];
+  const permKeys=['editar','eliminar','imprimir','pdf','editarVentas','editarClientes','editarSuplidores','editarGastos','editarNomina','editarGastosVeh','editarCobros','editarVehiculos','borrarVentas','borrarClientes','borrarSuplidores','borrarGastos','borrarNomina','borrarGastosVeh','borrarCobros','borrarVehiculos','editarCxp','editarCaja','editarCotizaciones','editarAutorizaciones','editarSeguros','editarFacturas','editarCuentas','editarCumpleanos','borrarCxp','borrarCaja','borrarCotizaciones','borrarAutorizaciones','borrarSeguros','borrarFacturas','borrarCuentas','borrarCumpleanos'];
   const nuevosPerms={};permKeys.forEach(k=>{const el=document.getElementById('u-perm-'+k);if(el)nuevosPerms[k]=el.checked;});
   if(idx!==undefined){DB.users[idx].nombre=nombre;DB.users[idx].username=user;DB.users[idx].role=document.getElementById('u-role').value;if(pass)DB.users[idx].password=pass;DB.users[idx].modulos=nuevosMods;DB.users[idx].permisos=nuevosPerms;if(currentUser.id===DB.users[idx].id){currentUser=DB.users[idx];}}
   else DB.users.push({id:uid(),nombre,username:user,password:pass,role:document.getElementById('u-role').value,activo:true,modulos:nuevosMods,permisos:nuevosPerms});
@@ -3322,7 +3338,6 @@ function renderConfig(){
       <div class="form-row c2"><div class="form-field"><label>Moneda</label><select id="cf-moneda"><option value="RD$" ${c.moneda==='RD$'?'selected':''}>RD$ - Pesos Dominicanos</option><option value="USD" ${c.moneda==='USD'?'selected':''}>USD - Dólares US</option></select></div></div>
       <div class="form-row c2">
         <div class="form-field"><label>Prefijo Código de Vehículo</label><input type="text" id="cf-prefijo" value="${escHtml(c.prefijoCodigo||'')}" placeholder="Se toma del nombre del negocio" maxlength="5"><div style="font-size:11px;color:var(--gray);margin-top:4px">Ej: F → F-001 | Vacío = primera letra del negocio</div></div>
-        <div class="form-field"><label>Tasa de Cambio (RD$ por 1 USD)</label><input type="number" id="cf-tasa" value="${c.tasaCambio||60}" step="0.01"></div>
       </div>
       <div class="btn-row" style="margin-top:12px"><button class="btn btn-primary" onclick="guardarInfoNegocio()">💾 Guardar</button></div>
     </div>
@@ -3886,7 +3901,6 @@ function guardarConfig(){
   DB.config.moneda=document.getElementById('cf-moneda').value;
   DB.config.rnc=document.getElementById('cf-rnc').value;
   DB.config.prefijoCodigo=document.getElementById('cf-prefijo').value.trim();
-  DB.config.tasaCambio=parseFloat(document.getElementById('cf-tasa').value||60);
   DB.config.responsable=document.getElementById('cf-responsable')?.value.trim()||'';
   DB.config.observacionRecibo=document.getElementById('cf-obs-recibo')?.value.trim()||'';
   const props=[];document.querySelectorAll('[id^="cf-prop-"]').forEach(inp=>{const v=inp.value.trim();if(v)props.push(v);});DB.config.propietarios=props;
@@ -4063,7 +4077,7 @@ function renderGastosVeh(){
         </div>
         <div style="display:flex;gap:6px;align-items:flex-end">
           <button class="btn btn-secondary btn-sm" onclick="limpiarFiltrosGastosVeh()">&#8635;</button>
-          <button class="btn btn-secondary btn-sm" onclick="exportarGastosVehPDF()">PDF</button>
+          <button class="btn btn-sm" style="background:var(--navy);color:#fff" onclick="exportarHojaCostos()">📄 Hoja de Costos</button>
         </div>
       </div>
     </div>
@@ -4073,17 +4087,17 @@ function renderGastosVeh(){
       <div class="card" style="margin-bottom:0;border-top:3px solid var(--green)">
         <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--gray);margin-bottom:10px">🇩🇴 Gastos en Pesos (RD$)</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">
-          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Total</div><div style="font-size:15px;font-weight:800;color:var(--navy)">${totalRD.toLocaleString('es-DO',{minimumFractionDigits:2})}</div></div>
-          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pagado</div><div style="font-size:15px;font-weight:800;color:var(--green)">${pagadoRD.toLocaleString('es-DO',{minimumFractionDigits:2})}</div></div>
-          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pendiente</div><div style="font-size:15px;font-weight:800;color:var(--red)">${pendRD.toLocaleString('es-DO',{minimumFractionDigits:2})}</div></div>
+          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Total</div><div style="font-size:15px;font-weight:800;color:var(--navy)">${fmt(totalRD)}</div></div>
+          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pagado</div><div style="font-size:15px;font-weight:800;color:var(--green)">${fmt(pagadoRD)}</div></div>
+          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pendiente</div><div style="font-size:15px;font-weight:800;color:var(--red)">${fmt(pendRD)}</div></div>
         </div>
       </div>
       <div class="card" style="margin-bottom:0;border-top:3px solid var(--blue)">
         <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:var(--gray);margin-bottom:10px">🇺🇸 Gastos en Dólares (USD)</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">
-          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Total</div><div style="font-size:15px;font-weight:800;color:var(--navy)">$${totalUSD.toLocaleString('en-US',{minimumFractionDigits:2})}</div></div>
-          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pagado</div><div style="font-size:15px;font-weight:800;color:var(--green)">$${pagadoUSD.toLocaleString('en-US',{minimumFractionDigits:2})}</div></div>
-          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pendiente</div><div style="font-size:15px;font-weight:800;color:var(--red)">$${pendUSD.toLocaleString('en-US',{minimumFractionDigits:2})}</div></div>
+          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Total</div><div style="font-size:15px;font-weight:800;color:var(--navy)">${fmtUSD(totalUSD)}</div></div>
+          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pagado</div><div style="font-size:15px;font-weight:800;color:var(--green)">${fmtUSD(pagadoUSD)}</div></div>
+          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pendiente</div><div style="font-size:15px;font-weight:800;color:var(--red)">${fmtUSD(pendUSD)}</div></div>
         </div>
       </div>
     </div>
@@ -4258,7 +4272,14 @@ function guardarNuevoGastoVeh(){
   const abono=parseFloat((document.getElementById('ngv-abono').value||'0').replace(/,/g,''));
   const pendiente=factura-abono;
   const moneda=document.getElementById('ngv-moneda').value;
-  const tasaUsada=moneda==='USD'?parseFloat(document.getElementById('ngv-tasa')?.value||DB.config.tasaCambio||60):parseFloat(DB.config.tasaCambio||60);
+  const tasaRaw=parseFloat(document.getElementById('ngv-tasa')?.value||0);
+  if(moneda==='USD'&&(!tasaRaw||tasaRaw<=0)){
+    toast('La tasa de cambio es obligatoria para gastos en USD','error');
+    const el=document.getElementById('ngv-tasa');
+    if(el){el.style.border='2px solid var(--red)';el.focus();setTimeout(()=>el.style.border='',3000);}
+    return;
+  }
+  const tasaUsada=moneda==='USD'?tasaRaw:parseFloat(DB.config.tasaCambio||60);
   const bancoVal=document.getElementById('ngv-banco')?.value||'';
   const cuentaVal=document.getElementById('ngv-cuenta')?.value||'';
   const _vRef=DB.vehiculos.find(x=>x.id===vid);
@@ -4349,7 +4370,7 @@ function confirmarAbonoGastoVeh(i){
 }
 
 function editarGastoVeh(gid){
-  if(currentUser?.role!=='admin'){toast('Solo el administrador puede editar','error');return;}
+  if(currentUser?.role!=='admin'&&!canDo('editar')){toast('No tienes permiso para editar','error');return;}
   const gastos=DB.gastosVehiculos||[];
   const i=gastos.findIndex(g=>g.id===gid);
   if(i<0)return;
@@ -4378,12 +4399,20 @@ function editarGastoVeh(gid){
       <div class="form-field"><label>Tipo de Gasto</label>
         <select id="egv-tipo">${tiposGasto.map(t=>`<option ${t===g.tipo?'selected':''}>${t}</option>`).join('')}</select>
       </div>
+      <div class="form-field"><label>Cuenta de Salida</label>
+        <select id="egv-cuenta">${cuentas.map(c=>`<option ${c===g.cuenta?'selected':''}>${escHtml(c)}</option>`).join('')}</select>
+      </div>
+    </div>
     <div class="form-row c3">
       <div class="form-field"><label>Moneda</label>
-        <select id="egv-moneda"><option value="RD$" ${(g.moneda||'RD$')==='RD$'?'selected':''}>RD$</option><option value="USD" ${g.moneda==='USD'?'selected':''}>USD</option></select>
+        <select id="egv-moneda" onchange="document.getElementById('egv-tasa-wrap').style.display=this.value==='USD'?'block':'none'">
+          <option value="RD$" ${(g.moneda||'RD$')==='RD$'?'selected':''}>RD$ — Pesos</option>
+          <option value="USD" ${g.moneda==='USD'?'selected':''}>USD — Dólares</option>
+        </select>
       </div>
-      <div class="form-field"><label>Cuenta Salida</label>
-        <select id="egv-cuenta">${cuentas.map(c=>`<option ${c===g.cuenta?'selected':''}>${escHtml(c)}</option>`).join('')}</select>
+      <div class="form-field" id="egv-tasa-wrap" style="display:${g.moneda==='USD'?'block':'none'}">
+        <label>Tasa de Cambio (RD$ x USD)</label>
+        <input type="number" id="egv-tasa" value="${g.tasaCambio||DB.config.tasaCambio||60}" step="0.01">
       </div>
       <div class="form-field"><label>Fecha</label>
         <input type="date" id="egv-fecha" value="${g.fecha||today()}">
@@ -4391,11 +4420,16 @@ function editarGastoVeh(gid){
     </div>
     <div class="form-row c3">
       <div class="form-field"><label>Monto Factura</label>
-        <input type="number" id="egv-factura" value="${g.montoFactura||0}" step="0.01">
+        <input type="text" id="egv-factura" value="${fmtMoneyDisplay(g.montoFactura||0)}" oninput="fmtMoneyInput(this);calcPendienteEGVeh()" placeholder="0.00">
       </div>
       <div class="form-field"><label>Monto Pagado</label>
-        <input type="number" id="egv-pagado" value="${g.montoPagado||0}" step="0.01">
+        <input type="text" id="egv-pagado" value="${fmtMoneyDisplay(g.montoPagado||0)}" oninput="fmtMoneyInput(this);calcPendienteEGVeh()" placeholder="0.00">
       </div>
+      <div class="form-field"><label>Pendiente</label>
+        <input type="text" id="egv-pendiente" value="${fmtMoneyDisplay(Math.max(0,(g.montoFactura||0)-(g.montoPagado||0)))}" readonly style="background:#f8fafc;font-weight:700;color:var(--red)">
+      </div>
+    </div>
+    <div class="form-row c2">
       <div class="form-field"><label>Fecha de Pago</label>
         <input type="date" id="egv-fechapago" value="${g.fechaPago||''}">
       </div>
@@ -4404,11 +4438,27 @@ function editarGastoVeh(gid){
      <button class="btn btn-primary" onclick="guardarEditGastoVeh(${i})">💾 Actualizar</button>`);
 }
 
+function calcPendienteEGVeh(){
+  const f=parseFloat((document.getElementById('egv-factura')?.value||'0').replace(/,/g,''));
+  const a=parseFloat((document.getElementById('egv-pagado')?.value||'0').replace(/,/g,''));
+  const p=document.getElementById('egv-pendiente');
+  if(p)p.value=fmtMoneyDisplay(Math.max(0,f-a));
+}
+
 function guardarEditGastoVeh(i){
-  if(currentUser?.role!=='admin'){toast('Solo el administrador puede editar','error');return;}
-  const factura=parseFloat(document.getElementById('egv-factura').value||0);
-  const pagado=parseFloat(document.getElementById('egv-pagado').value||0);
+  if(currentUser?.role!=='admin'&&!canDo('editar')){toast('No tienes permiso para editar','error');return;}
+  const factura=parseFloat((document.getElementById('egv-factura').value||'0').replace(/,/g,''));
+  const pagado=parseFloat((document.getElementById('egv-pagado').value||'0').replace(/,/g,''));
   const pendiente=factura-pagado;
+  const moneda=document.getElementById('egv-moneda').value;
+  const tasaRaw=parseFloat(document.getElementById('egv-tasa')?.value||0);
+  if(moneda==='USD'&&(!tasaRaw||tasaRaw<=0)){
+    toast('La tasa de cambio es obligatoria para gastos en USD','error');
+    const el=document.getElementById('egv-tasa');
+    if(el){el.style.border='2px solid var(--red)';el.focus();setTimeout(()=>el.style.border='',3000);}
+    return;
+  }
+  const tasaUsada=moneda==='USD'?tasaRaw:parseFloat(DB.config.tasaCambio||60);
   const egvVid=document.getElementById('egv-veh')?.value||DB.gastosVehiculos[i].vehiculoId;
   if(egvVid){
     const egvV=DB.vehiculos.find(x=>x.id===egvVid);
@@ -4417,7 +4467,8 @@ function guardarEditGastoVeh(i){
   }
   DB.gastosVehiculos[i].suplidor=document.getElementById('egv-sup').value;
   DB.gastosVehiculos[i].tipo=document.getElementById('egv-tipo').value;
-  DB.gastosVehiculos[i].moneda=document.getElementById('egv-moneda').value;
+  DB.gastosVehiculos[i].moneda=moneda;
+  DB.gastosVehiculos[i].tasaCambio=tasaUsada;
   DB.gastosVehiculos[i].cuenta=document.getElementById('egv-cuenta').value;
   DB.gastosVehiculos[i].fecha=document.getElementById('egv-fecha').value;
   DB.gastosVehiculos[i].fechaPago=document.getElementById('egv-fechapago').value;
@@ -4475,6 +4526,21 @@ function gvehAccion(accion){
 }
 
 function limpiarFiltrosGastosVeh(){['gveh-filtro-veh','gveh-filtro-sup','gveh-filtro-status','gveh-filtro-desde','gveh-filtro-hasta'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});renderGastosVeh();}
+function exportarHojaCostos(){
+  const filtroVeh=document.getElementById('gveh-filtro-veh')?.value||'';
+  if(!filtroVeh){
+    // Resaltar el selector de vehículo
+    const sel=document.getElementById('gveh-filtro-veh');
+    if(sel){sel.style.border='2px solid var(--red)';sel.focus();setTimeout(()=>sel.style.border='',3000);}
+    toast('Selecciona un vehículo para generar la Hoja de Costos','error');
+    return;
+  }
+  let gastos=(DB.gastosVehiculos||[]).filter(g=>g.vehiculoId===filtroVeh);
+  if(!gastos.length){toast('Este vehículo no tiene gastos registrados','error');return;}
+  const tasaRespaldo=parseFloat(DB.config.tasaCambio||60);
+  _generarPDFGastosVeh(gastos,tasaRespaldo,'',filtroVeh,true);
+}
+
 function exportarGastosVehPDF(){
   const filtroVeh=document.getElementById('gveh-filtro-veh')?.value||'';
   const filtroSup=document.getElementById('gveh-filtro-sup')?.value||'';
@@ -4487,12 +4553,9 @@ function exportarGastosVehPDF(){
   const filtroHasta2=document.getElementById('gveh-filtro-hasta')?.value||'';
   if(filtroDesde2)gastos=gastos.filter(g=>g.fecha&&g.fecha>=filtroDesde2);
   if(filtroHasta2)gastos=gastos.filter(g=>g.fecha&&g.fecha<=filtroHasta2);
-  // Pedir tasa del día
-  const tasaActual=DB.config.tasaCambio||60;
-  const tasaStr=prompt('💱 Ingresa la tasa del dólar del día (RD$ por 1 USD):',tasaActual);
-  if(tasaStr===null)return; // canceló
-  const tasa=parseFloat(tasaStr)||tasaActual;
-  _generarPDFGastosVeh(gastos,tasa,filtroSup,filtroVeh,false);
+  // Cada gasto USD tiene su propia tasa guardada — no se pide más
+  const tasaRespaldo=parseFloat(DB.config.tasaCambio||60);
+  _generarPDFGastosVeh(gastos,tasaRespaldo,filtroSup,filtroVeh,false);
 }
 
 function _generarPDFGastosVeh(gastos,tasa,filtroSup,filtroVeh,soloUnVeh){
@@ -4501,84 +4564,230 @@ function _generarPDFGastosVeh(gastos,tasa,filtroSup,filtroVeh,soloUnVeh){
   const rnc=DB.config.rnc||'';
   const tel=DB.config.telefono||'';
   const dir=DB.config.direccion||'';
-  const filtroLabel=filtroSup?('Suplidor: '+filtroSup):(filtroVeh?('Vehículo: '+(DB.vehiculos.find(v=>v.id===filtroVeh)?.codigo||'')):'General');
+
+  // Helpers formato
+  const fRD=(n)=>'RD$ '+parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fUS=(n)=>'US$ '+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fN=(n)=>parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
+
   // Separar por moneda
   const gastosRD=gastos.filter(g=>(g.moneda||'RD$')==='RD$');
   const gastosUSD=gastos.filter(g=>g.moneda==='USD');
-  // Totales RD$
-  const totFactRD=gastosRD.reduce((a,g)=>a+parseFloat(g.montoFactura||0),0);
-  const totPagRD=gastosRD.reduce((a,g)=>a+parseFloat(g.montoPagado||0),0);
-  const totPendRD=gastosRD.reduce((a,g)=>a+parseFloat(g.montoPendiente||0),0);
-  // Totales USD
-  const totFactUSD=gastosUSD.reduce((a,g)=>a+parseFloat(g.montoFactura||0),0);
-  const totPagUSD=gastosUSD.reduce((a,g)=>a+parseFloat(g.montoPagado||0),0);
-  const totPendUSD=gastosUSD.reduce((a,g)=>a+parseFloat(g.montoPendiente||0),0);
-  // Total general en RD$
-  const totGenRD=totFactRD+(totFactUSD*tasa);
-  const totPendGenRD=totPendRD+(totPendUSD*tasa);
-  const fmtUSD=(n)=>'$'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2});
-  const sc={PAGADO:'g',ABONADO:'a',PENDIENTE:'r'};
-  const filas=(lista,esUSD)=>lista.map(g=>{
-    const v=DB.vehiculos.find(x=>x.id===g.vehiculoId);
-    const fV=esUSD?fmtUSD:fmt;
-    return`<tr><td>${fmtDate(g.fecha)}</td><td>${v?escHtml(v.codigo+' '+v.marca+' '+v.modelo):'—'}</td><td>${escHtml(g.suplidor||'—')}</td><td>${escHtml(g.tipo||'—')}</td><td>${escHtml(g.cuenta||'—')}</td><td style="font-weight:700">${fV(g.montoFactura||0)}</td><td style="color:#16a34a">${fV(g.montoPagado||0)}</td><td style="color:#dc2626;font-weight:700">${fV(g.montoPendiente||0)}</td><td><span class="badge ${sc[g.statusGasto||'PENDIENTE']||'r'}">${g.statusGasto||'PENDIENTE'}</span></td></tr>`;
-  }).join('');
-  const win=window.open('','_blank','width=1100,height=750');
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Gastos de Vehículo — ${escHtml(empresa)}</title>
-  <style>body{font-family:Arial,sans-serif;padding:24px;font-size:12px;color:#0f172a}
-  h2{font-size:18px;margin:0}h3{font-size:13px;margin:4px 0;color:#475569}
-  h4{font-size:13px;font-weight:800;margin:20px 0 6px;padding:6px 10px;border-radius:4px}
-  .rd{background:#fee2e2;color:#dc2626}.usd{background:#dbeafe;color:#2563eb}
-  table{width:100%;border-collapse:collapse;margin-top:4px}
-  th{background:#0f172a;color:#fff;padding:7px 10px;text-align:left;font-size:11px}
-  td{padding:7px 10px;border-bottom:1px solid #e2e8f0;font-size:12px}
-  tr:nth-child(even){background:#f8fafc}
-  .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700}
+  const hayUSD=gastosUSD.length>0;
+  const hayRD=gastosRD.length>0;
+
+  // Subtotales directos
+  const subtotRD=gastosRD.reduce((a,g)=>a+parseFloat(g.montoFactura||0),0);
+  const subtotPagRD=gastosRD.reduce((a,g)=>a+parseFloat(g.montoPagado||0),0);
+  const subtotPendRD=gastosRD.reduce((a,g)=>a+parseFloat(g.montoPendiente||0),0);
+  const subtotUSD=gastosUSD.reduce((a,g)=>a+parseFloat(g.montoFactura||0),0);
+  const subtotPagUSD=gastosUSD.reduce((a,g)=>a+parseFloat(g.montoPagado||0),0);
+  const subtotPendUSD=gastosUSD.reduce((a,g)=>a+parseFloat(g.montoPendiente||0),0);
+
+  // TOTAL EN RD$: RD$ directo + USD×su propia tasa
+  const totalRD=gastosRD.reduce((a,g)=>a+parseFloat(g.montoFactura||0),0)
+               +gastosUSD.reduce((a,g)=>a+parseFloat(g.montoFactura||0)*parseFloat(g.tasaCambio||tasa),0);
+  const totalPagRD=gastosRD.reduce((a,g)=>a+parseFloat(g.montoPagado||0),0)
+                  +gastosUSD.reduce((a,g)=>a+parseFloat(g.montoPagado||0)*parseFloat(g.tasaCambio||tasa),0);
+  const totalPendRD=totalRD-totalPagRD;
+
+  // TOTAL EN US$ (solo si hay gastos USD):
+  // USD directo + RD$÷promedio de tasas de los gastos USD
+  const tasasUSD=gastosUSD.map(g=>parseFloat(g.tasaCambio||tasa));
+  const tasaPromedio=hayUSD?tasasUSD.reduce((a,t)=>a+t,0)/tasasUSD.length:0;
+  const totalUS=hayUSD?(subtotUSD+(subtotRD/tasaPromedio)):0;
+  const totalPagUS=hayUSD?(subtotPagUSD+(subtotPagRD/tasaPromedio)):0;
+  const totalPendUS=hayUSD?(totalUS-totalPagUS):0;
+
+  // Info vehículo
+  const veh=filtroVeh?DB.vehiculos.find(v=>v.id===filtroVeh):null;
+
+  // Filas RD$
+  const filasRD=gastosRD.map((g,i)=>`<tr>
+    <td class="num">${i+1}</td>
+    <td class="desc">${escHtml(g.tipo||'—')}</td>
+    <td class="sup">${escHtml(g.suplidor||'—')}</td>
+    <td class="mon">RD$</td>
+    <td class="amt">${fN(g.montoFactura)}</td>
+    <td class="amt ok">${parseFloat(g.montoPagado||0)>0?fN(g.montoPagado):''}</td>
+    <td class="amt nd">${parseFloat(g.montoPendiente||0)>0?fN(g.montoPendiente):''}</td>
+    <td class="st"><span class="b ${g.statusGasto==='PAGADO'?'g':g.statusGasto==='ABONADO'?'a':'r'}">${g.statusGasto||'PEND.'}</span></td>
+  </tr>`).join('');
+
+  // Filas USD
+  const filasUSD=gastosUSD.map((g,i)=>`<tr class="urow">
+    <td class="num">${gastosRD.length+i+1}</td>
+    <td class="desc">${escHtml(g.tipo||'—')}</td>
+    <td class="sup">${escHtml(g.suplidor||'—')}</td>
+    <td class="mon">US$</td>
+    <td class="amt">${fN(g.montoFactura)}</td>
+    <td class="amt ok">${parseFloat(g.montoPagado||0)>0?fN(g.montoPagado):''}</td>
+    <td class="amt nd">${parseFloat(g.montoPendiente||0)>0?fN(g.montoPendiente):''}</td>
+    <td class="st"><span class="b ${g.statusGasto==='PAGADO'?'g':g.statusGasto==='ABONADO'?'a':'r'}">${g.statusGasto||'PEND.'}</span></td>
+  </tr>`).join('');
+
+  const win=window.open('','_blank','width=820,height=750');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Hoja de Costos${veh?' — '+veh.codigo:''}</title>
+  <style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,sans-serif;font-size:9px;color:#0f172a;background:#fff;padding:10px 14px}
+  /* ENCABEZADO */
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:7px;margin-bottom:7px}
+  .hdr img{max-height:44px;max-width:110px;object-fit:contain;display:block;margin-bottom:3px}
+  .hdr-emp{font-size:9px;color:#475569;line-height:1.5}
+  .hdr-emp strong{font-size:11px;color:#0f172a;display:block;margin-bottom:1px}
+  .hdr-titulo{font-size:18px;font-weight:900;color:#dc2626;letter-spacing:1px;text-align:right;line-height:1}
+  .hdr-sub{font-size:9px;color:#6b7280;text-align:right;margin-top:3px}
+  /* VEHÍCULO */
+  .veh-box{border:1px solid #334155;border-radius:4px;margin-bottom:8px;overflow:hidden}
+  .veh-bar{background:#334155;color:#fff;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px;display:flex;justify-content:space-between;align-items:center}
+  .veh-bar span.cod{background:#f59e0b;color:#0f172a;padding:1px 8px;border-radius:8px;font-size:9px;font-weight:800}
+  .veh-grid{display:grid;grid-template-columns:repeat(6,1fr)}
+  .vc{padding:4px 7px;border-right:1px solid #e2e8f0}
+  .vc:last-child{border-right:none}
+  .vc .l{font-size:8px;font-weight:700;text-transform:uppercase;color:#6b7280;margin-bottom:1px}
+  .vc .v{font-weight:700;font-size:10px}
+  /* TABLA */
+  table{width:100%;border-collapse:collapse}
+  .th{background:#0f172a;color:#fff}
+  .th th{padding:4px 6px;font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:.2px;white-space:nowrap}
+  td{padding:3px 6px;border-bottom:1px solid #e2e8f0;vertical-align:middle;font-size:9px}
+  tr:nth-child(even) td{background:#f8fafc}
+  .urow td{background:#eff6ff!important}
+  .num{width:20px;text-align:center;color:#94a3b8;font-size:8px}
+  .desc{font-weight:600;font-size:9px}
+  .sup{color:#64748b;font-size:8px}
+  .mon{text-align:center;font-size:8px;font-weight:700;color:#64748b;width:26px}
+  .amt{text-align:right;font-family:'Courier New',monospace;white-space:nowrap;width:90px;font-size:9px}
+  .ok{color:#16a34a}
+  .nd{color:#dc2626;font-weight:700}
+  .st{text-align:center;width:52px}
+  /* SEPARADORES */
+  .sh td{background:#e2e8f0!important;font-weight:800;font-size:8px;text-transform:uppercase;color:#334155;letter-spacing:.4px;padding:2px 6px}
+  .sr td{background:#fef9c3!important;font-weight:800;font-size:9px}
+  .su td{background:#dbeafe!important;font-weight:800;font-size:9px}
+  /* BADGE */
+  .b{display:inline-block;padding:1px 5px;border-radius:6px;font-size:8px;font-weight:700}
   .g{background:#dcfce7;color:#16a34a}.r{background:#fee2e2;color:#dc2626}.a{background:#fef3c7;color:#d97706}
-  .resumen{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px;margin-top:20px}
-  .res-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:8px}
-  .res-box{text-align:center;padding:10px;border-radius:6px;border:1px solid #e2e8f0}
-  .res-label{font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase}
-  .res-val{font-size:16px;font-weight:800;margin-top:4px}
-  @media print{.noprint{display:none}}</style></head><body>
-  <div style="border-bottom:3px solid #2563eb;padding-bottom:12px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:flex-start">
+  /* RESUMEN */
+  .res{margin-top:8px;border:1px solid #334155;border-radius:4px;overflow:hidden}
+  .res-bar{background:#334155;color:#fff;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px}
+  .res-top{display:grid;grid-template-columns:${hayRD&&hayUSD?'1fr 1fr 1fr':hayRD?'1fr 1fr':'1fr 1fr'}}
+  .rc{padding:6px 10px;border-right:1px solid #e2e8f0}
+  .rc:last-child{border-right:none}
+  .rl{font-size:8px;font-weight:700;text-transform:uppercase;color:#6b7280;margin-bottom:3px}
+  .rv{font-size:13px;font-weight:900}
+  .rs{font-size:8px;margin-top:1px}
+  .res-bot{display:grid;grid-template-columns:${hayUSD?'1fr 1fr':'1fr'};border-top:2px solid #334155}
+  .tc{padding:7px 10px;border-right:1px solid #e2e8f0}
+  .tc:last-child{border-right:none}
+  .tl{font-size:8px;font-weight:700;text-transform:uppercase;margin-bottom:3px}
+  .tv{font-size:16px;font-weight:900}
+  .ts{font-size:8px;margin-top:2px;color:#6b7280}
+  @media print{.noprint{display:none}@page{size:letter;margin:8mm}}
+  </style></head><body>
+
+  <div class="hdr">
     <div>
-      ${logo?`<img src="${logo}" style="max-height:60px;max-width:160px;object-fit:contain;margin-bottom:8px;display:block">`:''}
-      <h2>${escHtml(empresa)}</h2>
-      ${rnc?`<div style="font-size:11px;color:#475569">RNC: ${escHtml(rnc)}</div>`:''}
-      ${tel?`<div style="font-size:11px;color:#475569">Tel: ${escHtml(tel)}</div>`:''}
-      ${dir?`<div style="font-size:11px;color:#475569">${escHtml(dir)}</div>`:''}
-      <h3 style="margin-top:6px">REPORTE DE GASTOS DE VEHÍCULO — ${filtroLabel}</h3>
-      <div style="color:#6b7280;font-size:11px">Fecha: ${fmtDate(today())} | Tasa USD aplicada: RD$ ${tasa}</div>
+      ${logo?`<img src="${logo}">`:''}
+      <div class="hdr-emp">
+        <strong>${escHtml(empresa)}</strong>
+        ${rnc?`RNC: ${escHtml(rnc)}<br>`:''}
+        ${dir?`${escHtml(dir)}<br>`:''}
+        ${tel?`Tel: ${escHtml(tel)}`:''}
+      </div>
     </div>
-    <div style="text-align:right;font-size:11px;color:#6b7280">${gastos.length} registro(s)</div>
-  </div>
-  ${gastosRD.length>0?`
-  <h4 class="rd">💰 Gastos en RD$ — Pesos Dominicanos</h4>
-  <table><thead><tr><th>Fecha</th><th>Vehículo</th><th>Suplidor</th><th>Tipo Gasto</th><th>Cuenta</th><th>Factura RD$</th><th>Pagado RD$</th><th>Pendiente RD$</th><th>Estado</th></tr></thead>
-  <tbody>${filas(gastosRD,false)}
-  <tr style="background:#fee2e2"><td colspan="5" style="font-weight:800;text-align:right">SUBTOTAL RD$:</td>
-  <td style="font-weight:800">${fmt(totFactRD)}</td><td style="color:#16a34a;font-weight:800">${fmt(totPagRD)}</td><td style="color:#dc2626;font-weight:800">${fmt(totPendRD)}</td><td></td></tr>
-  </tbody></table>`:``}
-  ${gastosUSD.length>0?`
-  <h4 class="usd">💵 Gastos en USD — Dólares Americanos</h4>
-  <table><thead><tr><th>Fecha</th><th>Vehículo</th><th>Suplidor</th><th>Tipo Gasto</th><th>Cuenta</th><th>Factura USD</th><th>Pagado USD</th><th>Pendiente USD</th><th>Estado</th></tr></thead>
-  <tbody>${filas(gastosUSD,true)}
-  <tr style="background:#dbeafe"><td colspan="5" style="font-weight:800;text-align:right">SUBTOTAL USD:</td>
-  <td style="font-weight:800">${fmtUSD(totFactUSD)}</td><td style="color:#16a34a;font-weight:800">${fmtUSD(totPagUSD)}</td><td style="color:#2563eb;font-weight:800">${fmtUSD(totPendUSD)}</td><td></td></tr>
-  </tbody></table>`:``}
-  <div class="resumen">
-    <div style="font-size:13px;font-weight:800;margin-bottom:4px">📊 RESUMEN GENERAL (Tasa: RD$ ${tasa} x USD)</div>
-    <div class="res-grid">
-      <div class="res-box"><div class="res-label">Total Facturado RD$</div><div class="res-val">${fmt(totFactRD)}</div></div>
-      <div class="res-box"><div class="res-label">Total Facturado USD</div><div class="res-val" style="color:#2563eb">${fmtUSD(totFactUSD)}</div><div style="font-size:11px;color:#6b7280">≈ ${fmt(totFactUSD*tasa)}</div></div>
-      <div class="res-box" style="background:#fff3cd"><div class="res-label">TOTAL GENERAL RD$</div><div class="res-val" style="color:#d97706">${fmt(totGenRD)}</div></div>
-      <div class="res-box"><div class="res-label">Pendiente RD$</div><div class="res-val" style="color:#dc2626">${fmt(totPendRD)}</div></div>
-      <div class="res-box"><div class="res-label">Pendiente USD</div><div class="res-val" style="color:#2563eb">${fmtUSD(totPendUSD)}</div><div style="font-size:11px;color:#6b7280">≈ ${fmt(totPendUSD*tasa)}</div></div>
-      <div class="res-box" style="background:#fee2e2"><div class="res-label">TOTAL PENDIENTE RD$</div><div class="res-val" style="color:#dc2626">${fmt(totPendGenRD)}</div></div>
+    <div>
+      <div class="hdr-titulo">Hoja de Costos</div>
+      <div class="hdr-sub">Fecha: ${fmtDate(today())} &nbsp;|&nbsp; ${gastos.length} gasto(s)</div>
     </div>
   </div>
-  <div class="noprint" style="margin-top:24px;text-align:center"><button onclick="window.print()" style="padding:10px 28px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">🖨️ Imprimir / Guardar PDF</button></div>
+
+  ${veh?`<div class="veh-box">
+    <div class="veh-bar"><span>📋 Datos del Vehículo</span><span class="cod">${escHtml(veh.codigo)}</span></div>
+    <div class="veh-grid">
+      <div class="vc"><div class="l">Marca</div><div class="v">${escHtml(veh.marca||'—')}</div></div>
+      <div class="vc"><div class="l">Modelo</div><div class="v">${escHtml(veh.modelo||'—')}</div></div>
+      <div class="vc"><div class="l">Año</div><div class="v">${escHtml(String(veh.anio||'—'))}</div></div>
+      <div class="vc"><div class="l">Color</div><div class="v">${escHtml(veh.color||'—')}</div></div>
+      <div class="vc"><div class="l">VIN</div><div class="v" style="font-size:8px">${escHtml(veh.vin||'—')}</div></div>
+      <div class="vc"><div class="l">Estado</div><div class="v"><span class="b ${veh.status==='VENDIDO'?'r':veh.status==='RESERVADO'?'a':'g'}">${escHtml(veh.status||'ACTIVO')}</span></div></div>
+    </div>
+  </div>`:''}
+
+  <table>
+    <thead class="th"><tr>
+      <th class="num">#</th><th>Tipo de Gasto</th><th>Suplidor</th>
+      <th style="text-align:center">Mon.</th>
+      <th style="text-align:right">Factura</th>
+      <th style="text-align:right">Pagado</th>
+      <th style="text-align:right">Pendiente</th>
+      <th style="text-align:center">Estado</th>
+    </tr></thead>
+    <tbody>
+      ${hayRD?`<tr class="sh"><td colspan="8">💰 Gastos en Pesos Dominicanos (RD$)</td></tr>
+      ${filasRD}
+      ${gastosRD.length>1?`<tr class="sr">
+        <td colspan="4" style="text-align:right;font-size:8px">SUB-TOTAL RD$</td>
+        <td class="amt">${fN(subtotRD)}</td>
+        <td class="amt ok">${fN(subtotPagRD)}</td>
+        <td class="amt nd">${subtotPendRD>0?fN(subtotPendRD):''}</td>
+        <td></td>
+      </tr>`:''}`:''}
+      ${hayUSD?`<tr class="sh"><td colspan="8">💵 Gastos en Dólares Americanos (US$)</td></tr>
+      ${filasUSD}
+      ${gastosUSD.length>1?`<tr class="su">
+        <td colspan="4" style="text-align:right;font-size:8px">SUB-TOTAL US$</td>
+        <td class="amt">${fN(subtotUSD)}</td>
+        <td class="amt ok">${fN(subtotPagUSD)}</td>
+        <td class="amt nd">${subtotPendUSD>0?fN(subtotPendUSD):''}</td>
+        <td></td>
+      </tr>`:''}`:''}
+    </tbody>
+  </table>
+
+  <div class="res">
+    <div class="res-bar">📊 Resumen de Costos</div>
+    <div class="res-top">
+      ${hayRD?`<div class="rc">
+        <div class="rl">Sub-Total RD$ (Pesos)</div>
+        <div class="rv">${fRD(subtotRD)}</div>
+        <div class="rs" style="color:#16a34a">Pagado: ${fRD(subtotPagRD)}</div>
+        ${subtotPendRD>0?`<div class="rs" style="color:#dc2626">Pendiente: ${fRD(subtotPendRD)}</div>`:'<div class="rs" style="color:#16a34a">✅ Sin pendiente</div>'}
+      </div>`:''}
+      ${hayUSD?`<div class="rc">
+        <div class="rl">Sub-Total US$ (Dólares)</div>
+        <div class="rv" style="color:#2563eb">${fUS(subtotUSD)}</div>
+        <div class="rs" style="color:#16a34a">Pagado: ${fUS(subtotPagUSD)}</div>
+        ${subtotPendUSD>0?`<div class="rs" style="color:#dc2626">Pendiente: ${fUS(subtotPendUSD)}</div>`:'<div class="rs" style="color:#16a34a">✅ Sin pendiente</div>'}
+      </div>`:''}
+      <div class="rc" style="background:#f8fafc">
+        <div class="rl">Registros</div>
+        <div class="rv" style="font-size:16px;color:#334155">${gastos.length}</div>
+        <div class="rs">RD$: ${gastosRD.length} &nbsp;|&nbsp; US$: ${gastosUSD.length}</div>
+        <div class="rs" style="color:${totalPendRD>0?'#dc2626':'#16a34a'};font-weight:700;margin-top:2px">${totalPendRD>0?'⚠️ Tiene pendientes':'✅ Todo pagado'}</div>
+      </div>
+    </div>
+    <div class="res-bot">
+      <div class="tc" style="background:#fff7ed">
+        <div class="tl" style="color:#92400e">Total General en Pesos (RD$)</div>
+        <div class="tv" style="color:#d97706">${fRD(totalRD)}</div>
+        <div class="ts">${hayUSD?'RD$ directo + US$ × tasa de cada gasto':'Solo gastos en RD$'}</div>
+        ${totalPendRD>0?`<div class="ts" style="color:#dc2626;font-weight:700;margin-top:3px">Pendiente: ${fRD(totalPendRD)}</div>`:'<div class="ts" style="color:#16a34a;font-weight:700;margin-top:3px">✅ Todo pagado</div>'}
+      </div>
+      ${hayUSD?`<div class="tc" style="background:#eff6ff">
+        <div class="tl" style="color:#1e40af">Total General en Dólares (US$)</div>
+        <div class="tv" style="color:#2563eb">${fUS(totalUS)}</div>
+        <div class="ts">${hayRD?`US$ directo + RD$ ÷ tasa prom. ${tasaPromedio.toFixed(2)}`:'Solo gastos en US$'}</div>
+        ${totalPendUS>0?`<div class="ts" style="color:#dc2626;font-weight:700;margin-top:3px">Pendiente: ${fUS(totalPendUS)}</div>`:'<div class="ts" style="color:#16a34a;font-weight:700;margin-top:3px">✅ Todo pagado</div>'}
+      </div>`:''}
+    </div>
+  </div>
+
+  <div class="noprint" style="margin-top:12px;text-align:center">
+    <button onclick="window.print()" style="padding:8px 28px;background:#0f172a;color:#fff;border:none;border-radius:5px;font-size:12px;cursor:pointer;font-family:Arial">🖨️ Imprimir / Guardar PDF</button>
+  </div>
   </body></html>`);
   win.document.close();
 }
@@ -4955,7 +5164,6 @@ function ventaAccion(accion){
   if(accion==='imprimir'&&!canDo('imprimir')){toast('No tienes permiso para imprimir','error');return;}else if(accion==='imprimir')imprimirFactura(ventaSelectedId);
   else if(accion==='cobrar')abonarVenta(ventaSelectedId);
   else if(accion==='editar'&&!canDo('editar')){toast('No tienes permiso para editar','error');return;}else if(accion==='editar'){
-    if(currentUser?.role!=='admin'){toast('Solo el administrador puede editar','error');return;}
     editarVenta(ventaSelectedId);
   }
   else if(accion==='eliminar'&&!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}else if(accion==='eliminar'){
@@ -5410,7 +5618,7 @@ function editarVenta(vid){
 }
 
 function guardarEditarVenta(vid){
-  if(currentUser?.role!=='admin'){toast('Solo el administrador puede editar','error');return;}
+  if(currentUser?.role!=='admin'&&!canDo('editar')){toast('No tienes permiso para editar','error');return;}
   const i=DB.ventas.findIndex(x=>x.id===vid);if(i<0)return;
   const precio=parseFloat((document.getElementById('ev-precio').value||'0').replace(/,/g,''));
   const inicial=parseFloat((document.getElementById('ev-inicial').value||'0').replace(/,/g,''));
@@ -5816,7 +6024,7 @@ function guardarCotizacion(idx){
   sDB('cotizaciones');closeModal();toast('Cotización guardada ✓','success');renderCotizaciones();
 }
 function editarCotizacion(i){
-  if(currentUser?.role!=='admin'){toast('Solo el administrador puede editar','error');return;}
+  if(currentUser?.role!=='admin'&&!canDo('editar')){toast('No tienes permiso para editar','error');return;}
   const c=DB.cotizaciones[i];
   const bancos=DB.config.bancos||['Banco Popular','BHD León','Banreservas','Scotiabank','Banco Santa Cruz','Otro'];
   openModal('Editar Cotización',`
@@ -6212,14 +6420,14 @@ function fmtMoneyInput(el){
 }
 function fmtMoneyBlur(el){
   const n=parseFloat(el.value.replace(/,/g,'')||0);
-  if(!isNaN(n))el.value=n.toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(!isNaN(n))el.value=_fmtN(n,'es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
 }
 function fmtMoneyFocus(el){
   el.value=el.value.replace(/,/g,'');
 }
 function fmtMoneyDisplay(val){
   const n=parseFloat(val||0);
-  return n.toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
+  return _fmtN(n,'es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
 }
 function fmtPlaca(el){
   // Formato RD: 1 letra + 6 dígitos = A000000, máx 7 caracteres
@@ -6376,17 +6584,17 @@ function renderCXP(){
       <div class="card" style="margin-bottom:0;border-top:3px solid var(--green)">
         <div style="font-size:12px;font-weight:700;color:var(--gray);text-transform:uppercase;margin-bottom:8px">🇩🇴 Pesos (RD$)</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">
-          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Facturado</div><div style="font-size:14px;font-weight:800">${totalFactRD.toLocaleString('es-DO',{minimumFractionDigits:2})}</div></div>
-          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pagado</div><div style="font-size:14px;font-weight:800;color:var(--green)">${totalPagRD.toLocaleString('es-DO',{minimumFractionDigits:2})}</div></div>
-          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pendiente</div><div style="font-size:14px;font-weight:800;color:var(--red)">${totalPendRD.toLocaleString('es-DO',{minimumFractionDigits:2})}</div></div>
+          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Facturado</div><div style="font-size:14px;font-weight:800">${fmt(totalFactRD)}</div></div>
+          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pagado</div><div style="font-size:14px;font-weight:800;color:var(--green)">${fmt(totalPagRD)}</div></div>
+          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pendiente</div><div style="font-size:14px;font-weight:800;color:var(--red)">${fmt(totalPendRD)}</div></div>
         </div>
       </div>
       <div class="card" style="margin-bottom:0;border-top:3px solid var(--blue)">
         <div style="font-size:12px;font-weight:700;color:var(--gray);text-transform:uppercase;margin-bottom:8px">🇺🇸 Dólares (USD)</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">
-          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Facturado</div><div style="font-size:14px;font-weight:800">$${totalFactUSD.toLocaleString('en-US',{minimumFractionDigits:2})}</div></div>
-          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pagado</div><div style="font-size:14px;font-weight:800;color:var(--green)">$${totalPagUSD.toLocaleString('en-US',{minimumFractionDigits:2})}</div></div>
-          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pendiente</div><div style="font-size:14px;font-weight:800;color:var(--red)">$${totalPendUSD.toLocaleString('en-US',{minimumFractionDigits:2})}</div></div>
+          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Facturado</div><div style="font-size:14px;font-weight:800">${fmtUSD(totalFactUSD)}</div></div>
+          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pagado</div><div style="font-size:14px;font-weight:800;color:var(--green)">${fmtUSD(totalPagUSD)}</div></div>
+          <div><div style="font-size:10px;color:var(--gray);font-weight:600">Pendiente</div><div style="font-size:14px;font-weight:800;color:var(--red)">${fmtUSD(totalPendUSD)}</div></div>
         </div>
       </div>
     </div>
@@ -8844,6 +9052,8 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const _fbDB = firebase.firestore();
 const _fbCol = 'jeyco';
+window._fbDB = _fbDB;
+window._fbCol = _fbCol;
 
 
 
@@ -9024,7 +9234,8 @@ function _verificarCumpleanosHoy(){
   document.body.appendChild(av);
 }
 async function fbGuardar(key){
-  try {
+  const _timeout=new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout guardando '+key)),12000));
+  const _guardar=async()=>{
     let val=DB[key]!==undefined?DB[key]:(key==='config'?{}:[]);
     // Para config: guardar logoData separado para evitar límite de tamaño
     if(key==='config'&&typeof val==='object'&&val!==null){
@@ -9035,35 +9246,40 @@ async function fbGuardar(key){
     } else {
       await _fbDB.collection(_fbCol).doc(key).set({valor:JSON.stringify(val)});
     }
-  } catch(e){ console.warn('FB save error:', e.message); }
+  };
+  // NO silenciar errores — dejar que suban al indicador
+  await Promise.race([_guardar(),_timeout]);
 }
 
 async function fbCargar(){
   const keys=['config','config_logo','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
     'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','presencia','cumpleanosMensajes','log'];
   let loaded=false;
-  for(const key of keys){
-    try {
-      const snap = await _fbDB.collection(_fbCol).doc(key).get();
+  // Fix 4A — carga en paralelo con Promise.allSettled (si una falla, las demás siguen)
+  const resultados=await Promise.allSettled(
+    keys.map(key=>_fbDB.collection(_fbCol).doc(key).get().then(snap=>({key,snap})))
+  );
+  for(const res of resultados){
+    if(res.status!=='fulfilled')continue;
+    const {key,snap}=res.value;
+    try{
       if(snap.exists){
-        const val = JSON.parse(snap.data().valor);
+        const val=JSON.parse(snap.data().valor);
         if(val!==null){
-          if(key==='users' && Array.isArray(val) && Array.isArray(DB[key])){
+          if(key==='users'&&Array.isArray(val)&&Array.isArray(DB[key])){
             const merged=[...val];
             DB[key].forEach(lu=>{if(!merged.find(u=>u.id===lu.id))merged.push(lu);});
             DB[key]=merged.length>0?merged:DB[key];
           } else if(key==='config_logo'){
-            // Logo guardado separado - cargarlo en DB.config.logoData
             const logoVal=typeof val==='string'?val:(val&&val.logoData?val.logoData:'');
             if(logoVal&&logoVal.startsWith('data:')){
               DB.config=DB.config||{};
               DB.config.logoData=logoVal;
             }
-          } else if(key==='config' && typeof val==='object' && val!==null){
-            // Merge config: Firebase tiene prioridad pero no sobreescribir con vacíos
+          } else if(key==='config'&&typeof val==='object'&&val!==null){
             const merged=Object.assign({},DB[key]);
             Object.keys(val).forEach(k=>{
-              if(val[k]!==null && val[k]!==undefined && val[k]!==''){
+              if(val[k]!==null&&val[k]!==undefined&&val[k]!==''){
                 merged[k]=val[k];
               }
             });
@@ -9071,7 +9287,6 @@ async function fbCargar(){
           } else {
             DB[key]=val;
           }
-          // Verificar empresa
           if(key==='config'&&DB.config.empresa){
             const _emp=DB.config.empresa.toUpperCase();
             if(_emp.includes('MAEDIG')||_emp.includes('CHINITO')||_emp.includes('FAYRE')){
@@ -9082,7 +9297,7 @@ async function fbCargar(){
           loaded=true;
         }
       }
-    } catch(e){ console.warn('FB load error:', key, e.message); }
+    }catch(e){console.warn('FB load error:',key,e.message);}
   }
   return loaded;
 }
@@ -9107,6 +9322,42 @@ window.sDB = function(key){
   }
 };
 
+// ══ FIX 2 — SISTEMA DE VERSIONES AUTOMÁTICO ══
+async function publicarNuevaVersion(silencioso){
+  try{
+    const newVersion='app_v'+Date.now();
+    await window._fbDB.collection(window._fbCol).doc('system_version').set({version:newVersion});
+    localStorage.setItem('app_version',newVersion);
+    if(!silencioso)toast('✅ Nueva versión publicada — los usuarios verán el aviso','success');
+  }catch(e){console.warn('Error publicando versión:',e.message);}
+}
+
+function iniciarVerificadorVersion(){
+  window._versionCheckInterval=setInterval(async function(){
+    if(!window._fbActivo||!window._fbDB||!window._fbCol)return;
+    try{
+      const snap=await window._fbDB.collection(window._fbCol).doc('system_version').get();
+      if(!snap.exists)return;
+      const remoteVersion=snap.data().version;
+      const localVersion=localStorage.getItem('app_version');
+      if(remoteVersion&&remoteVersion!==localVersion){
+        if(document.getElementById('version-update-banner'))return;
+        const banner=document.createElement('div');
+        banner.id='version-update-banner';
+        banner.style.cssText='position:fixed;bottom:0;left:0;right:0;background:#1d4ed8;color:#fff;padding:14px 24px;z-index:99998;display:flex;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 -4px 20px rgba(0,0,0,.3)';
+        banner.innerHTML='<span style="font-size:14px;font-weight:600">🔄 Hay una nueva versión disponible del sistema</span><button onclick="localStorage.setItem(\'app_version\',\''+remoteVersion+'\');location.reload()" style="padding:8px 20px;background:#fff;color:#1d4ed8;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-family:inherit;font-size:13px">Actualizar ahora</button>';
+        document.body.appendChild(banner);
+        setTimeout(()=>{
+          if(document.getElementById('version-update-banner')){
+            localStorage.setItem('app_version',remoteVersion);
+            location.reload();
+          }
+        },30000);
+      }
+    }catch(e){console.warn('Version check error:',e.message);}
+  },30000);
+}
+
 // ══ FIREBASE LISTENERS TIEMPO REAL ══
 function fbActivarListeners(){
   const keys=['config','config_logo','users','vehiculos','clientes','suplidores',
@@ -9127,6 +9378,30 @@ function fbActivarListeners(){
             if(!merged.find(u=>u.id===lu.id))merged.push(lu);
           });
           DB.users=merged.length>0?merged:DB.users;
+          // Fix 3 — detectar cambios de permisos/módulos para el usuario activo
+          if(window.currentUser){
+            const updatedMe=DB.users.find(u=>u.id===window.currentUser.id);
+            if(updatedMe){
+              const changed=
+                JSON.stringify(updatedMe.modulos)!==JSON.stringify(window.currentUser.modulos)||
+                JSON.stringify(updatedMe.permisos)!==JSON.stringify(window.currentUser.permisos)||
+                updatedMe.role!==window.currentUser.role;
+              if(changed){
+                if(updatedMe.activo===false){
+                  // Usuario desactivado — cerrar sesión
+                  toast('Tu cuenta fue desactivada por el administrador','error');
+                  setTimeout(()=>{if(typeof doLogout==='function')doLogout();},2000);
+                } else {
+                  window.currentUser=Object.assign({},window.currentUser,{
+                    modulos:updatedMe.modulos,
+                    permisos:updatedMe.permisos,
+                    role:updatedMe.role
+                  });
+                  if(typeof aplicarPermisosNav==='function')aplicarPermisosNav();
+                }
+              }
+            }
+          }
         } else if(key==='config_logo'){
           const logoVal=typeof val==='string'?val:(val&&val.logoData?val.logoData:'');
           if(logoVal&&logoVal.startsWith('data:')){
@@ -9193,6 +9468,8 @@ function fbActivarListeners(){
     });
   });
   console.log('✅ Firebase listeners activos — tiempo real habilitado');
+  // Fix 2E — iniciar verificador de versiones
+  if(typeof iniciarVerificadorVersion==='function') iniciarVerificadorVersion();
 }
 
 window.forzarSincronizacion = async function(){
@@ -9262,14 +9539,38 @@ window.fbIniciar = async function(){
     } else {
       const keys=['config','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
         'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','log'];
-      for(const k of keys) await fbGuardar(k);
+      // Fix 4B — solo subir si hay datos reales, no sobreescribir Firebase con datos vacíos
+      const hayDatosReales=
+        (DB.vehiculos||[]).length>0||
+        (DB.ventas||[]).length>0||
+        (DB.users||[]).length>1||
+        (DB.config&&DB.config.empresa);
+      if(hayDatosReales){
+        for(const k of keys) await fbGuardar(k);
+        console.log('✅ Firebase: datos iniciales guardados');
+      } else {
+        console.log('Firebase vacío y sin datos locales — solo conectando');
+      }
       window._fbCargado=true;
       setStatus('#22c55e','✓ Firebase');
-      console.log('✅ Firebase: datos iniciales guardados');
     }
   } catch(e) {
     setStatus('#ef4444','Sin conexión');
     console.warn('Firebase error:', e.message);
+    // Modal bloqueante — el usuario no puede ignorar el error de conexión
+    const _ovFb=document.createElement('div');
+    _ovFb.id='fb-error-overlay';
+    _ovFb.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px';
+    _ovFb.innerHTML=`<div style="background:#fff;border-radius:16px;padding:32px;max-width:420px;width:100%;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.3)">
+      <div style="font-size:48px;margin-bottom:12px">⚠️</div>
+      <div style="font-size:20px;font-weight:800;color:#dc2626;margin-bottom:8px">Sin conexión a Firebase</div>
+      <div style="font-size:14px;color:#6b7280;margin-bottom:16px;line-height:1.6">Los datos <strong>NO se están guardando</strong>. Verifique su conexión a internet y recargue la página. Si el problema persiste, contacte al administrador.</div>
+      <div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:20px;font-size:13px;color:#92400e">
+        📞 Contacte al administrador del sistema
+      </div>
+      <button onclick="document.getElementById('fb-error-overlay').remove()" style="padding:12px 32px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">Entendido</button>
+    </div>`;
+    document.body.appendChild(_ovFb);
   }
 };
 </script>
