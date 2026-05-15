@@ -6473,14 +6473,15 @@ function guardarSuplidor(idx){
   const propietario=document.getElementById('s-propietario').value.trim();
   const tel=document.getElementById('s-tel').value.trim();
   if(!empresa||!propietario||!tel){toast('Empresa, propietario y teléfono son requeridos','error');return;}
-  // Validar duplicado por nombre de empresa
-  const empDup=DB.suplidores.find((s,i)=>(s.empresa||s.nombre||'').toLowerCase()===empresa.toLowerCase()&&(idx===undefined?true:i!==idx));
-  if(empDup){toast('Ya existe un suplidor con ese nombre de empresa','error');return;}
+  // Validar duplicado por nombre de empresa — solo dentro del mismo tipo
+  const tipoActual=document.getElementById('s-tipo-suplidor')?.value||(idx!==undefined?DB.suplidores[idx]?.tipoSuplidor||'vehiculo':'vehiculo');
+  const empDup=DB.suplidores.find((s,i)=>(s.empresa||s.nombre||'').toLowerCase()===empresa.toLowerCase()&&(s.tipoSuplidor||'vehiculo')===tipoActual&&(idx===undefined?true:i!==idx));
+  if(empDup){toast('Ya existe un suplidor con ese nombre en el tipo "'+tipoActual+'"','error');return;}
   // Validar duplicado por documento
   const rncVal=document.getElementById('s-rnc').value.trim();
   if(rncVal){
-    const rncDup=DB.suplidores.find((s,i)=>s.rnc&&s.rnc.replace(/-/g,'')===rncVal.replace(/-/g,'')&&(idx===undefined?true:i!==idx));
-    if(rncDup){toast('Ya existe un suplidor con ese número de documento','error');return;}
+    const rncDup=DB.suplidores.find((s,i)=>s.rnc&&s.rnc.replace(/-/g,'')===rncVal.replace(/-/g,'')&&(s.tipoSuplidor||'vehiculo')===tipoActual&&(idx===undefined?true:i!==idx));
+    if(rncDup){toast('Ya existe un suplidor con ese RNC dentro del mismo tipo','error');return;}
   }
   const supId=document.getElementById('s-supid')?.value||('SUP-'+String(DB.suplidores.length+1).padStart(4,'0'));
   const tipoSuplidor=document.getElementById('s-tipo-suplidor')?.value||(idx!==undefined?DB.suplidores[idx].tipoSuplidor||'vehiculo':'vehiculo');
