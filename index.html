@@ -4148,7 +4148,7 @@ function renderGastosVeh(){
         </div>
         <div style="display:flex;flex-direction:column;gap:4px">
           <label style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gray)">Buscar por Chasis/VIN</label>
-          <input type="text" id="gveh-filtro-chasis" placeholder="Ej: 1HGBH41JXMN109186" value="${filtroChasis}" oninput="renderGastosVeh()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px;text-transform:uppercase">
+          <input type="text" id="gveh-filtro-chasis" placeholder="Ej: 1HGBH41JXMN109186" value="${filtroChasis}" oninput="_filtrarChasisGastosVeh(this.value)" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
         </div>
         <div style="display:flex;gap:6px;align-items:flex-end">
           <button class="btn btn-secondary btn-sm" onclick="limpiarFiltrosGastosVeh()">&#8635;</button>
@@ -4621,6 +4621,37 @@ function gvehAccion(accion){
   else if(accion==='eliminar'&&!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}else if(accion==='eliminar')eliminarGastoVeh(gvehSelectedId);
 }
 
+function _filtrarChasisGastosVeh(val){
+  // Convertir a mayusculas sin mover el cursor
+  const el=document.getElementById('gveh-filtro-chasis');
+  if(el&&el===document.activeElement){
+    const pos=el.selectionStart;
+    el.value=(val||'').toUpperCase();
+    el.setSelectionRange(pos,pos);
+  }
+  // Filtrar filas de la tabla en vivo sin re-renderizar
+  const v=(val||'').trim().toUpperCase();
+  const tbody=document.querySelector('#gveh-tbl tbody');
+  if(!tbody)return;
+  const rows=tbody.querySelectorAll('tr');
+  rows.forEach(tr=>{
+    if(!v){tr.style.display='';return;}
+    // Buscar en todas las celdas de la fila el chasis/VIN
+    const txt=tr.textContent.toUpperCase();
+    tr.style.display=txt.includes(v)?'':'none';
+  });
+  // Actualizar el filtroChasis global para que renderGastosVeh lo use si se llama
+  window._filtroChasisActivo=v;
+}
+function _restoreChasisFocus(){
+  const el=document.getElementById('gveh-filtro-chasis');
+  if(el&&document.activeElement!==el&&window._chasisHadFocus){
+    const v=el.value;
+    el.focus();
+    el.setSelectionRange(v.length,v.length);
+    window._chasisHadFocus=false;
+  }
+}
 function limpiarFiltrosGastosVeh(){['gveh-filtro-veh','gveh-filtro-sup','gveh-filtro-status','gveh-filtro-desde','gveh-filtro-hasta'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});renderGastosVeh();}
 function exportarHojaCostos(){
   const filtroVeh=document.getElementById('gveh-filtro-veh')?.value||'';
