@@ -612,9 +612,17 @@ function doLogin(){
     actualizarLogoSidebar();
     showPage('dashboard');
     // El indicador Firebase se actualiza solo cuando fbCargar termina
-    setTimeout(checkAlerts,1500);
+    setTimeout(()=>{
+      const esAdmin=currentUser?.role==='admin';
+      const tieneAlertas=esAdmin||(currentUser?.modulos||[]).includes('alertas');
+      if(tieneAlertas)checkAlerts();
+    },1500);
     setTimeout(_verificarBackupAdmin,2500);
-    setTimeout(_verificarCumpleanosHoy,3500);
+    setTimeout(()=>{
+      const esAdmin=currentUser?.role==='admin';
+      const tieneCumple=esAdmin||(currentUser?.modulos||[]).includes('cumpleanos');
+      if(tieneCumple&&typeof _verificarCumpleanosHoy==='function')_verificarCumpleanosHoy();
+    },3500);
     if(typeof _iniciarPresenciaGlobal==='function')_iniciarPresenciaGlobal();
     // Fix 2D — si es admin, publicar nueva versión silenciosamente (marca que este código es el actual)
     if(user.role==='admin'){
@@ -1107,8 +1115,42 @@ function previewFoto(inputId,prevId){
   const file=document.getElementById(inputId)?.files[0];
   const prev=document.getElementById(prevId);
   if(!file||!prev)return;
+  // PDF: mostrar icono, no comprimir
+  if(file.type==='application/pdf'){
+    const reader=new FileReader();
+    reader.onload=e=>{
+      prev.src='';
+      prev.style.display='block';
+      prev.style.cssText='display:flex;align-items:center;justify-content:center;background:#fee2e2;border:1.5px dashed #ef4444;border-radius:6px;padding:8px;font-size:12px;font-weight:700;color:#dc2626;margin-top:4px';
+      prev.innerHTML='📄 PDF adjunto: '+escHtml(file.name);
+      // Store PDF data in a data attribute on the input
+      document.getElementById(inputId)._pdfData=e.target.result;
+    };
+    reader.readAsDataURL(file);
+    return;
+  }
+  // Image: compress using canvas (max 800px, quality 0.6)
+  const img=new Image();
   const reader=new FileReader();
-  reader.onload=e=>{prev.src=e.target.result;prev.style.display='block';};
+  reader.onload=e=>{
+    img.onload=()=>{
+      const MAX=800;
+      let w=img.width,h=img.height;
+      if(w>MAX||h>MAX){
+        if(w>h){h=Math.round(h*MAX/w);w=MAX;}
+        else{w=Math.round(w*MAX/h);h=MAX;}
+      }
+      const canvas=document.createElement('canvas');
+      canvas.width=w;canvas.height=h;
+      const ctx=canvas.getContext('2d');
+      ctx.drawImage(img,0,0,w,h);
+      const compressed=canvas.toDataURL('image/jpeg',0.6);
+      prev.src=compressed;
+      prev.style.display='block';
+      prev.style.cssText='display:block;width:100%;max-height:80px;object-fit:cover;border-radius:4px;margin-top:4px';
+    };
+    img.src=e.target.result;
+  };
   reader.readAsDataURL(file);
 }
 
@@ -1427,7 +1469,7 @@ function gastosVehiculo(vid){
   openModal(`💸 Gastos — ${v.codigo} ${v.marca} ${v.modelo} ${v.anio}`,`
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;background:var(--gray2);padding:12px;border-radius:8px">
       <div class="form-field" style="margin:0"><label style="font-size:10px">Costo del Vehículo (RD$)</label>
-        <input type="number" id="gv-costo-veh" value="${costo||0}" step="0.01" onchange="actualizarCostoVeh('${vid}',this.value)">
+        <input type="text" id="gv-costo-veh" value="${fmtMoneyDisplay(costo||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this);actualizarCostoVeh('${vid}',this.value.replace(/,/g,''))" onfocus="fmtMoneyFocus(this)">
         <div style="font-size:11px;color:var(--gray);margin-top:2px">USD: $${(costo/tasa).toFixed(2)}</div>
       </div>
       <div class="form-field" style="margin:0"><label style="font-size:10px">Suplidor</label>
@@ -1450,7 +1492,7 @@ function gastosVehiculo(vid){
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
         <div class="form-field" style="margin:0"><label style="font-size:10px">Tipo de Gasto</label><select id="gv-tipo">${TIPOS_GASTO_VEH.map(t=>`<option>${t}</option>`).join('')}</select></div>
         <div class="form-field" style="margin:0"><label style="font-size:10px">Descripción</label><input type="text" id="gv-desc" placeholder="Detalle"></div>
-        <div class="form-field" style="margin:0"><label style="font-size:10px">Monto (RD$)</label><input type="number" id="gv-monto" placeholder="0.00" step="0.01"></div>
+        <div class="form-field" style="margin:0"><label style="font-size:10px">Monto (RD$)</label><input type="number" id="gv-monto" placeholder="0.00" step="0.01" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
         <div class="form-field" style="margin:0"><label style="font-size:10px">Forma de Pago</label><select id="gv-forma"><option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select></div>
@@ -1466,7 +1508,7 @@ function gastosVehiculo(vid){
     `<button class="btn btn-secondary" onclick="closeModal()">Cerrar</button><button class="btn btn-primary" onclick="imprimirGastosVehiculo('${vid}')">🖨️ Imprimir</button>`);
 }
 
-function actualizarCostoVeh(vid,val){const i=DB.vehiculos.findIndex(v=>v.id===vid);if(i<0)return;DB.vehiculos[i].costo=parseFloat(val||0);sDB('vehiculos');}
+function actualizarCostoVeh(vid,val){const i=DB.vehiculos.findIndex(v=>v.id===vid);if(i<0)return;DB.vehiculos[i].costo=parseFloat(String(val||0).replace(/,/g,''));sDB('vehiculos');}
 function actualizarSuplidorVeh(vid,val){const i=DB.vehiculos.findIndex(v=>v.id===vid);if(i<0)return;DB.vehiculos[i].suplidor=val;sDB('vehiculos');}
 function agregarSuplidorRapido(vid){
   const nombre=prompt('Nombre del nuevo suplidor:');if(!nombre||!nombre.trim())return;
@@ -1477,7 +1519,7 @@ function agregarSuplidorRapido(vid){
   toast('Suplidor agregado ✓','success');
 }
 function agregarGastoVeh(vid){
-  const monto=parseFloat(document.getElementById('gv-monto').value||0);
+  const monto=parseFloat((document.getElementById('gv-monto').value||'0').replace(/,/g,''));
   if(!monto){toast('Ingresa el monto','error');return;}
   if(!DB.gastosVehiculos)DB.gastosVehiculos=[];
   const g={id:uid(),vehiculoId:vid,fecha:document.getElementById('gv-fecha').value,tipo:document.getElementById('gv-tipo').value,descripcion:document.getElementById('gv-desc').value,monto,formaPago:document.getElementById('gv-forma').value,cuenta:document.getElementById('gv-cuenta').value};
@@ -1878,7 +1920,7 @@ function editarGasto(i){
   const catList=['Mantenimiento','Publicidad','Oficina','Transporte','Servicios','Seguro','Legal','Salarios','Otro'];
   openModal('Editar Gasto',`
     <div class="form-row c2"><div class="form-field"><label>Fecha</label><input type="date" id="g-fecha" value="${g.fecha||today()}"></div><div class="form-field"><label>Categoría</label><select id="g-cat">${catList.map(c=>`<option ${c===g.categoria?'selected':''}>${c}</option>`).join('')}</select></div></div>
-    <div class="form-row c2"><div class="form-field"><label>Suplidor</label><select id="g-sup"><option value="">Sin suplidor</option>${DB.suplidores.map(s=>`<option ${s.nombre===g.suplidor?'selected':''}>${escHtml(s.nombre)}</option>`).join('')}</select></div><div class="form-field"><label>Monto</label><input type="number" id="g-monto" value="${g.monto||0}" step="0.01"></div></div>
+    <div class="form-row c2"><div class="form-field"><label>Suplidor</label><select id="g-sup"><option value="">Sin suplidor</option>${DB.suplidores.map(s=>`<option ${s.nombre===g.suplidor?'selected':''}>${escHtml(s.nombre)}</option>`).join('')}</select></div><div class="form-field"><label>Monto</label><input type="text" id="g-monto" value="${fmtMoneyDisplay(g.monto||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)"></div></div>
     <div class="form-row c2"><div class="form-field"><label>Forma de Pago</label><select id="g-forma"><option value="CONTADO" ${(g.formaPago||'CONTADO')==='CONTADO'?'selected':''}>Contado</option><option value="CREDITO" ${g.formaPago==='CREDITO'?'selected':''}>Crédito</option></select></div><div class="form-field"><label>Estado</label><select id="g-status"><option value="SALDADO" ${(g.statusGasto||'SALDADO')==='SALDADO'?'selected':''}>Saldado</option><option value="ABONADO" ${g.statusGasto==='ABONADO'?'selected':''}>Abonado</option><option value="PENDIENTE" ${g.statusGasto==='PENDIENTE'?'selected':''}>Pendiente</option></select></div></div>
     <div class="form-field"><label>Descripción</label><input type="text" id="g-desc" value="${escHtml(g.descripcion||'')}"></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="guardarEditGasto(${i})">💾 Guardar</button>`);
@@ -1887,7 +1929,7 @@ function guardarEditGasto(i){
   DB.gastos[i].fecha=document.getElementById('g-fecha').value;
   DB.gastos[i].categoria=document.getElementById('g-cat').value;
   DB.gastos[i].suplidor=document.getElementById('g-sup').value;
-  DB.gastos[i].monto=parseFloat(document.getElementById('g-monto').value||0);
+  DB.gastos[i].monto=parseFloat((document.getElementById('g-monto').value||'0').replace(/,/g,''));
   DB.gastos[i].formaPago=document.getElementById('g-forma').value;
   DB.gastos[i].statusGasto=document.getElementById('g-status').value;
   DB.gastos[i].descripcion=document.getElementById('g-desc').value;
@@ -1999,8 +2041,8 @@ function agregarCatGasto(){
   toast('Categoría "'+n+'" agregada ✓','success');
 }
 function calcPendienteGasto(){
-  const factura=parseFloat(document.getElementById('g-monto-factura')?.value||0);
-  const abonado=parseFloat(document.getElementById('g-monto-abonado')?.value||0);
+  const factura=parseFloat((document.getElementById('g-monto-factura')?.value||'0').replace(/,/g,''));
+  const abonado=parseFloat((document.getElementById('g-monto-abonado')?.value||'0').replace(/,/g,''));
   const pend=document.getElementById('g-monto-pendiente');
   if(pend)pend.value=fmtMoneyDisplay(Math.max(0,factura-abonado));
   // Actualizar estado automático
@@ -2014,9 +2056,9 @@ function calcPendienteGasto(){
 }
 function guardarGasto(idx){
   const desc=document.getElementById('g-desc').value.trim();
-  const montoFactura=parseFloat(document.getElementById('g-monto-factura')?.value||document.getElementById('g-monto')?.value||0);
+  const montoFactura=parseFloat((document.getElementById('g-monto-factura')?.value||document.getElementById('g-monto')?.value||'0').replace(/,/g,''));
   if(!montoFactura||!desc){toast('Monto y descripción son requeridos','error');return;}
-  const montoAbonado=parseFloat(document.getElementById('g-monto-abonado')?.value||0);
+  const montoAbonado=parseFloat((document.getElementById('g-monto-abonado')?.value||'0').replace(/,/g,''));
   const montoPendiente=Math.max(0,montoFactura-montoAbonado);
   const g={
     id:idx!==undefined?DB.gastos[idx].id:uid(),
@@ -2043,14 +2085,20 @@ let nomSelectedId=null,nomPagoSelectedId=null;
 function renderNomina(){
   const tab=document.getElementById('nom-tab')?.value||'empleados';
   const mesFiltro=document.getElementById('nom-mes')?.value||'';
-  const total=DB.nomina.filter(e=>e.activo).reduce((a,e)=>a+parseFloat(e.salario||0),0);
+  const total=DB.nomina.filter(e=>e.activo).reduce((a,e)=>{
+    const s=parseFloat(e.salario||0);
+    const fp=(e.formaPago||'Mensual').toLowerCase();
+    if(fp.includes('seman'))return a+(s*4);
+    if(fp.includes('quince'))return a+(s*2);
+    return a+s;
+  },0);
   const ds='background:#e2e8f0;color:#adb5bd;cursor:not-allowed;border:1px solid #dee2e6';
   const pagos=(DB.nominaPagos||[]);
   const pagosFilt=mesFiltro?pagos.filter(p=>p.mes===mesFiltro):pagos;
   const totalPagado=pagosFilt.reduce((a,p)=>a+parseFloat(p.monto||0),0);
   document.getElementById('page-nomina').innerHTML=`
     <div class="page-header">
-      <div><h1>👷 Nómina</h1><p>${DB.nomina.length} empleados — Nómina mensual: ${fmt(total)}</p></div>
+      <div><h1>👷 Nómina</h1><p>${DB.nomina.length} empleados — Nómina estimada al mes: ${fmt(total)}</p></div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         <input type="month" id="nom-mes" value="${mesFiltro}" onchange="renderNomina()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
         <button class="btn btn-secondary btn-sm" onclick="document.getElementById('nom-mes').value='';renderNomina()">🔄 Todo</button>
@@ -2160,11 +2208,17 @@ function nomAccion(accion){
     if(!p)return;
     const emp=DB.nomina.find(e=>e.id===p.empleadoId);
     openModal('Editar Pago',`
-      <div class="form-field"><label>Fecha</label><input type="date" id="ep-fecha" value="${p.fecha||''}"></div>
-      <div class="form-field"><label>Monto</label><input type="number" id="ep-monto" value="${p.monto||0}" step="0.01" min="0"></div>
-      <div class="form-field"><label>Tipo</label><select id="ep-tipo">
-        ${[['MEN','Mensual'],['1Q','1ra Quincena'],['2Q','2da Quincena'],['SEM','Semanal'],['COM','Comision']].map(([v,l])=>`<option value="${v}" ${p.tipo===v?'selected':''}>${l}</option>`).join('')}
-      </select></div>`,
+      <div class="form-row c2">
+        <div class="form-field"><label>Fecha</label><input type="date" id="ep-fecha" value="${p.fecha||''}"></div>
+        <div class="form-field"><label>Tipo</label><select id="ep-tipo">
+          ${[['MEN','Mensual'],['1Q','1ra Quincena'],['2Q','2da Quincena'],['SEM','Semanal'],['COM','Comision']].map(([v,l])=>`<option value="${v}" ${p.tipo===v?'selected':''}>${l}</option>`).join('')}
+        </select></div>
+      </div>
+      <div class="form-row c2">
+        <div class="form-field"><label>Monto</label><input type="number" id="ep-monto" value="${fmtMoneyDisplay(p.monto||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" step="0.01" min="0"></div>
+        <div class="form-field"><label>Cuenta</label><select id="ep-cuenta">${(DB.config.cuentas||['Caja General']).map(c=>`<option ${c===(p.cuenta||'')?'selected':''}>${escHtml(c)}</option>`).join('')}</select></div>
+      </div>
+      <div class="form-field"><label>Nota</label><input type="text" id="ep-nota" value="${escHtml(p.nota||'')}" placeholder="Opcional"></div>`,
       `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
        <button class="btn btn-primary" onclick="guardarEditPagoNomina('${p.id}')">Guardar</button>`);
     return;
@@ -2186,14 +2240,15 @@ function nomAccion(accion){
 }
 function guardarEditPagoNomina(pid){
   const fecha=document.getElementById('ep-fecha')?.value;
-  const monto=parseFloat(document.getElementById('ep-monto')?.value||0);
+  const monto=parseFloat((document.getElementById('ep-monto')?.value||'0').replace(/,/g,''));
   const tipo=document.getElementById('ep-tipo')?.value||'MEN';
   const nota=document.getElementById('ep-nota')?.value?.trim()||'';
   if(!fecha){toast('La fecha es requerida','error');return;}
   if(!monto||monto<=0){toast('El monto debe ser mayor a 0','error');return;}
   const idx=(DB.nominaPagos||[]).findIndex(p=>p.id===pid);
   if(idx<0){toast('Pago no encontrado','error');return;}
-  DB.nominaPagos[idx]={...DB.nominaPagos[idx],fecha,monto,tipo,nota};
+  const cuenta=document.getElementById('ep-cuenta')?.value||DB.nominaPagos[idx].cuenta||'';
+  DB.nominaPagos[idx]={...DB.nominaPagos[idx],fecha,monto,tipo,nota,cuenta};
   sDB('nominaPagos');closeModal();toast('Pago actualizado ✓','success');renderNomina();
 }
 function registrarPagoNomina(i){
@@ -2216,7 +2271,7 @@ function registrarPagoNomina(i){
     </div>
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto</label>
-        <input type="number" id="np-monto" value="${(salario).toFixed(2)}" step="0.01">
+        <input type="number" id="np-monto" value="${fmtMoneyDisplay(salario)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" step="0.01">
       </div>
       <div class="form-field"><label>Cuenta</label>
         <select id="np-cuenta">${(DB.config.cuentas||['Caja General']).map(c=>`<option>${escHtml(c)}</option>`).join('')}</select>
@@ -2233,7 +2288,7 @@ function calcMontoNomina(salario){
   if(inp)inp.value=fmtMoneyDisplay(m);
 }
 function guardarPagoNomina(i){
-  const monto=parseFloat(document.getElementById('np-monto').value||0);
+  const monto=parseFloat((document.getElementById('np-monto').value||'0').replace(/,/g,''));
   if(!monto){toast('Ingresa el monto','error');return;}
   const e=DB.nomina[i];
   const mes=document.getElementById('np-mes').value;
@@ -2686,20 +2741,20 @@ function nuevoEmpleado(){
   openModal('Nuevo Empleado',`
     <div class="form-row c2"><div class="form-field"><label class="required">Nombre Completo</label><input type="text" id="e-nombre"></div><div class="form-field"><label>Cargo / Función</label><input type="text" id="e-cargo"></div></div>
     <div class="form-row c3"><div class="form-field"><label>Documento (Cédula)</label><input type="text" id="e-doc" maxlength="13" placeholder="000-0000000-0" oninput="fmtCedulaInput(this)"></div><div class="form-field"><label>Teléfono</label><input type="text" id="e-tel" maxlength="12" placeholder="000-000-0000" oninput="fmtTelInput(this)"></div><div class="form-field"><label>Fecha Ingreso</label><input type="date" id="e-ingreso" value="${today()}"></div></div>
-    <div class="form-row c3"><div class="form-field"><label>Forma de Pago</label><select id="e-pago"><option>Mensual</option><option>Quincenal</option><option>Semanal</option></select></div><div class="form-field"><label class="required">Salario Base</label><input type="number" id="e-salario" step="0.01"></div><div class="form-field"><label>Estado</label><select id="e-activo"><option value="true">Activo</option><option value="false">Inactivo</option></select></div></div>
+    <div class="form-row c3"><div class="form-field"><label>Forma de Pago</label><select id="e-pago"><option>Mensual</option><option>Quincenal</option><option>Semanal</option></select></div><div class="form-field"><label class="required">Salario Base</label><input type="text" id="e-salario" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" placeholder="0.00"></div><div class="form-field"><label>Estado</label><select id="e-activo"><option value="true">Activo</option><option value="false">Inactivo</option></select></div></div>
     <div class="form-row c2">
-      <div class="form-field"><label>📷 Doc. Frente</label><input type="file" id="e-doc-f" accept="image/*" onchange="previewFoto('e-doc-f','e-doc-f-prev')"><img id="e-doc-f-prev" style="display:none;width:100%;max-height:80px;object-fit:cover;border-radius:4px;margin-top:4px"></div>
-      <div class="form-field"><label>📷 Doc. Dorso</label><input type="file" id="e-doc-d" accept="image/*" onchange="previewFoto('e-doc-d','e-doc-d-prev')"><img id="e-doc-d-prev" style="display:none;width:100%;max-height:80px;object-fit:cover;border-radius:4px;margin-top:4px"></div>
+      <div class="form-field"><label>📷 Doc. Frente</label><input type="file" id="e-doc-f" accept="image/jpeg,image/png,application/pdf" onchange="previewFoto('e-doc-f','e-doc-f-prev')"><img id="e-doc-f-prev" style="display:none;width:100%;max-height:80px;object-fit:cover;border-radius:4px;margin-top:4px"></div>
+      <div class="form-field"><label>📷 Doc. Dorso</label><input type="file" id="e-doc-d" accept="image/jpeg,image/png,application/pdf" onchange="previewFoto('e-doc-d','e-doc-d-prev')"><img id="e-doc-d-prev" style="display:none;width:100%;max-height:80px;object-fit:cover;border-radius:4px;margin-top:4px"></div>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="guardarEmpleado()">💾 Guardar</button>`);
 }
 function guardarEmpleado(idx){
   const nombre=document.getElementById('e-nombre').value.trim();
-  const salario=parseFloat(document.getElementById('e-salario').value||0);
+  const salario=parseFloat((document.getElementById('e-salario').value||'0').replace(/,/g,''));
   if(!nombre||!salario){toast('Nombre y salario son requeridos','error');return;}
   const fEl=document.getElementById('e-doc-f-prev');const dEl=document.getElementById('e-doc-d-prev');
   const activoVal=document.getElementById('e-activo')?.value;
-  const e={id:idx!==undefined?DB.nomina[idx].id:uid(),nombre,cargo:document.getElementById('e-cargo').value,documento:document.getElementById('e-doc')?.value||'',fechaIngreso:document.getElementById('e-ingreso').value,formaPago:document.getElementById('e-pago').value,salario,telefono:document.getElementById('e-tel').value,activo:activoVal!=='false',docFrente:fEl?.style.display!=='none'&&fEl?.src?fEl.src:(idx!==undefined?DB.nomina[idx]?.docFrente||'':''),docDorso:dEl?.style.display!=='none'&&dEl?.src?dEl.src:(idx!==undefined?DB.nomina[idx]?.docDorso||'':''),pagos:idx!==undefined?DB.nomina[idx].pagos||[]:[]};
+  const e={id:idx!==undefined?DB.nomina[idx].id:uid(),nombre,cargo:document.getElementById('e-cargo').value,documento:(document.getElementById('e-documento')?.value||document.getElementById('e-doc')?.value||'').trim(),fechaIngreso:document.getElementById('e-ingreso').value,formaPago:document.getElementById('e-pago').value,salario,telefono:document.getElementById('e-tel').value,activo:activoVal!=='false',docFrente:fEl?.style.display!=='none'&&fEl?.src?fEl.src:(idx!==undefined?DB.nomina[idx]?.docFrente||'':''),docDorso:dEl?.style.display!=='none'&&dEl?.src?dEl.src:(idx!==undefined?DB.nomina[idx]?.docDorso||'':''),pagos:idx!==undefined?DB.nomina[idx].pagos||[]:[]};
   if(idx!==undefined)DB.nomina[idx]=e;else DB.nomina.push(e);
   sDB('nomina');closeModal();toast('Empleado guardado ✓','success');renderNomina();
 }
@@ -2707,7 +2762,8 @@ function editarEmpleado(i){
   const e=DB.nomina[i];
   openModal('Editar Empleado',`
     <div class="form-row c2"><div class="form-field"><label class="required">Nombre</label><input type="text" id="e-nombre" value="${escHtml(e.nombre||'')}"></div><div class="form-field"><label>Cargo</label><input type="text" id="e-cargo" value="${escHtml(e.cargo||'')}"></div></div>
-    <div class="form-row c3"><div class="form-field"><label>Fecha Inicio</label><input type="date" id="e-ingreso" value="${e.fechaIngreso||today()}"></div><div class="form-field"><label>Forma de Pago</label><select id="e-pago">${['Mensual','Quincenal','Semanal'].map(p=>`<option ${p===e.formaPago?'selected':''}>${p}</option>`).join('')}</select></div><div class="form-field"><label class="required">Salario</label><input type="number" id="e-salario" value="${e.salario||0}" step="0.01"></div></div>
+    <div class="form-row c2"><div class="form-field"><label>Documento (Cédula/Pasaporte)</label><input type="text" id="e-documento" value="${escHtml(e.documento||'')}" placeholder="000-0000000-0" oninput="fmtCedulaInput(this)"></div><div class="form-field"><label>Estado</label><select id="e-activo"><option value="true" ${e.activo!==false?'selected':''}>Activo</option><option value="false" ${e.activo===false?'selected':''}>Inactivo</option></select></div></div>
+    <div class="form-row c3"><div class="form-field"><label>Fecha Inicio</label><input type="date" id="e-ingreso" value="${e.fechaIngreso||today()}"></div><div class="form-field"><label>Forma de Pago</label><select id="e-pago">${['Mensual','Quincenal','Semanal'].map(p=>`<option ${p===e.formaPago?'selected':''}>${p}</option>`).join('')}</select></div><div class="form-field"><label class="required">Salario</label><input type="text" id="e-salario" value="${fmtMoneyDisplay(e.salario||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)"></div></div>
     <div class="form-field"><label>Teléfono</label><input type="text" id="e-tel" value="${escHtml(e.telefono||'')}" maxlength="12" placeholder="000-000-0000" oninput="fmtTelInput(this)"></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="guardarEmpleado(${i})">💾 Actualizar</button>`);
 }
@@ -3047,9 +3103,9 @@ function renderCuentas(){
   document.getElementById('page-cuentas').innerHTML=`
     <div class="page-header">
       <div><h1>🏦 Cuentas Bancarias</h1><p>${bcs.length} banco(s) — ${total} cuenta(s) registradas</p></div>
-      ${esAdmin?`<button class="btn btn-primary" onclick="nuevoBancoCuenta()">➕ Agregar Banco</button>`:''}
+      ${(esAdmin||currentUser?.permisos?.editarCuentas)?`<button class="btn btn-primary" onclick="nuevoBancoCuenta()">➕ Agregar Banco</button>`:''}
     </div>
-    ${bcs.length===0?`<div class="card" style="text-align:center;padding:48px"><div style="font-size:48px;margin-bottom:12px">🏦</div><div style="font-size:16px;font-weight:700;color:var(--navy)">Sin cuentas bancarias</div><p style="color:var(--gray);margin-top:8px">Agrega un banco para empezar</p>${esAdmin?`<div style="margin-top:16px"><button class="btn btn-primary" onclick="nuevoBancoCuenta()">➕ Agregar Banco</button></div>`:''}</div>`:`
+    ${bcs.length===0?`<div class="card" style="text-align:center;padding:48px"><div style="font-size:48px;margin-bottom:12px">🏦</div><div style="font-size:16px;font-weight:700;color:var(--navy)">Sin cuentas bancarias</div><p style="color:var(--gray);margin-top:8px">Agrega un banco para empezar</p>${(esAdmin||currentUser?.permisos?.editarCuentas)?`<div style="margin-top:16px"><button class="btn btn-primary" onclick="nuevoBancoCuenta()">➕ Agregar Banco</button></div>`:''}</div>`:`
     <div style="display:flex;flex-direction:column;gap:16px">
       ${bcs.map((b,bi)=>`
         <div class="card" style="margin-bottom:0">
@@ -3058,7 +3114,7 @@ function renderCuentas(){
               <div style="font-size:28px">🏦</div>
               <div><div style="font-size:16px;font-weight:800">${escHtml(b.banco)}</div><div style="font-size:12px;color:var(--gray)">${(b.cuentas||[]).length} cuenta(s)</div></div>
             </div>
-            ${esAdmin?`<div style="display:flex;gap:6px">
+            ${(esAdmin||currentUser?.permisos?.editarCuentas)?`<div style="display:flex;gap:6px">
               <button class="btn btn-secondary btn-sm" onclick="agregarCuentaABanco(${bi})">➕ Cuenta</button>
               <button class="btn btn-sm" style="background:var(--red2);color:var(--red)" onclick="eliminarBancoCuentas(${bi})">🗑</button>
             </div>`:''}
@@ -3072,7 +3128,7 @@ function renderCuentas(){
                     <div style="font-size:15px;font-weight:800;font-family:monospace;letter-spacing:1px">${escHtml(c.numero||'—')}</div>
                     <div style="font-size:11px;color:var(--gray);margin-top:4px">${(c.tipo||'').includes('Corriente')?'🔄 Cuenta Corriente':'💰 Cuenta de Ahorro'}</div>
                   </div>
-                  ${esAdmin?`<button class="btn btn-sm" style="background:var(--red2);color:var(--red);padding:4px 8px" onclick="eliminarCuentaBancoCuentas(${bi},${ci})">✕</button>`:''}
+                  ${(esAdmin||currentUser?.permisos?.editarCuentas)?`<button class="btn btn-sm" style="background:var(--red2);color:var(--red);padding:4px 8px" onclick="eliminarCuentaBancoCuentas(${bi},${ci})">✕</button>`:''}
                 </div>
               </div>`).join('')||`<div style="color:var(--gray);font-size:13px;padding:8px">Sin cuentas agregadas</div>`}
           </div>
@@ -3321,7 +3377,7 @@ function renderConfig(){
           <div style="display:flex;gap:10px;align-items:center">
             ${c.logoData?`<img src="${c.logoData}" style="width:64px;height:64px;object-fit:contain;border-radius:8px;border:1px solid var(--gray3);background:#f8fafc" id="cf-logo-preview">`:'<div id="cf-logo-preview" style="width:64px;height:64px;border-radius:8px;border:2px dashed var(--gray3);display:flex;align-items:center;justify-content:center;color:var(--gray);font-size:24px">🏢</div>'}
             <div>
-              <input type="file" id="cf-logo-file" accept="image/*" style="display:none" onchange="cargarLogoConfig(this)">
+              <input type="file" id="cf-logo-file" accept="image/jpeg,image/png,application/pdf" style="display:none" onchange="cargarLogoConfig(this)">
               <button class="btn btn-secondary btn-sm" onclick="document.getElementById('cf-logo-file').click()">📷 Subir Logo</button>
               ${c.logoData?`<button class="btn btn-red btn-sm" style="margin-top:4px" onclick="DB.config.logoData='';sDB('config');renderConfig();toast('Logo eliminado','success')">🗑 Quitar</button>`:''}
             </div>
@@ -4011,12 +4067,14 @@ function renderGastosVeh(){
   const filtroStatus=document.getElementById('gveh-filtro-status')?.value||'';
   const filtroDesde=document.getElementById('gveh-filtro-desde')?.value||'';
   const filtroHasta=document.getElementById('gveh-filtro-hasta')?.value||'';
+  const filtroChasis=(document.getElementById('gveh-filtro-chasis')?.value||'').trim().toUpperCase();
   let gastos=DB.gastosVehiculos||[];
   if(filtroDesde)gastos=gastos.filter(g=>g.fecha&&g.fecha>=filtroDesde);
   if(filtroHasta)gastos=gastos.filter(g=>g.fecha&&g.fecha<=filtroHasta);
   if(filtroVeh)gastos=gastos.filter(g=>g.vehiculoId===filtroVeh);
   if(filtroSup)gastos=gastos.filter(g=>g.suplidor===filtroSup);
   if(filtroStatus)gastos=gastos.filter(g=>(g.statusGasto||'PENDIENTE')===filtroStatus);
+  if(filtroChasis)gastos=gastos.filter(g=>(g.vin||'').toUpperCase().includes(filtroChasis));
   // Separar por moneda
   const gastosRD=gastos.filter(g=>(g.moneda||'RD$')==='RD$');
   const gastosUSD=gastos.filter(g=>g.moneda==='USD');
@@ -4075,6 +4133,10 @@ function renderGastosVeh(){
           <label style="font-size:10px;font-weight:700;color:var(--gray)">Hasta</label>
           <input type="date" id="gveh-filtro-hasta" onchange="renderGastosVeh()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
         </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <label style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gray)">Buscar por Chasis/VIN</label>
+          <input type="text" id="gveh-filtro-chasis" placeholder="Ej: 1HGBH41JXMN109186" value="${filtroChasis}" oninput="renderGastosVeh()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px;text-transform:uppercase">
+        </div>
         <div style="display:flex;gap:6px;align-items:flex-end">
           <button class="btn btn-secondary btn-sm" onclick="limpiarFiltrosGastosVeh()">&#8635;</button>
           <button class="btn btn-sm" style="background:var(--navy);color:#fff" onclick="exportarHojaCostos()">📄 Hoja de Costos</button>
@@ -4111,12 +4173,12 @@ function renderGastosVeh(){
           <th>Vehículo</th>
           <th>Suplidor</th>
           <th>Tipo de Gasto</th>
-          <th>Moneda</th>
           <th>Banco / Cuenta</th>
           <th>Factura</th>
           <th>Abonado</th>
           <th>Pendiente</th>
           <th>F. Pago</th>
+          <th>N° Factura</th>
           <th>Estado</th>
         </tr></thead>
         <tbody>${gastos.length?gastos.slice().reverse().map(g=>{
@@ -4132,13 +4194,14 @@ function renderGastosVeh(){
             <td style="font-size:12px;font-weight:600">${v?escHtml(v.codigo+' '+v.marca+' '+v.modelo):'—'}</td>
             <td style="font-size:12px">${escHtml(g.suplidor||'—')}</td>
             <td><span class="badge badge-amber" style="font-size:11px">${escHtml(g._origen==='manual'?(g.descripcion||g.tipo||'—'):g.tipo||'—')}</span></td>
-            <td><span class="badge badge-blue" style="font-size:11px">${g.moneda||'RD$'}</span></td>
+            
             <td style="font-size:12px">${escHtml(g.cuenta||'—')}</td>
             <td style="font-weight:700;color:var(--navy)">${g.moneda==='USD'?'$'+parseFloat(g.montoFactura||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(g.montoFactura||0)}</td>
             <td style="color:var(--green);font-weight:600">${g.moneda==='USD'?'$'+parseFloat(g.montoPagado||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(g.montoPagado||0)}</td>
             <td style="font-weight:700;color:${parseFloat(g.montoPendiente||0)>0?'var(--red)':'var(--green)'}">${g.moneda==='USD'?'$'+parseFloat(g.montoPendiente||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(g.montoPendiente||0)}</td>
             <td style="font-size:12px;color:var(--gray)">${fmtDate(g.fechaPago)||'—'}</td>
-            <td><span class="badge ${sColor[g.statusGasto||'PENDIENTE']||'badge-gray'}">${g.statusGasto||'PENDIENTE'}</span></td>
+            <td style="font-size:12px">${escHtml(g.noFactura||'—')}</td>
+            <td><span class="badge ${sColor[g.statusGasto||'PENDIENTE']||'badge-gray'}">${g.statusGasto||'PENDIENTE'}</span>${g.observacion?`<div style="font-size:10px;color:var(--gray);margin-top:2px" title="${escHtml(g.observacion)}">📝 ${escHtml(g.observacion.length>20?g.observacion.substring(0,20)+'...':g.observacion)}</div>`:''}</td>
 
           </tr>`;
         }).join(''):'<tr><td colspan="12" style="text-align:center;padding:24px;color:var(--gray)">Sin gastos registrados</td></tr>'}
@@ -4224,6 +4287,14 @@ function nuevoGastoVeh(){
       <div class="form-field"><label>Fecha de Pago</label>
         <input type="date" id="ngv-fechapago">
       </div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label>N° Factura del Suplidor</label>
+        <input type="text" id="ngv-nofactura" placeholder="Ej: FAC-0001">
+      </div>
+      <div class="form-field"><label>Observación / Comentario</label>
+        <input type="text" id="ngv-observacion" placeholder="Detalle adicional...">
+      </div>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
      <button class="btn btn-primary" onclick="guardarNuevoGastoVeh()">💾 Guardar</button>`);
@@ -4300,6 +4371,8 @@ function guardarNuevoGastoVeh(){
     montoPendiente:pendiente,
     fecha:document.getElementById('ngv-fecha').value,
     fechaPago:document.getElementById('ngv-fechapago').value,
+    noFactura:(document.getElementById('ngv-nofactura')?.value||'').trim(),
+    observacion:(document.getElementById('ngv-observacion')?.value||'').trim(),
     statusGasto:pendiente<=0?'PAGADO':abono>0?'ABONADO':'PENDIENTE'
   };
   if(!DB.gastosVehiculos)DB.gastosVehiculos=[];
@@ -4333,7 +4406,7 @@ function abonarGastoVeh(gid){
     </div>
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto a Pagar</label>
-        <input type="number" id="abgv-monto" value="${g.montoPendiente||0}" step="0.01" max="${g.montoPendiente||0}">
+        <input type="number" id="abgv-monto" value="${fmtMoneyDisplay(g.montoPendiente||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" step="0.01">
       </div>
       <div class="form-field"><label>Cuenta de Salida</label>
         <select id="abgv-cuenta">${cuentas.map(c=>`<option ${c===g.cuenta?'selected':''}>${escHtml(c)}</option>`).join('')}</select>
@@ -4349,7 +4422,7 @@ function abonarGastoVeh(gid){
 }
 
 function confirmarAbonoGastoVeh(i){
-  const monto=parseFloat(document.getElementById('abgv-monto').value||0);
+  const monto=parseFloat((document.getElementById('abgv-monto').value||'0').replace(/,/g,''));
   if(!monto||monto<=0){toast('Ingresa un monto válido','error');return;}
   const g=DB.gastosVehiculos[i];
   if(monto>parseFloat(g.montoPendiente||0)){toast('El monto no puede superar el pendiente','error');return;}
@@ -4433,6 +4506,14 @@ function editarGastoVeh(gid){
       <div class="form-field"><label>Fecha de Pago</label>
         <input type="date" id="egv-fechapago" value="${g.fechaPago||''}">
       </div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label>N° Factura del Suplidor</label>
+        <input type="text" id="egv-nofactura" value="${escHtml(g.noFactura||'')}" placeholder="Ej: FAC-0001">
+      </div>
+      <div class="form-field"><label>Observación / Comentario</label>
+        <input type="text" id="egv-observacion" value="${escHtml(g.observacion||'')}" placeholder="Detalle adicional...">
+      </div>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
      <button class="btn btn-primary" onclick="guardarEditGastoVeh(${i})">💾 Actualizar</button>`);
@@ -4476,6 +4557,8 @@ function guardarEditGastoVeh(i){
   DB.gastosVehiculos[i].montoPagado=pagado;
   DB.gastosVehiculos[i].montoPendiente=pendiente<=0?0:pendiente;
   DB.gastosVehiculos[i].statusGasto=pendiente<=0?'PAGADO':pagado>0?'ABONADO':'PENDIENTE';
+  DB.gastosVehiculos[i].noFactura=(document.getElementById('egv-nofactura')?.value||'').trim();
+  DB.gastosVehiculos[i].observacion=(document.getElementById('egv-observacion')?.value||'').trim();
   // Recalcular costo del vehículo
   const vid=DB.gastosVehiculos[i].vehiculoId;
   const iv=DB.vehiculos.findIndex(v=>v.id===vid);
@@ -5133,7 +5216,7 @@ function nuevaVenta(){
         <div class="form-row c2" style="margin-bottom:0">
           <div class="form-field" style="margin:0"><label style="font-size:10px">Monto Recibido</label><input type="text" id="sv-rec-monto" placeholder="0.00" oninput="fmtMoneyInput(this);calcPend()"></div>
           <div class="form-field" style="margin:0"><label style="font-size:10px">Adjuntar Matrícula</label>
-            <input type="file" id="sv-rec-matricula" accept="image/*" onchange="previewFoto('sv-rec-matricula','sv-rec-mat-prev')">
+            <input type="file" id="sv-rec-matricula" accept="image/jpeg,image/png,application/pdf" onchange="previewFoto('sv-rec-matricula','sv-rec-mat-prev')">
             <img id="sv-rec-mat-prev" style="display:none;width:100%;max-height:60px;object-fit:cover;border-radius:4px;margin-top:4px">
           </div>
         </div>
@@ -5206,7 +5289,7 @@ function registrarEntrega(ventaId){
     </div>
     <div class="form-field">
       <label>📷 Foto de Placa / Matrícula (adjuntar)</label>
-      <input type="file" id="ent-foto" accept="image/*" onchange="previewFoto('ent-foto','ent-foto-prev')">
+      <input type="file" id="ent-foto" accept="image/jpeg,image/png,application/pdf" onchange="previewFoto('ent-foto','ent-foto-prev')">
       <img id="ent-foto-prev" style="display:none;width:100%;max-height:140px;object-fit:cover;border-radius:8px;margin-top:8px;border:2px solid var(--green)">
     </div>
     <div class="form-field">
@@ -6179,11 +6262,11 @@ function formCliente(c){return`
   </div>
   <div class="form-row c2">
     <div class="form-field"><label>📷 Documento Frente</label>
-      <input type="file" id="c-doc-frente" accept="image/*" onchange="previewFoto('c-doc-frente','c-doc-frente-prev')">
+      <input type="file" id="c-doc-frente" accept="image/jpeg,image/png,application/pdf" onchange="previewFoto('c-doc-frente','c-doc-frente-prev')">
       <img id="c-doc-frente-prev" src="${c?.docFrente||''}" style="display:${c?.docFrente?'block':'none'};width:100%;max-height:100px;object-fit:cover;border-radius:6px;margin-top:6px">
     </div>
     <div class="form-field"><label>📷 Documento Dorso</label>
-      <input type="file" id="c-doc-dorso" accept="image/*" onchange="previewFoto('c-doc-dorso','c-doc-dorso-prev')">
+      <input type="file" id="c-doc-dorso" accept="image/jpeg,image/png,application/pdf" onchange="previewFoto('c-doc-dorso','c-doc-dorso-prev')">
       <img id="c-doc-dorso-prev" src="${c?.docDorso||''}" style="display:${c?.docDorso?'block':'none'};width:100%;max-height:100px;object-fit:cover;border-radius:6px;margin-top:6px">
     </div>
   </div>`;}
@@ -6629,16 +6712,41 @@ function renderCXP(){
           const vinMatch=tipoTxt.match(/VIN[.# :-]*([A-HJ-NPR-Z0-9]{5,17})/i);
           const vinFinal=v?v.vin:(g.vin||'')|| (vinMatch?vinMatch[1]:'');
           let nombreVeh='';
-          if(v) nombreVeh=v.marca+' '+v.modelo+(v.anio?' '+v.anio:'');
-          else if(g.vehiculo&&g.vehiculo!=='MANUAL') nombreVeh=g.vehiculo;
-          else if(g._origen!=='manual'&&tipoTxt&&tipoTxt!=='MANUAL'){
+          let vehNoEncontrado=false;
+          if(v){
+            nombreVeh=v.marca+' '+v.modelo+(v.anio?' '+v.anio:'');
+          } else if(g.vehiculo&&g.vehiculo!=='MANUAL'&&g.vehiculo.trim()){
+            // Campo vehiculo guardado como texto en el gasto
+            nombreVeh=g.vehiculo;
+          } else if(g._origen==='auto'&&g.vehiculoId){
+            // Gasto automático con vehiculoId que no se encuentra en DB — datos de otro dispositivo
+            // Intentar por codigo guardado en el gasto
+            if(g.codigo){
+              const vByCod=DB.vehiculos.find(x=>x.codigo&&x.codigo.toUpperCase()===g.codigo.toUpperCase());
+              if(vByCod){ nombreVeh=vByCod.marca+' '+vByCod.modelo+(vByCod.anio?' '+vByCod.anio:''); }
+            }
+            // Intentar por VIN guardado en el gasto
+            if(!nombreVeh&&g.vin){
+              const vByVin=DB.vehiculos.find(x=>x.vin&&x.vin.toUpperCase()===g.vin.toUpperCase());
+              if(vByVin){ nombreVeh=vByVin.marca+' '+vByVin.modelo+(vByVin.anio?' '+vByVin.anio:''); }
+            }
+            if(!nombreVeh) vehNoEncontrado=true;
+          } else if(g._origen==='manual'){
+            const descUpper=(g.descripcion||g.tipo||'').toUpperCase();
+            const vinInDesc=descUpper.match(/[A-HJ-NPR-Z0-9]{17}/);
+            if(vinInDesc){
+              const vByVin=DB.vehiculos.find(x=>x.vin&&x.vin.toUpperCase()===vinInDesc[0]);
+              if(vByVin) nombreVeh=vByVin.marca+' '+vByVin.modelo+(vByVin.anio?' '+vByVin.anio:'');
+            }
+            if(!nombreVeh) nombreVeh='—';
+          } else if(tipoTxt&&tipoTxt!=='MANUAL'){
             const txtLimpio=tipoTxt.replace(/VIN[.# :-]*[A-HJ-NPR-Z0-9]{5,17}/gi,'').replace(/\s+/g,' ').trim();
             if(txtLimpio&&txtLimpio.length>3&&txtLimpio!=='MANUAL') nombreVeh=txtLimpio;
           }
           return`<tr>
             <td style="font-size:11px;color:var(--gray)">${fmtDate(g.fecha)}</td>
             <td style="font-weight:600;font-size:12px;max-width:120px">${escHtml(g.suplidor||'—')}</td>
-            <td style="min-width:140px">${nombreVeh?`<div style="font-weight:700;font-size:12px">${escHtml(nombreVeh)}</div><div style="font-family:monospace;font-size:10px;color:var(--blue);margin-top:2px">${escHtml(vinFinal||'Sin VIN')}</div>`:'<span style="color:var(--gray)">—</span>'}</td>
+            <td style="min-width:140px">${vehNoEncontrado?`<div style="font-size:11px;color:var(--amber);font-weight:600">⚠️ Sin sincronizar</div><div style="font-size:10px;color:var(--gray)">Use ✏️ para enlazar</div>`:nombreVeh?`<div style="font-weight:700;font-size:12px">${escHtml(nombreVeh)}</div><div style="font-family:monospace;font-size:10px;color:var(--blue);margin-top:2px">${escHtml(vinFinal||'')}</div>`:'<span style="color:var(--gray)">—</span>'}</td>
             <td style="max-width:130px"><span class="badge badge-amber" style="font-size:10px;white-space:normal;line-height:1.3">${escHtml(g._origen==='manual'?(g.descripcion||g.tipo||'—'):g.tipo||'—')}</span></td>
             <td style="font-weight:600">${fmtMon(g.montoFactura||0)}</td>
             <td style="color:var(--green)">${fmtMon(g.montoPagado||0)}</td>
@@ -6686,6 +6794,7 @@ function editarCXP(gid, origen){
           ${DB.vehiculos.filter(v=>v.status==='VENDIDO').length?`<option disabled>── Vendidos ──</option>${DB.vehiculos.filter(v=>v.status==='VENDIDO').map(v=>`<option value="${v.id}" ${v.id===g.vehiculoId?'selected':''}>${escHtml(v.codigo+' — '+v.marca+' '+v.modelo+' '+v.anio)} (VENDIDO)</option>`).join('')}`:''}
         </select>
         ${vActual?`<div style="font-size:11px;color:var(--blue);margin-top:3px">✓ Actual: ${escHtml(vActual.codigo+' — '+vActual.marca+' '+vActual.modelo)}</div>`:(g.vehiculo?`<div style="font-size:11px;color:var(--amber);margin-top:3px">⚠️ Sin enlazar: ${escHtml(g.vehiculo)}</div>`:'')}
+        <div class="form-field" style="margin-top:6px"><label style="font-size:10px">Nombre vehículo (texto libre si no aparece en lista)</label><input type="text" id="ecxp-vehiculo-txt" value="${escHtml(g.vehiculo||'')}" placeholder="Ej: Toyota Corolla 2020" style="font-size:12px"></div>
       </div>
       <div class="form-field"><label>Suplidor</label>
         <select id="ecxp-sup">
@@ -6707,10 +6816,10 @@ function editarCXP(gid, origen){
     </div>
     <div class="form-row c3">
       <div class="form-field"><label>Monto Factura</label>
-        <input type="number" id="ecxp-factura" value="${g.montoFactura||0}" step="0.01">
+        <input type="text" id="ecxp-factura" value="${fmtMoneyDisplay(g.montoFactura||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
       <div class="form-field"><label>Monto Pagado</label>
-        <input type="number" id="ecxp-pagado" value="${g.montoPagado||0}" step="0.01">
+        <input type="text" id="ecxp-pagado" value="${fmtMoneyDisplay(g.montoPagado||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
       <div class="form-field"><label>Fecha</label>
         <input type="date" id="ecxp-fecha" value="${g.fecha||today()}">
@@ -6725,8 +6834,8 @@ function guardarEditCXP(gid, origen){
   const i = arr.findIndex(g=>g.id===gid);
   if(i<0)return;
   const vid = document.getElementById('ecxp-veh')?.value||'';
-  const factura = parseFloat(document.getElementById('ecxp-factura').value||0);
-  const pagado = parseFloat(document.getElementById('ecxp-pagado').value||0);
+  const factura = parseFloat((document.getElementById('ecxp-factura').value||'0').replace(/,/g,''));
+  const pagado = parseFloat((document.getElementById('ecxp-pagado').value||'0').replace(/,/g,''));
   const pendiente = Math.max(0, factura-pagado);
   if(vid){
     const vRef = DB.vehiculos.find(x=>x.id===vid);
@@ -6736,7 +6845,12 @@ function guardarEditCXP(gid, origen){
       arr[i].vin = vRef.vin||'';
       arr[i].vehiculo = vRef.marca+' '+vRef.modelo+(vRef.anio?' '+vRef.anio:'');
     }
+  } else {
+    // Si no se seleccionó vehículo, preservar el vehiculoId original
+    // para no perder el enlace existente
   }
+  const ecxpVehTxt=(document.getElementById('ecxp-vehiculo-txt')?.value||'').trim();
+  if(!vid&&ecxpVehTxt) arr[i].vehiculo=ecxpVehTxt;
   arr[i].suplidor = document.getElementById('ecxp-sup').value;
   const tipoVal = document.getElementById('ecxp-tipo').value.trim();
   if(origen==='manual') arr[i].descripcion = tipoVal;
@@ -6886,7 +7000,7 @@ function actualizarCuentasPagoManual(){
   cuentaEl.innerHTML=(b?b.cuentas:[]).map(c=>`<option value="${escHtml(c.tipo+' \u2014 '+c.numero)}">${escHtml(c.tipo)} \u2014 ${escHtml(c.numero)}</option>`).join('')||'<option value="Caja General">Caja General</option>';
 }
 function confirmarPagoCXPManual(i){
-  const monto=parseFloat(document.getElementById('cxpm-pay-monto')?.value||0);
+  const monto=parseFloat((document.getElementById('cxpm-pay-monto')?.value||'0').replace(/,/g,''));
   if(!monto||monto<=0){toast('Ingresa un monto v\u00e1lido','error');return;}
   const g=DB.cxp[i];
   if(monto>parseFloat(g.montoPendiente||0)){toast('El monto no puede superar el pendiente','error');return;}
@@ -8329,6 +8443,8 @@ function calcPendSeguro(){
   if(el)el.value=fmtMoneyDisplay(Math.max(0,p-a));
 }
 function nuevoSeguro(){
+  const _puedeSeguro=currentUser?.role==='admin'||(currentUser?.modulos||[]).includes('seguros')||(currentUser?.permisos?.editarSeguros);
+  if(!_puedeSeguro){toast('No tienes permiso para agregar seguros','error');return;}
   openModal('🛡️ Nuevo Seguro',_formSeguro(null),
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
      <button class="btn btn-primary" onclick="guardarSeguro()">💾 Guardar Seguro</button>`);
@@ -8371,6 +8487,8 @@ function guardarSeguro(id){
   sDB('seguros');closeModal();toast('Seguro guardado ✓','success');renderSeguros();
 }
 function editarSeguro(id){
+  const _puedeSeguro=currentUser?.role==='admin'||(currentUser?.modulos||[]).includes('seguros')||(currentUser?.permisos?.editarSeguros);
+  if(!_puedeSeguro){toast('No tienes permiso para editar seguros','error');return;}
   const s=DB.seguros.find(x=>x.id===id);if(!s)return;
   openModal('✏️ Editar Seguro — '+escHtml(s.compania),_formSeguro(s),
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
@@ -9305,21 +9423,50 @@ async function fbCargar(){
 const _sDB_orig = sDB;
 window._fbActivo = false;
 window._fbCargado = false;
+function _mostrarErrorSinFirebase(){
+  if(document.getElementById('fb-noconn-overlay'))return;
+  const ov=document.createElement('div');
+  ov.id='fb-noconn-overlay';
+  ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px';
+  ov.innerHTML=`<div style="background:#fff;border-radius:16px;padding:32px;max-width:420px;width:100%;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.35)">
+    <div style="font-size:52px;margin-bottom:10px">🚫</div>
+    <div style="font-size:20px;font-weight:800;color:#dc2626;margin-bottom:8px">Sin conexión a Firebase</div>
+    <div style="font-size:14px;color:#4b5563;margin-bottom:16px;line-height:1.6">
+      No es posible <strong>guardar, editar ni actualizar</strong> datos en este momento.<br>
+      Verifique su conexión a internet o contacte al administrador.
+    </div>
+    <div style="background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;padding:14px 16px;margin-bottom:22px;text-align:left">
+      <div style="font-size:11px;font-weight:700;color:#92400e;text-transform:uppercase;margin-bottom:6px">📞 Administrador del sistema</div>
+      <div style="font-size:16px;font-weight:800;color:#78350f">Edward Villa</div>
+      <div style="font-size:15px;color:#92400e;margin-top:2px">
+        <a href="https://wa.me/18498579190" target="_blank" style="color:#16a34a;font-weight:700;text-decoration:none">📲 849-857-9190 (WhatsApp)</a>
+      </div>
+    </div>
+    <button onclick="document.getElementById('fb-noconn-overlay').remove()" style="padding:12px 36px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">Entendido</button>
+  </div>`;
+  document.body.appendChild(ov);
+}
 window.sDB = function(key){
-  try { _sDB_orig(key); } catch(e){}
-  if(window._fbActivo){
-    const dot=document.getElementById('fb-dot');
-    const txt=document.getElementById('fb-text');
-    if(dot) dot.style.background='#f59e0b';
-    if(txt) txt.textContent='Guardando...';
-    fbGuardar(key).then(()=>{
-      if(dot) dot.style.background='#22c55e';
-      if(txt) txt.textContent='✓ Guardado';
-    }).catch(()=>{
-      if(dot) dot.style.background='#ef4444';
-      if(txt) txt.textContent='Error al guardar';
-    });
+  if(!window._fbActivo){
+    // Sin Firebase: guardar local solo como cache de lectura, pero bloquear la acción
+    try { _sDB_orig(key); } catch(e){}
+    _mostrarErrorSinFirebase();
+    return;
   }
+  // Con Firebase activo: guardar local + Firebase
+  try { _sDB_orig(key); } catch(e){}
+  const dot=document.getElementById('fb-dot');
+  const txt=document.getElementById('fb-text');
+  if(dot) dot.style.background='#f59e0b';
+  if(txt) txt.textContent='Guardando...';
+  fbGuardar(key).then(()=>{
+    if(dot) dot.style.background='#22c55e';
+    if(txt) txt.textContent='✓ Guardado';
+  }).catch(()=>{
+    if(dot) dot.style.background='#ef4444';
+    if(txt) txt.textContent='Error al guardar';
+    _mostrarErrorSinFirebase();
+  });
 };
 
 // ══ FIX 2 — SISTEMA DE VERSIONES AUTOMÁTICO ══
