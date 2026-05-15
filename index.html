@@ -1294,11 +1294,11 @@ function formVehiculo(v){
     </div>
     <div class="form-row c2">
       <div class="form-field"><label>📋 BL (Bill of Lading)</label>
-        <input type="file" id="v-foto" accept="image/*,application/pdf" onchange="previewFoto('v-foto','v-foto-prev')">
+        <input type="file" id="v-foto" accept="image/jpeg,image/png,application/pdf" onchange="previewFoto('v-foto','v-foto-prev')">
         <img id="v-foto-prev" src="${v?.foto||''}" style="display:${v?.foto?'block':'none'};width:100%;max-height:120px;object-fit:cover;border-radius:6px;margin-top:6px">
       </div>
       <div class="form-field"><label>📄 Carfax</label>
-        <input type="file" id="v-carfax" accept="image/*,application/pdf" onchange="previewFoto('v-carfax','v-carfax-prev')">
+        <input type="file" id="v-carfax" accept="image/jpeg,image/png,application/pdf" onchange="previewFoto('v-carfax','v-carfax-prev')">
         <img id="v-carfax-prev" src="${v?.carfax||''}" style="display:${v?.carfax?'block':'none'};width:100%;max-height:120px;object-fit:cover;border-radius:6px;margin-top:6px">
       </div>
     </div>
@@ -1492,7 +1492,7 @@ function gastosVehiculo(vid){
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
         <div class="form-field" style="margin:0"><label style="font-size:10px">Tipo de Gasto</label><select id="gv-tipo">${TIPOS_GASTO_VEH.map(t=>`<option>${t}</option>`).join('')}</select></div>
         <div class="form-field" style="margin:0"><label style="font-size:10px">Descripción</label><input type="text" id="gv-desc" placeholder="Detalle"></div>
-        <div class="form-field" style="margin:0"><label style="font-size:10px">Monto (RD$)</label><input type="number" id="gv-monto" placeholder="0.00" step="0.01" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)"></div>
+        <div class="form-field" style="margin:0"><label style="font-size:10px">Monto (RD$)</label><input type="text"   id="gv-monto" placeholder="0.00" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
         <div class="form-field" style="margin:0"><label style="font-size:10px">Forma de Pago</label><select id="gv-forma"><option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select></div>
@@ -2159,21 +2159,22 @@ function renderNomina(){
       <div class="table-wrap"><table id="nom-pago-tbl">
         <thead><tr>
           <th style="width:36px"></th>
-          <th>Fecha</th><th>Empleado</th><th>Tipo</th><th>Monto</th><th>Cuenta</th><th>Nota</th>
+          <th>Fecha Pago</th><th>Mes</th><th>Empleado</th><th>Tipo</th><th>Monto</th><th>Cuenta</th><th>Nota</th>
         </tr></thead>
         <tbody>${pagosFilt.slice().reverse().map((p,i)=>{
           const emp=DB.nomina.find(e=>e.id===p.empleadoId);
           const tipoLabel={MEN:'Mensual','1Q':'1ra Quincena','2Q':'2da Quincena',SEM:'Semanal',COM:'Comisión'}[p.tipo]||p.tipo;
           return`<tr onclick="selNomPago('${p.id}',this)" style="cursor:pointer">
             <td style="text-align:center"><input type="radio" name="nom-pago-sel" onclick="event.stopPropagation();selNomPago('${p.id}',this.closest('tr'))" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blue)"></td>
-            <td>${fmtDate(p.fecha)}</td>
+            <td>${p.fecha?fmtDate(p.fecha):(p.mes||'—')}</td>
+            <td style="font-size:12px;color:var(--gray)">${p.mes||p.fecha?.slice(0,7)||'—'}</td>
             <td style="font-weight:600">${escHtml(emp?.nombre||p.empleadoNombre||'—')}</td>
             <td><span class="badge badge-blue">${tipoLabel}</span></td>
             <td style="font-weight:700;color:var(--green)">${fmt(p.monto)}</td>
             <td style="font-size:12px">${escHtml(p.cuenta||'—')}</td>
             <td style="font-size:12px;color:var(--gray)">${escHtml(p.nota||'—')}</td>
           </tr>`;
-        }).join('')||'<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--gray)">Sin pagos registrados</td></tr>'}
+        }).join('')||'<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--gray)">Sin pagos registrados</td></tr>'}
         </tbody>
       </table></div>
     </div>
@@ -2207,20 +2208,30 @@ function nomAccion(accion){
     const p=(DB.nominaPagos||[]).find(x=>x.id===nomPagoSelectedId);
     if(!p)return;
     const emp=DB.nomina.find(e=>e.id===p.empleadoId);
-    openModal('Editar Pago',`
-      <div class="form-row c2">
-        <div class="form-field"><label>Fecha</label><input type="date" id="ep-fecha" value="${p.fecha||''}"></div>
-        <div class="form-field"><label>Tipo</label><select id="ep-tipo">
-          ${[['MEN','Mensual'],['1Q','1ra Quincena'],['2Q','2da Quincena'],['SEM','Semanal'],['COM','Comision']].map(([v,l])=>`<option value="${v}" ${p.tipo===v?'selected':''}>${l}</option>`).join('')}
-        </select></div>
+    openModal('✏️ Editar Pago de Nómina',`
+      <div style="background:var(--blue3);border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+        <div style="font-size:28px">👷</div>
+        <div>
+          <div style="font-size:15px;font-weight:800;color:var(--navy)">${escHtml(emp?.nombre||p.empleadoNombre||'—')}</div>
+          <div style="font-size:12px;color:var(--gray)">${escHtml(emp?.cargo||'')} ${emp?.documento?'· Doc: '+escHtml(emp.documento):''}</div>
+        </div>
       </div>
       <div class="form-row c2">
-        <div class="form-field"><label>Monto</label><input type="number" id="ep-monto" value="${fmtMoneyDisplay(p.monto||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" step="0.01" min="0"></div>
+        <div class="form-field"><label>Fecha del Pago</label><input type="date" id="ep-fecha" value="${p.fecha||today()}"></div>
+        <div class="form-field"><label>Mes Correspondiente</label><input type="month" id="ep-mes" value="${p.mes||p.fecha?.slice(0,7)||today().slice(0,7)}"></div>
+      </div>
+      <div class="form-row c2">
+        <div class="form-field"><label>Tipo de Pago</label><select id="ep-tipo">
+          ${[['MEN','Mensual'],['1Q','1ra Quincena'],['2Q','2da Quincena'],['SEM','Semanal'],['COM','Comisión']].map(([v,l])=>`<option value="${v}" ${p.tipo===v?'selected':''}>${l}</option>`).join('')}
+        </select></div>
         <div class="form-field"><label>Cuenta</label><select id="ep-cuenta">${(DB.config.cuentas||['Caja General']).map(c=>`<option ${c===(p.cuenta||'')?'selected':''}>${escHtml(c)}</option>`).join('')}</select></div>
       </div>
-      <div class="form-field"><label>Nota</label><input type="text" id="ep-nota" value="${escHtml(p.nota||'')}" placeholder="Opcional"></div>`,
+      <div class="form-row c2">
+        <div class="form-field"><label class="required">Monto</label><input type="text" id="ep-monto" value="${fmtMoneyDisplay(p.monto||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" style="font-size:16px;font-weight:700"></div>
+        <div class="form-field"><label>Nota</label><input type="text" id="ep-nota" value="${escHtml(p.nota||'')}" placeholder="Opcional"></div>
+      </div>`,
       `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-       <button class="btn btn-primary" onclick="guardarEditPagoNomina('${p.id}')">Guardar</button>`);
+       <button class="btn btn-primary" onclick="guardarEditPagoNomina('${p.id}')">💾 Guardar Cambios</button>`);
     return;
   }
   if(accion==='eliminar-pago'){
@@ -2248,7 +2259,8 @@ function guardarEditPagoNomina(pid){
   const idx=(DB.nominaPagos||[]).findIndex(p=>p.id===pid);
   if(idx<0){toast('Pago no encontrado','error');return;}
   const cuenta=document.getElementById('ep-cuenta')?.value||DB.nominaPagos[idx].cuenta||'';
-  DB.nominaPagos[idx]={...DB.nominaPagos[idx],fecha,monto,tipo,nota,cuenta};
+  const mes=document.getElementById('ep-mes')?.value||DB.nominaPagos[idx].mes||fecha?.slice(0,7)||'';
+  DB.nominaPagos[idx]={...DB.nominaPagos[idx],fecha,mes,monto,tipo,nota,cuenta};
   sDB('nominaPagos');closeModal();toast('Pago actualizado ✓','success');renderNomina();
 }
 function registrarPagoNomina(i){
@@ -2258,7 +2270,7 @@ function registrarPagoNomina(i){
   openModal('💵 Registrar Pago — '+escHtml(e.nombre),`
     <p style="margin-bottom:12px">Salario base: <strong>${fmt(e.salario)}</strong></p>
     <div class="form-row c2">
-      <div class="form-field"><label>Mes</label><input type="month" id="np-mes" value="${mes}"></div>
+      <div class="form-field"><label class="required">Fecha del Pago</label><input type="date" id="np-fecha" value="${today()}"></div>
       <div class="form-field"><label>Tipo de Pago</label>
         <select id="np-tipo" onchange="calcMontoNomina(${salario})">
           <option value="MEN">Mensual</option>
@@ -2271,7 +2283,7 @@ function registrarPagoNomina(i){
     </div>
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto</label>
-        <input type="number" id="np-monto" value="${fmtMoneyDisplay(salario)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" step="0.01">
+        <input type="text"   id="np-monto" value="${fmtMoneyDisplay(salario)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
       <div class="form-field"><label>Cuenta</label>
         <select id="np-cuenta">${(DB.config.cuentas||['Caja General']).map(c=>`<option>${escHtml(c)}</option>`).join('')}</select>
@@ -2291,13 +2303,14 @@ function guardarPagoNomina(i){
   const monto=parseFloat((document.getElementById('np-monto').value||'0').replace(/,/g,''));
   if(!monto){toast('Ingresa el monto','error');return;}
   const e=DB.nomina[i];
-  const mes=document.getElementById('np-mes').value;
+  const fechaPago=document.getElementById('np-fecha')?.value||today();
+  const mes=fechaPago.slice(0,7); // Derivar mes de la fecha para filtros
   const tipo=document.getElementById('np-tipo').value;
   const cuenta=document.getElementById('np-cuenta').value;
   const nota=document.getElementById('np-nota')?.value||'';
   const tipoLabel={MEN:'Mensual','1Q':'1ra Quincena','2Q':'2da Quincena',SEM:'Semanal',COM:'Comisión'}[tipo]||tipo;
   if(!DB.nominaPagos)DB.nominaPagos=[];
-  DB.nominaPagos.push({id:uid(),empleadoId:e.id,empleadoNombre:e.nombre,mes,tipo,monto,cuenta,fecha:today(),nota});
+  DB.nominaPagos.push({id:uid(),empleadoId:e.id,empleadoNombre:e.nombre,mes,tipo,monto,cuenta,fecha:fechaPago,nota});
   DB.caja.push({id:uid(),fecha:today(),tipo:'SALIDA',categoria:'Nómina/Salario',
     descripcion:'Pago nómina: '+e.nombre+' ('+tipoLabel+')',
     monto,referencia:cuenta,responsable:currentUser.nombre});
@@ -3103,9 +3116,9 @@ function renderCuentas(){
   document.getElementById('page-cuentas').innerHTML=`
     <div class="page-header">
       <div><h1>🏦 Cuentas Bancarias</h1><p>${bcs.length} banco(s) — ${total} cuenta(s) registradas</p></div>
-      ${(esAdmin||currentUser?.permisos?.editarCuentas)?`<button class="btn btn-primary" onclick="nuevoBancoCuenta()">➕ Agregar Banco</button>`:''}
+      ${(esAdmin||currentUser?.permisos?.editarCuentas||(currentUser?.modulos||[]).includes('cuentas'))?`<button class="btn btn-primary" onclick="nuevoBancoCuenta()">➕ Agregar Banco</button>`:''}
     </div>
-    ${bcs.length===0?`<div class="card" style="text-align:center;padding:48px"><div style="font-size:48px;margin-bottom:12px">🏦</div><div style="font-size:16px;font-weight:700;color:var(--navy)">Sin cuentas bancarias</div><p style="color:var(--gray);margin-top:8px">Agrega un banco para empezar</p>${(esAdmin||currentUser?.permisos?.editarCuentas)?`<div style="margin-top:16px"><button class="btn btn-primary" onclick="nuevoBancoCuenta()">➕ Agregar Banco</button></div>`:''}</div>`:`
+    ${bcs.length===0?`<div class="card" style="text-align:center;padding:48px"><div style="font-size:48px;margin-bottom:12px">🏦</div><div style="font-size:16px;font-weight:700;color:var(--navy)">Sin cuentas bancarias</div><p style="color:var(--gray);margin-top:8px">Agrega un banco para empezar</p>${(esAdmin||currentUser?.permisos?.editarCuentas||(currentUser?.modulos||[]).includes('cuentas'))?`<div style="margin-top:16px"><button class="btn btn-primary" onclick="nuevoBancoCuenta()">➕ Agregar Banco</button></div>`:''}</div>`:`
     <div style="display:flex;flex-direction:column;gap:16px">
       ${bcs.map((b,bi)=>`
         <div class="card" style="margin-bottom:0">
@@ -3114,7 +3127,7 @@ function renderCuentas(){
               <div style="font-size:28px">🏦</div>
               <div><div style="font-size:16px;font-weight:800">${escHtml(b.banco)}</div><div style="font-size:12px;color:var(--gray)">${(b.cuentas||[]).length} cuenta(s)</div></div>
             </div>
-            ${(esAdmin||currentUser?.permisos?.editarCuentas)?`<div style="display:flex;gap:6px">
+            ${(esAdmin||currentUser?.permisos?.editarCuentas||(currentUser?.modulos||[]).includes('cuentas'))?`<div style="display:flex;gap:6px">
               <button class="btn btn-secondary btn-sm" onclick="agregarCuentaABanco(${bi})">➕ Cuenta</button>
               <button class="btn btn-sm" style="background:var(--red2);color:var(--red)" onclick="eliminarBancoCuentas(${bi})">🗑</button>
             </div>`:''}
@@ -3128,7 +3141,7 @@ function renderCuentas(){
                     <div style="font-size:15px;font-weight:800;font-family:monospace;letter-spacing:1px">${escHtml(c.numero||'—')}</div>
                     <div style="font-size:11px;color:var(--gray);margin-top:4px">${(c.tipo||'').includes('Corriente')?'🔄 Cuenta Corriente':'💰 Cuenta de Ahorro'}</div>
                   </div>
-                  ${(esAdmin||currentUser?.permisos?.editarCuentas)?`<button class="btn btn-sm" style="background:var(--red2);color:var(--red);padding:4px 8px" onclick="eliminarCuentaBancoCuentas(${bi},${ci})">✕</button>`:''}
+                  ${(esAdmin||currentUser?.permisos?.editarCuentas||(currentUser?.modulos||[]).includes('cuentas'))?`<button class="btn btn-sm" style="background:var(--red2);color:var(--red);padding:4px 8px" onclick="eliminarCuentaBancoCuentas(${bi},${ci})">✕</button>`:''}
                 </div>
               </div>`).join('')||`<div style="color:var(--gray);font-size:13px;padding:8px">Sin cuentas agregadas</div>`}
           </div>
@@ -3136,7 +3149,7 @@ function renderCuentas(){
     </div>`}`;
 }
 function nuevoBancoCuenta(){
-  if(currentUser?.role!=='admin'&&!canDo('editar')&&!currentUser?.permisos?.editarCuentas){toast('Sin permiso','error');return;}
+  if(currentUser?.role!=='admin'&&!canDo('editar')&&!currentUser?.permisos?.editarCuentas&&!(currentUser?.modulos||[]).includes('cuentas')){toast('Sin permiso','error');return;}
   openModal('🏦 Nuevo Banco',`
     <div class="form-field"><label class="required">Nombre del Banco</label>
       <input type="text" id="nb-nombre" placeholder="Ej: Banco Popular Dominicano">
@@ -3186,7 +3199,7 @@ function guardarNuevoBancoCuenta(){
   sDB('config');closeModal();toast('Banco guardado ✓','success');renderCuentas();
 }
 function agregarCuentaABanco(bi){
-  if(currentUser?.role!=='admin'&&!canDo('editar')&&!currentUser?.permisos?.editarCuentas){toast('Sin permiso','error');return;}
+  if(currentUser?.role!=='admin'&&!canDo('editar')&&!currentUser?.permisos?.editarCuentas&&!(currentUser?.modulos||[]).includes('cuentas')){toast('Sin permiso','error');return;}
   openModal(`➕ Nueva Cuenta — ${escHtml(DB.config.bancoCuentas[bi]?.banco||'')}`,`
     <div class="form-row c2">
       <div class="form-field"><label class="required">Número de Cuenta</label><input type="text" id="ac-numero" placeholder="0000-0000-0000"></div>
@@ -4406,7 +4419,7 @@ function abonarGastoVeh(gid){
     </div>
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto a Pagar</label>
-        <input type="number" id="abgv-monto" value="${fmtMoneyDisplay(g.montoPendiente||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" step="0.01">
+        <input type="text"   id="abgv-monto" value="${fmtMoneyDisplay(g.montoPendiente||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
       <div class="form-field"><label>Cuenta de Salida</label>
         <select id="abgv-cuenta">${cuentas.map(c=>`<option ${c===g.cuenta?'selected':''}>${escHtml(c)}</option>`).join('')}</select>
@@ -5141,7 +5154,7 @@ function nuevaVenta(){
     </div>
     <div class="form-row c3">
       <div class="form-field"><label class="required">Precio de Venta</label>
-        <input type="text" id="sv-precio" value="" placeholder="0.00" oninput="fmtMoneyInput(this);calcPend()">
+        <input type="text" id="sv-precio" value="" placeholder="0.00" oninput="fmtMoneyInput(this);calcPend()" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
       <div class="form-field"><label>Inicial Recibido</label>
         <input type="text" id="sv-inicial" value="" placeholder="0.00" oninput="fmtMoneyInput(this);calcPend()">
@@ -5620,7 +5633,7 @@ function abonarVenta(vid){
     </div>
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto a Cobrar</label>
-        <input type="text" id="ab-monto" value="${v.pendiente}" placeholder="0.00" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
+        <input type="text" id="ab-monto" value="${fmtMoneyDisplay(v.pendiente||0)}" placeholder="0.00" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
       <div class="form-field"><label>Cuenta</label>
         <select id="ab-cuenta">${cuentas.map(c=>`<option>${escHtml(c)}</option>`).join('')}</select>
@@ -5672,10 +5685,10 @@ function editarVenta(vid){
   openModal('✏️ Editar Venta — '+escHtml(v.factura),`
     <div class="form-row c2">
       <div class="form-field"><label>Precio de Venta</label>
-        <input type="text" id="ev-precio" value="${v.precioVenta||0}" oninput="fmtMoneyInput(this);document.getElementById('ev-pendiente').value=fmtMoneyDisplay(Math.max(0,parseFloat(this.value.replace(/,/g,'')||0)-parseFloat(document.getElementById('ev-inicial').value.replace(/,/g,'')||0)))">
+        <input type="text" id="ev-precio" value="${fmtMoneyDisplay(v.precioVenta||0)}" oninput="fmtMoneyInput(this);document.getElementById('ev-pendiente').value=fmtMoneyDisplay(Math.max(0,parseFloat(this.value.replace(/,/g,'')||0)-parseFloat(document.getElementById('ev-inicial').value.replace(/,/g,'')||0)))">
       </div>
       <div class="form-field"><label>Inicial Recibido</label>
-        <input type="text" id="ev-inicial" value="${v.inicial||0}" oninput="fmtMoneyInput(this);document.getElementById('ev-pendiente').value=fmtMoneyDisplay(Math.max(0,parseFloat(document.getElementById('ev-precio').value.replace(/,/g,'')||0)-parseFloat(this.value.replace(/,/g,'')||0)))">
+        <input type="text" id="ev-inicial" value="${fmtMoneyDisplay(v.inicial||0)}" oninput="fmtMoneyInput(this);document.getElementById('ev-pendiente').value=fmtMoneyDisplay(Math.max(0,parseFloat(document.getElementById('ev-precio').value.replace(/,/g,'')||0)-parseFloat(this.value.replace(/,/g,'')||0)))">
       </div>
     </div>
     <div class="form-row c3">
@@ -6496,17 +6509,33 @@ function fmtTelInput(el){
   el.value=v;
 }
 function fmtMoneyInput(el){
-  let v=el.value.replace(/[^0-9.]/g,'');
-  const parts=v.split('.');
-  if(parts.length>2)v=parts[0]+'.'+parts.slice(1).join('');
-  el.value=v;
+  // Guarda posicion del cursor
+  const sel=el.selectionStart;
+  const prevLen=el.value.length;
+  // Limpiar todo excepto digitos y punto
+  let raw=el.value.replace(/[^0-9.]/g,'');
+  // Solo un punto decimal
+  const parts=raw.split('.');
+  let intPart=parts[0]||'';
+  let decPart=parts.length>1?'.'+parts.slice(1).join('').substring(0,2):'';
+  // Agregar comas a la parte entera
+  intPart=intPart.replace(/\B(?=(\d{3})+(?!\d))/g,',');
+  el.value=intPart+decPart;
+  // Restaurar cursor ajustado por comas agregadas
+  const newLen=el.value.length;
+  const diff=newLen-prevLen;
+  try{ el.setSelectionRange(sel+diff,sel+diff); }catch(e){}
 }
 function fmtMoneyBlur(el){
   const n=parseFloat(el.value.replace(/,/g,'')||0);
   if(!isNaN(n))el.value=_fmtN(n,'es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
 }
 function fmtMoneyFocus(el){
-  el.value=el.value.replace(/,/g,'');
+  // Al enfocar quitar el formato para que sea facil editar
+  const n=parseFloat(el.value.replace(/,/g,'')||0);
+  if(n===0) el.value='';
+  else el.value=el.value.replace(/,/g,'');
+  setTimeout(()=>{try{el.setSelectionRange(el.value.length,el.value.length);}catch(e){}},0);
 }
 function fmtMoneyDisplay(val){
   const n=parseFloat(val||0);
@@ -6974,7 +7003,7 @@ function abonarCXPManual(gid){
     </div>
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto a Pagar</label>
-        <input type="number" id="cxpm-pay-monto" value="${g.montoPendiente||0}" step="0.01" max="${g.montoPendiente||0}">
+        <input type="text"   id="cxpm-pay-monto" value="${fmtMoneyDisplay(g.montoPendiente||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
       <div class="form-field"><label>Fecha de Pago</label>
         <input type="date" id="cxpm-pay-fecha" value="${today()}">
@@ -7434,13 +7463,13 @@ function nuevaCXCManual(){
     </div>
     <div class="form-row c3">
       <div class="form-field"><label class="required">Monto Total</label>
-        <input type="number" id="ncxc-total" step="0.01" placeholder="0.00" oninput="calcSaldoCXC();calcEquivCXC()">
+        <input type="text"   id="ncxc-total" placeholder="0.00" oninput="fmtMoneyInput(this);calcSaldoCXC();calcEquivCXC()" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
       <div class="form-field"><label>Monto Inicial / Abono</label>
-        <input type="number" id="ncxc-abono" step="0.01" value="0" placeholder="0.00" oninput="calcSaldoCXC()">
+        <input type="text"   id="ncxc-abono" value="0" placeholder="0.00" oninput="fmtMoneyInput(this);calcSaldoCXC()" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
       <div class="form-field"><label>Saldo Pendiente</label>
-        <input type="number" id="ncxc-saldo" step="0.01" readonly style="background:#f1f5f9;font-weight:700">
+        <input type="text"   id="ncxc-saldo" readonly style="background:#f1f5f9;font-weight:700;color:var(--red)">
       </div>
     </div>
     <div class="form-row c3">
@@ -7482,7 +7511,7 @@ function toggleTasaCXC(){
 }
 function calcEquivCXC(){
   const moneda=document.getElementById('ncxc-moneda')?.value;
-  const total=parseFloat(document.getElementById('ncxc-total')?.value||0);
+  const total=parseFloat((document.getElementById('ncxc-total')?.value||'0').replace(/,/g,''));
   const tasa=parseFloat(document.getElementById('ncxc-tasa')?.value||DB.config.tasaCambio||60);
   const equiv=document.getElementById('ncxc-equiv');
   if(equiv&&moneda==='USD'&&total>0)equiv.value='RD$ '+fmt(total*tasa);
@@ -7497,8 +7526,8 @@ function actualizarCuentasCXCManual(){
   cuentaEl.innerHTML=(b&&b.cuentas&&b.cuentas.length)?b.cuentas.map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}">${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join(''):'<option value="Caja General">Caja General</option>';
 }
 function calcSaldoCXC(){
-  const total=parseFloat(document.getElementById('ncxc-total')?.value||0);
-  const abono=parseFloat(document.getElementById('ncxc-abono')?.value||0);
+  const total=parseFloat((document.getElementById('ncxc-total')?.value||'0').replace(/,/g,''));
+  const abono=parseFloat((document.getElementById('ncxc-abono')?.value||'0').replace(/,/g,''));
   const saldo=document.getElementById('ncxc-saldo');
   if(saldo)saldo.value=fmtMoneyDisplay(Math.max(0,total-abono));
   calcEquivCXC();
@@ -7506,12 +7535,12 @@ function calcSaldoCXC(){
 function guardarCXCManual(){
   const cliId=document.getElementById('ncxc-cli').value;
   const concepto=document.getElementById('ncxc-concepto').value.trim();
-  const total=parseFloat(document.getElementById('ncxc-total').value||0);
+  const total=parseFloat((document.getElementById('ncxc-total').value||'0').replace(/,/g,''));
   if(!cliId){toast('Selecciona un cliente','error');return;}
   if(!concepto){toast('Ingresa el concepto','error');return;}
   if(!total){toast('Ingresa el monto total','error');return;}
   const cli=DB.clientes.find(x=>x.id===cliId);
-  const abono=parseFloat(document.getElementById('ncxc-abono').value||0);
+  const abono=parseFloat((document.getElementById('ncxc-abono').value||'0').replace(/,/g,''));
   const saldo=Math.max(0,total-abono);
   const cuenta=document.getElementById('ncxc-cuenta').value;
   const banco=document.getElementById('ncxc-banco')?.value||'';
@@ -7565,7 +7594,7 @@ function abonarCXC(id){
     </div>
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto a Cobrar (${esUSD?'USD':'RD$'})</label>
-        <input type="text" id="cxca-monto" value="${x.saldo}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" placeholder="0.00">
+        <input type="text" id="cxca-monto" value="${fmtMoneyDisplay(x.saldo||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" placeholder="0.00">
       </div>
       <div class="form-field"><label>Fecha</label>
         <input type="date" id="cxca-fecha" value="${today()}">
@@ -8376,8 +8405,8 @@ function renderSeguros(){
             <td>
               <div style="display:flex;gap:4px;flex-wrap:wrap">
                 ${(s.status||'PENDIENTE')!=='PAGADO'?`<button class="btn btn-green btn-sm" onclick="abonarSeguro('${s.id}')">💵 Abonar</button>`:''}
-                <button class="btn btn-secondary btn-sm" onclick="editarSeguro('${s.id}')">✏️</button>
-                ${(currentUser?.role==='admin'||canDo('eliminar'))?`<button class="btn btn-red btn-sm" onclick="eliminarSeguro('${s.id}')">🗑</button>`:''}
+                ${(_puedeSeguro=currentUser?.role==='admin'||(currentUser?.modulos||[]).includes('seguros')||currentUser?.permisos?.editarSeguros)?`<button class="btn btn-secondary btn-sm" onclick="editarSeguro('${s.id}')">✏️</button>`:''}
+                ${(currentUser?.role==='admin'||canDo('eliminar')||currentUser?.permisos?.borrarSeguros)?`<button class="btn btn-red btn-sm" onclick="eliminarSeguro('${s.id}')">🗑</button>`:''}
               </div>
             </td>
           </tr>`;
@@ -8401,9 +8430,12 @@ function _formSeguro(s){
         </select>
       </div>
       <div class="form-field"><label class="required">Compañía Aseguradora</label>
-        <select id="sg-comp">
-          ${companias.map(c=>`<option ${c===s?.compania?'selected':''}>${escHtml(c)}</option>`).join('')}
-        </select>
+        <div style="display:flex;gap:6px">
+          <select id="sg-comp" style="flex:1">
+            ${companias.map(c=>`<option ${c===s?.compania?'selected':''}>${escHtml(c)}</option>`).join('')}
+          </select>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="agregarCompaniaSeguro()" title="Agregar compañía">➕</button>
+        </div>
       </div>
     </div>
     <div class="form-row c2">
@@ -8416,10 +8448,10 @@ function _formSeguro(s){
     </div>
     <div class="form-row c3">
       <div class="form-field"><label class="required">Prima Total</label>
-        <input type="text" id="sg-prima" value="${prim||0}" oninput="fmtMoneyInput(this);calcPendSeguro()" placeholder="0.00">
+        <input type="text" id="sg-prima" value="${fmtMoneyDisplay(prim||0)}" oninput="fmtMoneyInput(this);calcPendSeguro()" placeholder="0.00">
       </div>
       <div class="form-field"><label>Abono Inicial</label>
-        <input type="text" id="sg-abonado" value="${abon||0}" oninput="fmtMoneyInput(this);calcPendSeguro()" placeholder="0.00">
+        <input type="text" id="sg-abonado" value="${fmtMoneyDisplay(abon||0)}" oninput="fmtMoneyInput(this);calcPendSeguro()" placeholder="0.00">
       </div>
       <div class="form-field"><label>Pendiente</label>
         <input type="text" id="sg-pendiente" value="${fmtMoneyDisplay(Math.max(0,prim-abon))}" readonly style="background:#f8fafc;font-weight:700;color:var(--red)">
@@ -8441,6 +8473,25 @@ function calcPendSeguro(){
   const a=parseFloat((document.getElementById('sg-abonado')?.value||'0').replace(/,/g,''));
   const el=document.getElementById('sg-pendiente');
   if(el)el.value=fmtMoneyDisplay(Math.max(0,p-a));
+}
+function agregarCompaniaSeguro(){
+  const nombre=prompt('Nombre de la nueva compañía aseguradora:');
+  if(!nombre||!nombre.trim())return;
+  const n=nombre.trim();
+  if(!DB.config.companiasSeguro)DB.config.companiasSeguro=['Universal','Mapfre BHD','Reservas','Patria','Atlantica','HUMANO','Otra'];
+  if(DB.config.companiasSeguro.find(c=>c.toLowerCase()===n.toLowerCase())){
+    toast('Esa compañía ya existe','warning');return;
+  }
+  DB.config.companiasSeguro.push(n);
+  sDB('config');
+  // Actualizar el select en el modal abierto
+  const sel=document.getElementById('sg-comp');
+  if(sel){
+    const opt=document.createElement('option');
+    opt.value=n;opt.textContent=n;opt.selected=true;
+    sel.appendChild(opt);
+  }
+  toast('Compañía "'+n+'" agregada ✓','success');
 }
 function nuevoSeguro(){
   const _puedeSeguro=currentUser?.role==='admin'||(currentUser?.modulos||[]).includes('seguros')||(currentUser?.permisos?.editarSeguros);
