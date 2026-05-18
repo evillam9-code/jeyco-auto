@@ -1484,7 +1484,7 @@ function gastosVehiculo(vid){
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;background:var(--gray2);padding:12px;border-radius:8px">
       <div class="form-field" style="margin:0"><label style="font-size:10px">Costo del Vehículo (RD$)</label>
         <input type="text" id="gv-costo-veh" value="${fmtMoneyDisplay(costo||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this);actualizarCostoVeh('${vid}',this.value.replace(/,/g,''))" onfocus="fmtMoneyFocus(this)">
-        <div style="font-size:11px;color:var(--gray);margin-top:2px">USD: $${parseFloat((costo/tasa)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})</div>
+        <div style="font-size:11px;color:var(--gray);margin-top:2px">USD: $${parseFloat((costo/tasa)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
       </div>
       <div class="form-field" style="margin:0"><label style="font-size:10px">Suplidor</label>
         <div style="display:flex;gap:6px">
