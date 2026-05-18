@@ -756,6 +756,22 @@ function guardarCambioContrasena(){
   closeModal();
   toast('Contraseña actualizada correctamente ✓','success');
 }
+
+// ══ PRESENCIA GLOBAL ══
+let _presenciaBC=null;
+let _presenciaGlobalInterval=null;
+function _leerPresenciaGlobal(){try{return JSON.parse(localStorage.getItem('jeyco_presencia')||'{}');}catch{return {};}}
+function _escribirPresenciaGlobal(uid,ts){const p=_leerPresenciaGlobal();p[uid]=ts;localStorage.setItem('jeyco_presencia',JSON.stringify(p));}
+function _sincPresencia(){const g=_leerPresenciaGlobal();DB.presencia=Object.assign(DB.presencia||{},g);}
+function _pingPresencia(){
+  if(!currentUser)return;
+  const ts=Date.now();
+  _escribirPresenciaGlobal(currentUser.id,ts);
+  if(!DB.presencia)DB.presencia={};
+  DB.presencia[currentUser.id]=ts;
+  if(_presenciaBC){try{_presenciaBC.postMessage({uid:currentUser.id,ts});}catch{}}
+  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('presencia').catch(()=>{});
+}
 function _iniciarPresenciaGlobal(){
   if(!currentUser)return;
   try{
