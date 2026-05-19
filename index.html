@@ -3290,9 +3290,18 @@ function renderAlertas(){
     const v=DB.vehiculos.find(x=>x.id===g.vehiculoId);
     alertas.push({tipo:'CXP',nivel:'danger',titulo:'Gasto pendiente por pagar',msg:`${v?v.codigo+' '+v.marca+' '+v.modelo:'Vehículo'} — ${g.tipo} — ${(g.moneda||'RD$')==='USD'?'$'+parseFloat(g.montoPendiente).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(g.montoPendiente)}`,modulo:'cxp',id:'cxp_'+g.id});
   });
-  // 4. CXC vencidas
-  (DB.cxc||[]).filter(x=>(x.status==='PENDIENTE'||x.status==='PARCIAL')&&x.fechaVence&&x.fechaVence<=hoy).forEach(x=>{
-    alertas.push({tipo:'CXC_VENCIDA',nivel:'danger',titulo:'CxC Vencida',msg:`${x.cliente} — ${fmt(x.saldo)} — Venció: ${fmtDate(x.fechaVence)}`,modulo:'cxc',id:'cxcv_'+x.id});
+  // 4. CXC vencidas — por fechaVence O por proxPago vencido
+  (DB.cxc||[]).filter(x=>(x.status==='PENDIENTE'||x.status==='PARCIAL')).forEach(x=>{
+    const vencidaPorFecha=x.fechaVence&&x.fechaVence<=hoy;
+    const vencidaPorProx=x.proxPago&&x.proxPago<=hoy;
+    if(vencidaPorFecha||vencidaPorProx){
+      const freqLabel={semanal:'semanal',quincenal:'quincenal',mensual:'mensual'};
+      const motivo=vencidaPorProx&&x.frecuenciaPago
+        ?`Pago ${freqLabel[x.frecuenciaPago]||x.frecuenciaPago} vencido: ${fmtDate(x.proxPago)}`
+        :`Venció: ${fmtDate(x.fechaVence)}`;
+      const monedaStr=(x.moneda||'RD$')==='USD'?'$'+parseFloat(x.saldo).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(x.saldo);
+      alertas.push({tipo:'CXC_VENCIDA',nivel:'danger',titulo:'CxC Vencida',msg:`${x.cliente} — ${monedaStr} — ${motivo}`,modulo:'cxc',id:'cxcv_'+x.id});
+    }
   });
   // 5. CXC pendientes
   (DB.cxc||[]).filter(x=>(x.status==='PENDIENTE'||x.status==='PARCIAL')&&(!x.fechaVence||x.fechaVence>hoy)).forEach(x=>{
@@ -3945,7 +3954,7 @@ function guardarInfoNegocio(){
   c.moneda=document.getElementById('cf-moneda')?.value||'RD$';
   c.rnc=document.getElementById('cf-rnc')?.value||'';
   c.prefijoCodigo=document.getElementById('cf-prefijo')?.value.trim()||'';
-  c.tasaCambio=parseFloat(document.getElementById('cf-tasa')?.value||60);
+  c.tasaCambio=undefined;
   sDB('config');
   const emp=document.getElementById('topbar-empresa');
   if(emp&&c.empresa)emp.textContent=c.empresa;
@@ -4782,15 +4791,22 @@ function _generarPDFGastosVeh(gastos,tasa,filtroSup,filtroVeh,soloUnVeh){
   const subtotPagUSD=gastosUSD.reduce((a,g)=>a+parseFloat(g.montoPagado||0),0);
   const subtotPendUSD=gastosUSD.reduce((a,g)=>a+parseFloat(g.montoPendiente||0),0);
 
-  // TOTAL EN RD$: RD$ directo + USD×su propia tasa
-  const totalRD=gastosRD.reduce((a,g)=>a+parseFloat(g.montoFactura||0),0)
-               +gastosUSD.reduce((a,g)=>a+parseFloat(g.montoFactura||0)*parseFloat(g.tasaCambio||tasa),0);
-  const totalPagRD=gastosRD.reduce((a,g)=>a+parseFloat(g.montoPagado||0),0)
-                  +gastosUSD.reduce((a,g)=>a+parseFloat(g.montoPagado||0)*parseFloat(g.tasaCambio||tasa),0);
-  const totalPendRD=totalRD-totalPagRD;
+  // TOTAL EN RD$: usa RD$ reales de cada pago (tasa por cuota)
+  const calcRDReal=(g)=>{
+    if((g.moneda||'RD$')==='RD$')return{factura:parseFloat(g.montoFactura||0),pagado:parseFloat(g.montoPagado||0),pendiente:parseFloat(g.montoPendiente||0)};
+    const pagosConTasa=(g.pagos||[]).filter(p=>p.equivRD);
+    const rdPagado=pagosConTasa.length>0
+      ?pagosConTasa.reduce((a,p)=>a+parseFloat(p.equivRD||0),0)
+      :parseFloat(g.montoPagado||0)*parseFloat(g.tasaCambio||tasa);
+    const tasaEst=parseFloat(g.tasaCambio||tasa);
+    const rdPendiente=parseFloat(g.montoPendiente||0)*tasaEst;
+    return{factura:rdPagado+rdPendiente,pagado:rdPagado,pendiente:rdPendiente};
+  };
+  const totalRD=gastos.reduce((a,g)=>a+calcRDReal(g).factura,0);
+  const totalPagRD=gastos.reduce((a,g)=>a+calcRDReal(g).pagado,0);
+  const totalPendRD=gastos.reduce((a,g)=>a+calcRDReal(g).pendiente,0);
 
   // TOTAL EN US$ (solo si hay gastos USD):
-  // USD directo + RD$÷promedio de tasas de los gastos USD
   const tasasUSD=gastosUSD.map(g=>parseFloat(g.tasaCambio||tasa));
   const tasaPromedio=hayUSD?tasasUSD.reduce((a,t)=>a+t,0)/tasasUSD.length:0;
   const totalUS=hayUSD?(subtotUSD+(subtotRD/tasaPromedio)):0;
@@ -4812,17 +4828,21 @@ function _generarPDFGastosVeh(gastos,tasa,filtroSup,filtroVeh,soloUnVeh){
     <td class="st"><span class="b ${g.statusGasto==='PAGADO'?'g':g.statusGasto==='ABONADO'?'a':'r'}">${g.statusGasto||'PEND.'}</span></td>
   </tr>`).join('');
 
-  // Filas USD
-  const filasUSD=gastosUSD.map((g,i)=>`<tr class="urow">
+  // Filas USD — muestra RD$ reales y tasas usadas
+  const filasUSD=gastosUSD.map((g,i)=>{
+    const rd=calcRDReal(g);
+    const tasasStr=(g.pagos||[]).filter(p=>p.tasa).map(p=>'RD$'+parseFloat(p.tasa).toFixed(2)).join(' / ');
+    const pendEst=parseFloat(g.montoPendiente||0)>0?` <span style="color:#f59e0b;font-size:8px">(est.)</span>`:'';
+    return`<tr class="urow">
     <td class="num">${gastosRD.length+i+1}</td>
     <td class="desc">${escHtml(g.tipo||'—')}</td>
     <td class="sup">${escHtml(g.suplidor||'—')}</td>
     <td class="mon">US$</td>
-    <td class="amt">${fN(g.montoFactura)}</td>
-    <td class="amt ok">${parseFloat(g.montoPagado||0)>0?fN(g.montoPagado):''}</td>
-    <td class="amt nd">${parseFloat(g.montoPendiente||0)>0?fN(g.montoPendiente):''}</td>
-    <td class="st"><span class="b ${g.statusGasto==='PAGADO'?'g':g.statusGasto==='ABONADO'?'a':'r'}">${g.statusGasto||'PEND.'}</span></td>
-  </tr>`).join('');
+    <td class="amt">${fN(g.montoFactura)}<br><span style="font-size:7px;color:#2563eb">=RD$ ${fN(rd.factura)}${pendEst}</span></td>
+    <td class="amt ok">${parseFloat(g.montoPagado||0)>0?fN(g.montoPagado)+'<br><span style="font-size:7px;color:#16a34a">RD$ '+fN(rd.pagado)+'</span>':''}</td>
+    <td class="amt nd">${parseFloat(g.montoPendiente||0)>0?fN(g.montoPendiente)+'<br><span style="font-size:7px;color:#dc2626">RD$ '+fN(rd.pendiente)+'</span>':''}</td>
+    <td class="st"><span class="b ${g.statusGasto==='PAGADO'?'g':g.statusGasto==='ABONADO'?'a':'r'}">${g.statusGasto||'PEND.'}</span>${tasasStr?`<br><span style="font-size:7px;color:#6b7280">${tasasStr}</span>`:''}</td>
+  </tr>`;}).join('');
 
   const win=window.open('','_blank','width=820,height=750');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
@@ -5164,7 +5184,7 @@ function renderEntregasTabla(){
       ?`<span style="background:var(--amber2);color:var(--amber);padding:2px 7px;border-radius:4px;font-size:11px;font-weight:700">⏳ ${cxpPend.length} CxP pend.</span>`
       :'<span style="background:var(--green2);color:var(--green);padding:2px 7px;border-radius:4px;font-size:11px;font-weight:700">✅ Pagado</span>';
     const fotoEntrega=v.fotoEntrega?`<span style="background:var(--green2);color:var(--green);padding:2px 7px;border-radius:4px;font-size:11px">📷 Foto OK</span>`:'';
-    return `<tr>
+    return `<tr onclick="selVenta('${v.id}',this)" style="cursor:pointer">
       <td style="font-family:monospace;font-size:11px;font-weight:700;color:var(--blue)">${escHtml(v.factura||'—')}</td>
       <td style="font-size:12px">${fmtDate(v.fecha)}</td>
       <td style="font-size:12px;font-weight:700">${escHtml(v.vehiculo||'—')}<br><span style="font-size:10px;color:var(--blue);font-family:monospace">${escHtml(v.codigo||'')}</span></td>
@@ -5173,7 +5193,7 @@ function renderEntregasTabla(){
       <td>${cxcBadge}</td>
       <td>${cxpBadge}</td>
       <td style="font-weight:800;color:${diasColor}">${dias}d ${fotoEntrega}</td>
-      <td><button class="btn btn-green btn-sm" onclick="registrarEntrega('${v.id}')">📦 Registrar Entrega</button></td>
+      <td><button class="btn btn-green btn-sm" onclick="event.stopPropagation();registrarEntrega('${v.id}')">📦 Registrar Entrega</button></td>
     </tr>`;
   }).join('');
 }
@@ -5347,15 +5367,14 @@ function nuevaVenta(){
 let ventaSelectedId=null;
 function selVenta(id,tr){
   ventaSelectedId=id;
-  document.querySelectorAll('#ventas-tbl tbody tr').forEach(r=>r.style.background='');
+  document.querySelectorAll('#ventas-tbl tbody tr, #entregas-tbody tr').forEach(r=>r.style.background='');
   if(tr)tr.style.background='#e8f0fe';
   const v=DB.ventas.find(x=>x.id===id);
   const actB=(bid,bg,c)=>{const b=document.getElementById(bid);if(b){b.disabled=false;b.style.cssText='background:'+bg+';color:'+c+';cursor:pointer;border:none;';}};
   actB('vta-btn-imprimir','#475569','#fff');
-  if(currentUser?.role==='admin'){
-    actB('vta-btn-editar','#2563eb','#fff');
-    actB('vta-btn-eliminar','#dc2626','#fff');
-  }
+  if(currentUser?.role==='admin'||canDo('editar')){actB('vta-btn-editar','#2563eb','#fff');}
+  if(currentUser?.role==='admin'||canDo('eliminar')){actB('vta-btn-eliminar','#dc2626','#fff');}
+  if(currentUser?.role==='admin'||canDo('imprimir')){actB('vta-btn-pdf','#475569','#fff');}
 }
 function ventaAccion(accion){
   if(!ventaSelectedId)return;
@@ -6269,11 +6288,15 @@ function imprimirCotizacion(i){
   .sec-titulo{font-size:10px;font-weight:800;text-transform:uppercase;color:#fff;background:#0f172a;padding:4px 10px;border-radius:4px;margin-bottom:10px;display:inline-block}
   .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px}
   .campo label{font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;display:block;margin-bottom:2px}
-  .campo span{font-size:12px;font-weight:600;display:block;padding:5px 8px;background:#f8fafc;border-radius:4px;border-left:3px solid #2563eb}
-  .monto-box{background:#f0fdf4;border:2px solid #16a34a;border-radius:8px;padding:16px;text-align:center;margin:16px 0}
-  .monto-label{font-size:11px;font-weight:700;text-transform:uppercase;color:#16a34a;margin-bottom:6px}
-  .monto-val{font-size:30px;font-weight:900;color:#16a34a}
-  .monto-sub{font-size:11px;color:#6b7280;margin-top:4px}
+  .campo span{font-size:13px;font-weight:700;display:block;padding:6px 10px;background:#f8fafc;border-radius:4px;border-left:4px solid #2563eb}
+  .veh-box{background:#0f172a;border-radius:10px;padding:16px 18px;margin-bottom:16px}
+  .veh-box .sec-titulo{background:#2563eb;color:#fff;font-size:11px;font-weight:800;text-transform:uppercase;padding:4px 12px;border-radius:20px;margin-bottom:12px;display:inline-block}
+  .veh-box .campo label{color:#94a3b8}
+  .veh-box .campo span{background:#1e293b;border-left:4px solid #2563eb;color:#f1f5f9;font-size:14px;font-weight:800}
+  .monto-box{background:#f0fdf4;border:1.5px solid #16a34a;border-radius:6px;padding:8px 12px;text-align:center;margin:8px 0}
+  .monto-label{font-size:9px;font-weight:700;text-transform:uppercase;color:#16a34a;margin-bottom:2px}
+  .monto-val{font-size:12px;font-weight:900;color:#16a34a}
+  .monto-sub{font-size:9px;color:#6b7280;margin-top:2px}
   .firma{margin-top:48px;text-align:center}
   .firma-linea{border-top:1px solid #000;padding-top:5px;font-size:11px;color:#475569;display:inline-block;min-width:200px}
   .pie{text-align:center;font-size:9px;color:#94a3b8;margin-top:20px;padding-top:10px;border-top:1px solid #e2e8f0}
@@ -6302,7 +6325,7 @@ function imprimirCotizacion(i){
     ${escHtml(c.tipoDoc||'Cédula')}: <strong>${escHtml(c.documento||c.cedula||'—')}</strong>${c.telefono?`, Tel: <strong>${escHtml(c.telefono)}</strong>`:''},
     para fines de <strong>financiamiento vehicular</strong>.
   </div>
-  <div style="margin-bottom:14px">
+  <div class="veh-box" style="margin-bottom:14px">
     <div class="sec-titulo">🚗 Vehículo a Financiar</div>
     <div class="g3">
       <div class="campo"><label>Marca</label><span>${escHtml(vObj?.marca||c.marca||'—')}</span></div>
@@ -6367,7 +6390,7 @@ function formCliente(c){return`
     <div class="form-field"><label>WhatsApp</label><input type="text" id="c-whatsapp" value="${escHtml(c?.whatsapp||c?.telefono||'')}" maxlength="12" placeholder="000-000-0000" oninput="fmtTelInput(this)"></div>
     <div class="form-field"><label>Fecha Cumpleanios</label><input type="date" id="c-cumpleanos" value="${c?.fechaCumpleanos||''}"></div>
   </div>
-  <div class="form-field"><label>Direccixtarea id="c-dir" rows="2">${escHtml(c?.direccion||'')}</textarea></div>
+  <div class="form-field"><label>Dirección</label><textarea id="c-dir" rows="2">${escHtml(c?.direccion||'')}</textarea></div>
   <div style="background:var(--gray2);border-radius:8px;padding:12px;margin-bottom:12px">
     <div style="font-size:12px;font-weight:700;margin-bottom:8px">👥 Contacto de Referencia</div>
     <div class="form-row c2" style="margin:0">
@@ -6399,9 +6422,12 @@ function guardarCliente(idx){
   const refNombre=document.getElementById('c-ref-nombre')?.value.trim()||'';
   const refTel=document.getElementById('c-ref-tel')?.value.trim()||'';
   const docVal=document.getElementById('c-doc').value.trim();
-  if(!nombre){toast('El nombre es requerido','error');return;}
-  if(!refNombre){toast('El nombre de referencia es requerido','error');return;}
-  if(!refTel){toast('El teléfono de referencia es requerido','error');return;}
+  if(!nombre){toast('El nombre del cliente es requerido','error');document.getElementById('c-nombre')?.focus();return;}
+  // Referencia obligatoria solo al crear nuevo cliente
+  if(idx===undefined){
+    if(!refNombre){toast('El nombre de referencia es requerido','error');document.getElementById('c-ref-nombre')?.focus();return;}
+    if(!refTel){toast('El teléfono de referencia es requerido','error');document.getElementById('c-ref-tel')?.focus();return;}
+  }
   // Validar duplicado por nombre
   const nombreDup=DB.clientes.find((c,i)=>c.nombre.toLowerCase()===nombre.toLowerCase()&&i!==idx);
   if(nombreDup){toast('Ya existe un cliente con ese nombre','error');return;}
@@ -6411,7 +6437,7 @@ function guardarCliente(idx){
     if(docDup){toast('Ya existe un cliente con ese número de documento','error');return;}
   }
   const fEl=document.getElementById('c-doc-frente-prev');const dEl=document.getElementById('c-doc-dorso-prev');
-  const c={id:idx!==undefined?DB.clientes[idx].id:uid(),nombre,tipoDoc:document.getElementById('c-tipodoc').value,documento:document.getElementById('c-doc').value.trim(),ingresos:parseFloat((document.getElementById('c-ingresos')?.value||'0').replace(/,/g,''))||0,ciudad:document.getElementById('c-ciudad').value,provincia:document.getElementById('c-prov').value,telefono:document.getElementById('c-tel').value,telefono2:document.getElementById('c-tel2').value,whatsapp:document.getElementById('c-whatsapp')?.value||'',fechaCumpleanos:document.getElementById('c-cumpleanos')?.value||'',direccion:document.getElementById('c-dir').value,refNombre:document.getElementById('c-ref-nombre')?.value||'',refTel:document.getElementById('c-ref-tel')?.value||'',docFrente:fEl?.style.display!=='none'&&fEl?.src?fEl.src:(idx!==undefined?DB.clientes[idx]?.docFrente||'':''),docDorso:dEl?.style.display!=='none'&&dEl?.src?dEl.src:(idx!==undefined?DB.clientes[idx]?.docDorso||'':'')};
+  const c={id:idx!==undefined?DB.clientes[idx].id:uid(),nombre,tipoDoc:document.getElementById('c-tipodoc').value,documento:document.getElementById('c-doc').value.trim(),ingresos:parseFloat((document.getElementById('c-ingresos')?.value||'0').replace(/,/g,''))||0,ciudad:document.getElementById('c-ciudad').value,provincia:document.getElementById('c-prov').value,telefono:document.getElementById('c-tel').value,telefono2:document.getElementById('c-tel2').value,whatsapp:document.getElementById('c-whatsapp')?.value||'',fechaCumpleanos:document.getElementById('c-cumpleanos')?.value||'',direccion:document.getElementById('c-dir').value,refNombre:refNombre||(idx!==undefined?DB.clientes[idx]?.refNombre||'':''),refTel:refTel||(idx!==undefined?DB.clientes[idx]?.refTel||'':''),docFrente:fEl?.style.display!=='none'&&fEl?.src?fEl.src:(idx!==undefined?DB.clientes[idx]?.docFrente||'':''),docDorso:dEl?.style.display!=='none'&&dEl?.src?dEl.src:(idx!==undefined?DB.clientes[idx]?.docDorso||'':'')};
   if(idx!==undefined)DB.clientes[idx]=c;else DB.clientes.push(c);
   sDB('clientes');closeModal();toast('Cliente guardado ✓','success');renderClientes();
 }
@@ -7173,7 +7199,7 @@ function abonarDesdeCXP(gid){
     </div>
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto a Pagar (${esUSD?'USD':'RD$'})</label>
-        <input type="text" id="cxpp-monto" value="${g.montoPendiente||0}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" placeholder="0.00">
+        <input type="text" id="cxpp-monto" value="${g.montoPendiente||0}" oninput="fmtMoneyInput(this);${esUSD?'calcEquivCXP();':''}" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" placeholder="0.00">
       </div>
       <div class="form-field"><label>Banco</label>
         <select id="cxpp-banco" onchange="actualizarCuentasCXPP()">
@@ -7181,6 +7207,28 @@ function abonarDesdeCXP(gid){
         </select>
       </div>
     </div>
+    ${esUSD?`
+    <div style="background:#eff6ff;border:0.5px solid #bfdbfe;border-radius:8px;padding:10px 14px;margin-bottom:12px">
+      <div style="font-size:11px;font-weight:500;color:#1d4ed8;margin-bottom:8px">💱 Tasa de cambio del día</div>
+      <div class="form-row c2" style="margin-bottom:0">
+        <div class="form-field" style="margin-bottom:0">
+          <label class="required">Tasa del día (RD$ por 1 USD)</label>
+          <input type="number" id="cxpp-tasa" step="0.01" placeholder="Ej: 62.50" oninput="calcEquivCXP()">
+        </div>
+        <div class="form-field" style="margin-bottom:0">
+          <label>Equivalente en RD$ <span style="color:var(--green);font-size:11px">(calculado)</span></label>
+          <input type="text" id="cxpp-equiv" readonly style="background:var(--gray2);color:var(--green);font-weight:700" value="">
+        </div>
+      </div>
+    </div>
+    <script>
+    function calcEquivCXP(){
+      const m=parseFloat((document.getElementById('cxpp-monto')?.value||'0').replace(/,/g,''))||0;
+      const t=parseFloat(document.getElementById('cxpp-tasa')?.value||0)||0;
+      const el=document.getElementById('cxpp-equiv');
+      if(el)el.value=typeof fmt==='function'?fmt(m*t):'RD$ '+(m*t).toLocaleString('es-DO',{minimumFractionDigits:2});
+    }
+    <\/script>`:''}
     <div class="form-row c2">
       <div class="form-field"><label>Cuenta Bancaria de Salida</label>
         <select id="cxpp-cuenta">
@@ -7204,6 +7252,10 @@ function confirmarPagoCXP(i){
   if(!monto||monto<=0){toast('Ingresa un monto válido','error');return;}
   const g=DB.gastosVehiculos[i];
   if(monto>parseFloat(g.montoPendiente||0)){toast('El monto no puede superar el pendiente','error');return;}
+  const esUSD=g.moneda==='USD';
+  const tasa=esUSD?parseFloat(document.getElementById('cxpp-tasa')?.value||0):null;
+  if(esUSD&&(!tasa||tasa<=0)){toast('La tasa del día es obligatoria para pagos en USD','error');document.getElementById('cxpp-tasa')?.focus();return;}
+  const equivRD=esUSD?monto*tasa:null;
   const fechaPago=document.getElementById('cxpp-fecha').value;
   const cuentaPago=document.getElementById('cxpp-cuenta').value;
   const notaPago=document.getElementById('cxpp-nota')?.value||'';
@@ -7214,13 +7266,19 @@ function confirmarPagoCXP(i){
   const saldado=DB.gastosVehiculos[i].montoPendiente<=0;
   if(saldado){DB.gastosVehiculos[i].montoPendiente=0;DB.gastosVehiculos[i].statusGasto='PAGADO';}
   else DB.gastosVehiculos[i].statusGasto='ABONADO';
-  // Guardar historial de pagos
   if(!DB.gastosVehiculos[i].pagos)DB.gastosVehiculos[i].pagos=[];
-  DB.gastosVehiculos[i].pagos.push({id:uid(),fecha:fechaPago,monto,cuenta:cuentaPago,nota:notaPago,saldado});
+  DB.gastosVehiculos[i].pagos.push({id:uid(),fecha:fechaPago,monto,cuenta:cuentaPago,nota:notaPago,saldado,
+    ...(esUSD&&tasa?{tasa,equivRD,moneda:'USD'}:{})
+  });
+  if(esUSD&&tasa){
+    DB.caja.push({id:uid(),fecha:fechaPago,tipo:'SALIDA',categoria:'CXP USD',
+      descripcion:'Pago CXP USD: '+g.descripcion+(g.suplidor?' — '+g.suplidor:'')+' (Tasa: '+tasa.toFixed(2)+')',
+      monto:equivRD,moneda:'RD$',referencia:cuentaPago,banco:document.getElementById('cxpp-banco')?.value||'',responsable:currentUser?.nombre||''});
+    sDB('caja');
+  }
   sDB('gastosVehiculos');
   closeModal();
-  // Generar recibo de pago
-  imprimirReciboPagoCXP(DB.gastosVehiculos[i],{fecha:fechaPago,monto,cuenta:cuentaPago,nota:notaPago,saldado});
+  imprimirReciboPagoCXP(DB.gastosVehiculos[i],{fecha:fechaPago,monto,cuenta:cuentaPago,nota:notaPago,saldado,tasa,equivRD});
   toast(saldado?'✅ Gasto saldado — Generando recibo...':'💵 Abono registrado — Generando recibo...','success');
   renderCXP();
 }
@@ -7233,10 +7291,12 @@ function verHistorialCXP(gid){
   const rows=(g.pagos||[]).map(p=>`<tr>
     <td>${fmtDate(p.fecha)}</td>
     <td style="font-weight:700;color:var(--green)">${fV(p.monto)}</td>
+    <td>${p.tasa?`<span style="font-size:11px;color:var(--blue)">RD$ ${parseFloat(p.tasa||0).toFixed(2)}</span>`:'—'}</td>
+    <td>${p.equivRD?fmt(p.equivRD):'—'}</td>
     <td>${escHtml(p.cuenta||'—')}</td>
     <td>${escHtml(p.nota||'—')}</td>
     <td><span class="badge ${p.saldado?'badge-green':'badge-amber'}">${p.saldado?'SALDADO':'ABONO'}</span></td>
-    ${currentUser?.role==='admin'?`<td><button class="btn btn-secondary btn-sm" onclick="imprimirReciboPagoCXP(DB.gastosVehiculos.find(x=>x.id==='${g.id}'),{fecha:'${p.fecha}',monto:${p.monto},cuenta:'${escHtml(p.cuenta||'')}',nota:'${escHtml(p.nota||'')}',saldado:${p.saldado||false}})">🖨️</button></td>`:'<td></td>'}
+    ${currentUser?.role==='admin'?`<td><button class="btn btn-secondary btn-sm" onclick="imprimirReciboPagoCXP(DB.gastosVehiculos.find(x=>x.id==='${g.id}'),{fecha:'${p.fecha}',monto:${p.monto},cuenta:'${escHtml(p.cuenta||'')}',nota:'${escHtml(p.nota||'')}',saldado:${p.saldado||false},tasa:${p.tasa||0},equivRD:${p.equivRD||0}})">🖨️</button></td>`:'<td></td>'}
   </tr>`).join('');
   openModal('📋 Historial de Pagos — '+escHtml(g.suplidor||'—'),`
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
@@ -7245,8 +7305,8 @@ function verHistorialCXP(gid){
       <div style="text-align:center;padding:10px;background:var(--red2);border-radius:8px"><div style="font-size:10px;color:var(--red)">Pendiente</div><div style="font-weight:800;color:var(--red)">${fV(g.montoPendiente||0)}</div></div>
     </div>
     <div style="font-size:12px;color:var(--gray);margin-bottom:8px">${escHtml(g.tipo||'—')} — ${v?escHtml(v.codigo+' '+v.marca+' '+v.modelo):'—'} — Suplidor: <strong>${escHtml(g.suplidor||'—')}</strong></div>
-    <table><thead><tr><th>Fecha</th><th>Monto</th><th>Cuenta Ingreso</th><th>Nota</th><th>Tipo</th><th>Recibo</th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--gray)">Sin pagos registrados</td></tr>'}</tbody></table>`);
+    <table><thead><tr><th>Fecha</th><th>Monto</th>${esUSD?'<th>Tasa</th><th>Equiv RD$</th>':''}<th>Cuenta</th><th>Nota</th><th>Tipo</th><th>Recibo</th></tr></thead>
+    <tbody>${rows||`<tr><td colspan="${esUSD?8:6}" style="text-align:center;padding:16px;color:var(--gray)">Sin pagos registrados</td></tr>`}</tbody></table>`);
 }
 
 function imprimirReciboPagoCXP(g, pago){
@@ -7590,6 +7650,19 @@ function nuevaCXCManual(){
       </div>
     </div>
     <div class="form-row c2">
+      <div class="form-field"><label>Frecuencia de Pago</label>
+        <select id="ncxc-freq">
+          <option value="">Sin frecuencia definida</option>
+          <option value="semanal">Semanal</option>
+          <option value="quincenal">Quincenal</option>
+          <option value="mensual">Mensual</option>
+        </select>
+      </div>
+      <div class="form-field"><label>Fecha Próximo Pago</label>
+        <input type="date" id="ncxc-proxpago">
+      </div>
+    </div>
+    <div class="form-row c2">
       <div class="form-field"><label>Banco</label>
         <select id="ncxc-banco" onchange="actualizarCuentasCXCManual()">
           ${(DB.config.bancoCuentas||[]).map(b=>`<option value="${escHtml(b.banco)}">${escHtml(b.banco)}</option>`).join('')||'<option value="Caja General">Caja General</option>'}
@@ -7651,6 +7724,8 @@ function guardarCXCManual(){
   const tasaCXC=moneda==='USD'?parseFloat(document.getElementById('ncxc-tasa')?.value||DB.config.tasaCambio||60):parseFloat(DB.config.tasaCambio||60);
   const fecha=document.getElementById('ncxc-fecha').value;
   const vence=document.getElementById('ncxc-vence').value;
+  const freq=document.getElementById('ncxc-freq')?.value||'';
+  const proxPago=document.getElementById('ncxc-proxpago')?.value||'';
   if(!DB.cxc)DB.cxc=[];
   DB.cxc.push({
     id:uid(),ventaId:'',factura:'CXC-'+uid().slice(0,6).toUpperCase(),
@@ -7658,6 +7733,8 @@ function guardarCXCManual(){
     vehiculo:'',concepto,moneda,
     total,abono,saldo,
     fecha,fechaVence:vence,
+    frecuenciaPago:freq,
+    proxPago:proxPago||vence||'',
     status:saldo<=0?'SALDADO':abono>0?'PARCIAL':'PENDIENTE',
     cuenta,banco,tasaCambio:tasaCXC,pagos:[],
     esManual:true
@@ -7687,6 +7764,7 @@ function abonarCXC(id){
   const esUSD=(x.moneda||ventaRel?.moneda||'RD$')==='USD';
   const fV=(n)=>esUSD?'$'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(n);
   const cuentas=DB.config.cuentas&&DB.config.cuentas.length?DB.config.cuentas:['Caja General'];
+  const freqLabel={semanal:'Semanal',quincenal:'Quincenal',mensual:'Mensual'};
   openModal('💵 Registrar Cobro — '+escHtml(x.cliente),`
     <div style="background:var(--blue3);border-radius:8px;padding:12px;margin-bottom:14px">
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px">
@@ -7694,15 +7772,38 @@ function abonarCXC(id){
         <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Vehículo</div><div style="font-weight:700">${escHtml(x.vehiculo||'—')}</div></div>
         <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Saldo Pendiente</div><div style="font-weight:800;color:var(--amber)">${fV(x.saldo)}</div></div>
       </div>
+      ${x.frecuenciaPago?`<div style="margin-top:8px;font-size:11px;color:var(--gray)">Pago ${freqLabel[x.frecuenciaPago]||x.frecuenciaPago}${x.proxPago?' — Próximo: <strong>'+fmtDate(x.proxPago)+'</strong>':''}</div>`:''}
     </div>
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto a Cobrar (${esUSD?'USD':'RD$'})</label>
-        <input type="text" id="cxca-monto" value="${fmtMoneyDisplay(x.saldo||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" placeholder="0.00">
+        <input type="text" id="cxca-monto" value="${fmtMoneyDisplay(x.saldo||0)}" oninput="fmtMoneyInput(this);${esUSD?'calcEquivCXCA();':''}" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" placeholder="0.00">
       </div>
       <div class="form-field"><label>Fecha</label>
         <input type="date" id="cxca-fecha" value="${today()}">
       </div>
     </div>
+    ${esUSD?`
+    <div style="background:#eff6ff;border:0.5px solid #bfdbfe;border-radius:8px;padding:10px 14px;margin-bottom:12px">
+      <div style="font-size:11px;font-weight:500;color:#1d4ed8;margin-bottom:8px">💱 Tasa de cambio del día</div>
+      <div class="form-row c2" style="margin-bottom:0">
+        <div class="form-field" style="margin-bottom:0">
+          <label class="required">Tasa del día (RD$ por 1 USD)</label>
+          <input type="number" id="cxca-tasa" step="0.01" placeholder="Ej: 62.50" oninput="calcEquivCXCA()">
+        </div>
+        <div class="form-field" style="margin-bottom:0">
+          <label>Equivalente en RD$ <span style="color:var(--green);font-size:11px">(calculado)</span></label>
+          <input type="text" id="cxca-equiv" readonly style="background:var(--gray2);color:var(--green);font-weight:700" value="">
+        </div>
+      </div>
+    </div>
+    <script>
+    function calcEquivCXCA(){
+      const m=parseFloat((document.getElementById('cxca-monto')?.value||'0').replace(/,/g,''))||0;
+      const t=parseFloat(document.getElementById('cxca-tasa')?.value||0)||0;
+      const el=document.getElementById('cxca-equiv');
+      if(el)el.value=typeof fmt==='function'?fmt(m*t):'RD$ '+(m*t).toLocaleString('es-DO',{minimumFractionDigits:2});
+    }
+    <\/script>`:''}
     <div class="form-row c2">
       <div class="form-field"><label>Banco</label>
         <select id="cxca-banco" onchange="actualizarCuentasCXCA()">
@@ -7715,11 +7816,24 @@ function abonarCXC(id){
         </select>
       </div>
     </div>
+    ${x.frecuenciaPago?`
+    <div class="form-field" style="margin-bottom:10px">
+      <label>Próximo Pago (actualizar)</label>
+      <input type="date" id="cxca-proxpago" value="${calcProxPago(x.proxPago||today(),x.frecuenciaPago)}">
+    </div>`:''}
     <div class="form-field"><label>Nota</label>
       <input type="text" id="cxca-nota" placeholder="Descripción del cobro">
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
      <button class="btn btn-green" onclick="confirmarAbonarCXC('${id}')">✅ Confirmar Cobro</button>`);
+}
+function calcProxPago(fecha,freq){
+  if(!fecha||!freq)return '';
+  const d=new Date(fecha);
+  if(freq==='semanal')d.setDate(d.getDate()+7);
+  else if(freq==='quincenal')d.setDate(d.getDate()+15);
+  else if(freq==='mensual')d.setMonth(d.getMonth()+1);
+  return d.toISOString().split('T')[0];
 }
 function actualizarCuentasCXCA(){
   const bancoEl=document.getElementById('cxca-banco');
@@ -7735,16 +7849,24 @@ function confirmarAbonarCXC(id){
   if(!monto||monto<=0){toast('Ingresa un monto válido','error');return;}
   const i=DB.cxc.findIndex(x=>x.id===id);if(i<0)return;
   if(monto>parseFloat(DB.cxc[i].saldo||0)){toast('El monto no puede superar el saldo pendiente','error');return;}
+  const esUSD=(DB.cxc[i].moneda||'RD$')==='USD';
+  const tasa=esUSD?parseFloat(document.getElementById('cxca-tasa')?.value||0):null;
+  if(esUSD&&(!tasa||tasa<=0)){toast('La tasa del día es obligatoria para cobros en USD','error');document.getElementById('cxca-tasa')?.focus();return;}
+  const equivRD=esUSD?monto*tasa:null;
   const fechaCobro=document.getElementById('cxca-fecha').value;
   const bancoCobro=document.getElementById('cxca-banco')?.value||'';
   const cuentaCobro=document.getElementById('cxca-cuenta')?.value||'Caja General';
   const notaCobro=document.getElementById('cxca-nota')?.value||'';
+  const proxPago=document.getElementById('cxca-proxpago')?.value||'';
   DB.cxc[i].abonado=(DB.cxc[i].abonado||0)+monto;
   DB.cxc[i].saldo=Math.max(0,(DB.cxc[i].saldo||0)-monto);
+  if(proxPago)DB.cxc[i].proxPago=proxPago;
   const saldado=DB.cxc[i].saldo<=0;
   DB.cxc[i].status=saldado?'SALDADO':DB.cxc[i].abonado>0?'PARCIAL':'PENDIENTE';
   if(!DB.cxc[i].pagos)DB.cxc[i].pagos=[];
-  DB.cxc[i].pagos.push({id:uid(),fecha:fechaCobro,monto,cuenta:cuentaCobro,nota:notaCobro,saldado});
+  DB.cxc[i].pagos.push({id:uid(),fecha:fechaCobro,monto,cuenta:cuentaCobro,nota:notaCobro,saldado,
+    ...(esUSD&&tasa?{tasa,equivRD,moneda:'USD'}:{})
+  });
   if(DB.cxc[i].ventaId){
     const vi=DB.ventas.findIndex(v=>v.id===DB.cxc[i].ventaId);
     if(vi>=0){
@@ -7754,10 +7876,14 @@ function confirmarAbonarCXC(id){
       sDB('ventas');
     }
   }
-  DB.caja.push({id:uid(),fecha:fechaCobro,tipo:'ENTRADA',categoria:'Cobro CxC',descripcion:`Cobro CxC: ${DB.cxc[i].cliente} — ${DB.cxc[i].factura}`,monto,banco:bancoCobro,cuenta:cuentaCobro,referencia:bancoCobro?(bancoCobro+' / '+cuentaCobro):cuentaCobro,responsable:currentUser.nombre});
+  const montoCaja=esUSD?equivRD:monto;
+  DB.caja.push({id:uid(),fecha:fechaCobro,tipo:'ENTRADA',categoria:'Cobro CxC',
+    descripcion:`Cobro CxC: ${DB.cxc[i].cliente} — ${DB.cxc[i].factura}`+(esUSD?` (Tasa: ${tasa.toFixed(2)})`:''),
+    monto:montoCaja,moneda:'RD$',banco:bancoCobro,cuenta:cuentaCobro,
+    referencia:bancoCobro?(bancoCobro+' / '+cuentaCobro):cuentaCobro,responsable:currentUser.nombre});
   sDB('cxc');sDB('caja');
   closeModal();
-  imprimirReciboCobro(DB.cxc[i],{id:uid(),fecha:fechaCobro,monto,cuenta:cuentaCobro,nota:notaCobro,saldado});
+  imprimirReciboCobro(DB.cxc[i],{id:uid(),fecha:fechaCobro,monto,cuenta:cuentaCobro,nota:notaCobro,saldado,tasa,equivRD});
   toast(saldado?'✅ Cuenta saldada — Generando recibo...':'💵 Abono registrado — Generando recibo...','success');
   renderCXC();
 }
@@ -7906,9 +8032,12 @@ function imprimirReciboCobro(cxc, pago){
       <div class="resumen-row"><span>Total de la Venta</span><span style="font-weight:700">${fV(cxc.total||0)}</span></div>
       <div class="resumen-row"><span>Cobrado Anteriormente</span><span style="color:#16a34a">${fV((cxc.abonado||0)-pago.monto)}</span></div>
       <div class="monto-cobro"><span>${esSaldado?'Pago Final Recibido':'Abono Recibido'}</span><span>${fV(pago.monto)}</span></div>
+      ${esUSD&&pago.tasa?`<div style="background:#eff6ff;border-radius:6px;padding:8px 12px;margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">
+        <div><span style="color:#6b7280">Tasa del día:</span> <strong style="color:#1d4ed8">RD$ ${parseFloat(pago.tasa||0).toFixed(2)}</strong></div>
+        <div><span style="color:#6b7280">Equiv. RD$:</span> <strong style="color:#16a34a">${fmt(pago.equivRD||0)}</strong></div>
+      </div>`:''}
       <div class="resumen-row"><span>💳 Cuenta de Ingreso</span><span style="font-weight:700;color:#2563eb">${escHtml(pago.cuenta||'—')}</span></div>
       <div class="saldo-box"><span>${esSaldado?'✅ Cuenta Saldada':'⏳ Saldo Pendiente'}</span><span>${fV(cxc.saldo||0)}</span></div>
-      ${!esSaldado&&esUSD?`<div style="font-size:10px;color:#94a3b8;margin-top:4px;text-align:right">Equivalente: RD$ ${fmt((cxc.saldo||0)*tasa)}</div>`:''}
     </div>
     ${pago.nota?`<div style="margin-top:8px;font-size:11px;background:#f1f5f9;border-radius:4px;padding:6px 10px;color:#475569">📝 ${escHtml(pago.nota)}</div>`:''}
   </div>
@@ -7937,19 +8066,23 @@ function verAbonosCXC(id){
   const rows=(x.pagos||[]).map((p,pi)=>`<tr>
     <td>${fmtDate(p.fecha)}</td>
     <td style="font-weight:700;color:var(--green)">${fV(p.monto)}</td>
+    <td>${p.tasa?`<span style="font-size:11px;color:var(--blue)">RD$ ${parseFloat(p.tasa||0).toFixed(2)}</span>`:'—'}</td>
+    <td>${p.equivRD?fmt(p.equivRD):'—'}</td>
     <td>${escHtml(p.cuenta||'—')}</td>
     <td>${escHtml(p.nota||'—')}</td>
     <td><span class="badge ${x.status==='SALDADO'&&pi===(x.pagos||[]).length-1?'badge-green':'badge-amber'}">${x.status==='SALDADO'&&pi===(x.pagos||[]).length-1?'SALDADO':'ABONO'}</span></td>
-    <td><button class="btn btn-secondary btn-sm" onclick="imprimirReciboCobro(DB.cxc.find(c=>c.id==='${x.id}'),{fecha:'${p.fecha}',monto:${p.monto},cuenta:'${escHtml(p.cuenta||'')}',nota:'${escHtml(p.nota||'')}',saldado:${x.status==='SALDADO'&&pi===(x.pagos||[]).length-1}})">🖨️</button></td>
+    <td><button class="btn btn-secondary btn-sm" onclick="imprimirReciboCobro(DB.cxc.find(c=>c.id==='${x.id}'),{fecha:'${p.fecha}',monto:${p.monto},cuenta:'${escHtml(p.cuenta||'')}',nota:'${escHtml(p.nota||'')}',saldado:${x.status==='SALDADO'&&pi===(x.pagos||[]).length-1},tasa:${p.tasa||0},equivRD:${p.equivRD||0}})">🖨️</button></td>
   </tr>`).join('');
+  const freqLabel={semanal:'Semanal',quincenal:'Quincenal',mensual:'Mensual'};
   openModal('📋 Historial de Cobros — '+escHtml(x.cliente),`
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px">
       <div style="text-align:center;padding:10px;background:var(--gray2);border-radius:8px"><div style="font-size:10px;color:var(--gray)">Total Venta</div><div style="font-weight:800">${fV(x.total)}</div></div>
       <div style="text-align:center;padding:10px;background:var(--green2);border-radius:8px"><div style="font-size:10px;color:var(--green)">Total Cobrado</div><div style="font-weight:800;color:var(--green)">${fV(x.abonado||0)}</div></div>
       <div style="text-align:center;padding:10px;background:var(--red2);border-radius:8px"><div style="font-size:10px;color:var(--red)">Saldo Pendiente</div><div style="font-weight:800;color:var(--red)">${fV(x.saldo||0)}</div></div>
     </div>
-    <table><thead><tr><th>Fecha</th><th>Monto</th><th>Cuenta Ingreso</th><th>Nota</th><th>Tipo</th><th>Recibo</th></tr></thead>
-    <tbody>${rows||'<tr><td colspan="6" style="text-align:center;padding:16px;color:var(--gray)">Sin cobros registrados</td></tr>'}</tbody></table>`,
+    ${x.frecuenciaPago?`<div style="font-size:12px;color:var(--gray);margin-bottom:10px">Pago ${freqLabel[x.frecuenciaPago]||x.frecuenciaPago}${x.proxPago?' — Próximo: <strong style="color:var(--navy)">'+fmtDate(x.proxPago)+'</strong>':''}</div>`:''}
+    <table><thead><tr><th>Fecha</th><th>Monto</th>${esUSD?'<th>Tasa</th><th>Equiv RD$</th>':''}<th>Cuenta</th><th>Nota</th><th>Tipo</th><th>Recibo</th></tr></thead>
+    <tbody>${rows||`<tr><td colspan="${esUSD?8:6}" style="text-align:center;padding:16px;color:var(--gray)">Sin cobros registrados</td></tr>`}</tbody></table>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cerrar</button>
      <button class="btn btn-primary" onclick="imprimirResumenPagosCXC('${x.id}')">📄 Imprimir Resumen PDF</button>`);
 }
