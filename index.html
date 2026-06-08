@@ -2386,6 +2386,27 @@ function quickGuardarVehiculo(selectId){
   closeModal();toast('Vehículo "'+marca+' '+modelo+'" agregado ✓','success');
 }
 /* ══ FIN QUICK ADD ══ */
+
+function quickAgregarBancoCot(){
+  const nombre=prompt('Nombre del banco o entidad:');
+  if(!nombre||!nombre.trim())return;
+  const n=nombre.trim();
+  if(!DB.config.bancoCuentas)DB.config.bancoCuentas=[];
+  // Avoid duplicates
+  if(DB.config.bancoCuentas.some(b=>b.banco===n)){
+    // Already exists, just select it
+    const sel=document.getElementById('cot-banco');
+    if(sel)sel.value=n;
+    return;
+  }
+  DB.config.bancoCuentas.push({banco:n,cuentas:[]});
+  DB.config.bancos=(DB.config.bancoCuentas).map(b=>b.banco);
+  sDB('config');
+  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('config').catch(()=>{});
+  const sel=document.getElementById('cot-banco');
+  if(sel){const opt=document.createElement('option');opt.value=n;opt.textContent=n;sel.appendChild(opt);sel.value=n;}
+  toast('Banco "'+n+'" agregado ✓','success');
+}
 function calcPendienteGasto(){
   const factura=parseFloat((document.getElementById('g-monto-factura')?.value||'0').replace(/,/g,''));
   const abonado=parseFloat((document.getElementById('g-monto-abonado')?.value||'0').replace(/,/g,''));
@@ -4179,14 +4200,6 @@ function renderConfig(){
       <button class="btn btn-secondary btn-sm" onclick="agregarPropConfig()">➕ Agregar Propietario</button>
       <div class="btn-row" style="margin-top:12px"><button class="btn btn-primary" onclick="guardarPropietarios()">💾 Guardar</button></div>
     </div>
-    <div class="card" style="margin-top:16px">
-      <div class="card-title">💳 Cuentas de la Empresa <span style="font-size:11px;font-weight:400;color:var(--gray)">(Para cotizaciones)</span></div>
-      <div id="cf-cuentas-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">
-        ${(c.cuentas||['Caja General']).map((ct,i)=>`<div style="display:flex;gap:6px"><input type="text" value="${escHtml(ct)}" id="cf-cuenta-${i}" style="flex:1"><button class="btn btn-red btn-sm" onclick="this.parentElement.remove()">🗑</button></div>`).join('')}
-      </div>
-      <button class="btn btn-secondary btn-sm" onclick="agregarCuentaConfig()">➕ Agregar Cuenta</button>
-      <div class="btn-row" style="margin-top:12px"><button class="btn btn-primary" onclick="guardarCuentasEmpresa()">💾 Guardar</button></div>
-    </div>
     <!-- COLORES DEL SISTEMA -->
     <div class="card">
       <div class="card-title">🎨 Colores del Sistema</div>
@@ -4331,37 +4344,7 @@ function renderConfig(){
       <div class="btn-row" style="margin-top:12px"><button class="btn btn-primary" onclick="guardarCategoriasGastos()">💾 Guardar</button></div>
     </div>
 
-    <!-- BANCOS Y CUENTAS -->
-    <div class="card">
-      <div class="card-title">🏦 Bancos y Cuentas Bancarias <span style="font-size:11px;font-weight:400;color:var(--gray)">(Para pagos y gastos)</span></div>
-      <p style="font-size:13px;color:var(--gray);margin-bottom:12px">Configure los bancos y sus cuentas asociadas. Cada banco puede tener múltiples cuentas en pesos o dólares.</p>
-      <div id="cf-bancoc-list">
-        ${(DB.config.bancoCuentas||[]).map((b,bi)=>`
-          <div class="bc-banco-block" style="background:var(--gray2);border-radius:10px;padding:14px;margin-bottom:12px;border:1px solid var(--gray3)" id="bcb-${bi}">
-            <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-              <input type="text" id="bcb-nombre-${bi}" value="${escHtml(b.banco)}" placeholder="Nombre del banco" style="flex:1;font-weight:700">
-              <button class="btn btn-red btn-sm" onclick="document.getElementById('bcb-${bi}').remove()">🗑 Quitar banco</button>
-            </div>
-            <div style="font-size:11px;font-weight:700;color:var(--gray);text-transform:uppercase;margin-bottom:6px">Cuentas de este banco:</div>
-            <div id="bcb-cuentas-${bi}">
-              ${(b.cuentas||[]).map((c,ci)=>`
-                <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:6px;margin-bottom:6px" class="bc-cuenta-row">
-                  <input type="text" placeholder="Número de cuenta" value="${escHtml(c.numero||'')}" class="bc-cnum">
-                  <select class="bc-ctipo">
-                    <option value="Corriente RD$" ${(c.tipo||'Corriente RD$')==='Corriente RD$'?'selected':''}>Corriente RD$</option>
-                    <option value="Corriente USD" ${c.tipo==='Corriente USD'?'selected':''}>Corriente USD</option>
-                    <option value="Ahorro RD$" ${c.tipo==='Ahorro RD$'?'selected':''}>Ahorro RD$</option>
-                    <option value="Ahorro USD" ${c.tipo==='Ahorro USD'?'selected':''}>Ahorro USD</option>
-                  </select>
-                  <button class="btn btn-red btn-sm" onclick="this.closest('.bc-cuenta-row').remove()">✕</button>
-                </div>`).join('')}
-            </div>
-            <button class="btn btn-secondary btn-sm" style="margin-top:6px" onclick="agregarCuentaBanco(${bi})">➕ Agregar Cuenta</button>
-          </div>`).join('')}
-      </div>
-      <button class="btn btn-secondary btn-sm" onclick="agregarBancoConfig()">🏦 Agregar Banco</button>
-      <div class="btn-row" style="margin-top:12px"><button class="btn btn-primary" onclick="guardarBancoCuentas()">💾 Guardar</button></div>
-    </div>
+
 
     <!-- RESPONSABLE Y OBSERVACIÓN RECIBO -->
     <div class="card">
@@ -7178,7 +7161,7 @@ function eliminarCliente(i){if(currentUser?.role!=='admin'&&!canDo('eliminar')){
 
 // ══ COTIZACIONES (funciones) ══
 function nuevaCotizacion(){
-  const bancos=DB.config.bancos||['Banco Popular','BHD León','Banreservas','Scotiabank','Banco Santa Cruz','Otro'];
+  const bancos=(DB.config.bancoCuentas||[]).map(b=>b.banco).filter(Boolean);
   openModal('Nueva Cotización',`
     <div class="form-row c3">
       <div class="form-field"><label class="required">Nombre del Cliente / Empresa</label><input type="text" id="cot-cli"></div>
@@ -7194,7 +7177,10 @@ function nuevaCotizacion(){
     <div class="form-row c3">
       <div class="form-field"><label>Teléfono</label><input type="text" id="cot-tel" maxlength="12" placeholder="000-000-0000" oninput="fmtTelInput(this)"></div>
       <div class="form-field"><label class="required">Entidad Bancaria</label>
-        <select id="cot-banco"><option value="">Seleccionar...</option>${bancos.map(b=>`<option>${escHtml(b)}</option>`).join('')}</select>
+        <div style="display:flex;gap:6px">
+          <select id="cot-banco" style="flex:1"><option value="">Seleccionar...</option>${bancos.map(b=>`<option>${escHtml(b)}</option>`).join('')}</select>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="quickAgregarBancoCot()" title="Agregar banco">➕</button>
+        </div>
       </div>
       <div class="form-field"><label>Fecha</label><input type="date" id="cot-fecha" value="${today()}"></div>
     </div>
@@ -7260,7 +7246,7 @@ function guardarCotizacion(idx){
 function editarCotizacion(i){
   if(currentUser?.role!=='admin'&&!canDo('editar')){toast('No tienes permiso para editar','error');return;}
   const c=DB.cotizaciones[i];
-  const bancos=DB.config.bancos||['Banco Popular','BHD León','Banreservas','Scotiabank','Banco Santa Cruz','Otro'];
+  const bancos=(DB.config.bancoCuentas||[]).map(b=>b.banco).filter(Boolean);
   openModal('Editar Cotización',`
     <div class="form-row c3">
       <div class="form-field"><label>Cliente / Empresa</label><input type="text" id="cot-cli" value="${escHtml(c.cliente||'')}"></div>
