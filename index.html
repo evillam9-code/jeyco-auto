@@ -3756,86 +3756,150 @@ function guardarAbonoCapital(pid){
 /* ══ FIN MÓDULO PRÉSTAMOS ══ */
 
 function nuevaPrestamoOtorgado(){
-  openModal('🤝 Registrar Préstamo Otorgado a Cliente',`
-    <p style="font-size:12px;color:var(--gray);margin-bottom:12px">Registra un préstamo dado a un cliente. Se creará una CxC y se registrará la salida en Caja.</p>
-    <div class="form-row c2">
-      <div class="form-field"><label class="required">Cliente</label>
-        <select id="po-cli">
-          <option value="">Seleccionar...</option>
-          ${DB.clientes.map(c=>`<option value="${c.id}">${escHtml(c.nombre)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-field"><label class="required">Monto del Préstamo</label>
-        <input type="text" id="po-monto" placeholder="0.00" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
-      </div>
+  // Paso 1: seleccionar cliente para detectar si ya tiene CxC de venta pendiente
+  openModal('🤝 Préstamo Otorgado — Seleccionar Cliente',`
+    <p style="font-size:13px;color:var(--gray);margin-bottom:14px">
+      Si el cliente ya tiene una CxC pendiente de venta, se creará el plan de pagos sobre esa cuenta.<br>
+      Si no tiene ninguna, se registrará como préstamo independiente.
+    </p>
+    <div class="form-field"><label class="required">Cliente</label>
+      <select id="po-cli" onchange="detectarCxCClientePO(this.value)" style="font-size:14px;padding:10px">
+        <option value="">Seleccionar...</option>
+        ${DB.clientes.map(c=>`<option value="${c.id}">${escHtml(c.nombre)}</option>`).join('')}
+      </select>
     </div>
-    <div class="form-row c3">
-      <div class="form-field"><label>Tasa de Interés Mensual (%)</label>
-        <input type="number" id="po-tasa" step="0.01" placeholder="Ej: 2.0">
-      </div>
-      <div class="form-field"><label>Plazo (meses)</label>
-        <input type="number" id="po-plazo" placeholder="Ej: 12">
-      </div>
-      <div class="form-field"><label>Tipo de Amortización</label>
-        <select id="po-tipo">
-          <option value="FRANCESA">Francesa (cuota fija)</option>
-          <option value="CAPITAL_FIJO">Capital Fijo</option>
-        </select>
-      </div>
-    </div>
-    <div class="form-row c2">
-      <div class="form-field"><label>Fecha Inicio</label>
-        <input type="date" id="po-fecha" value="${today()}">
-      </div>
-      <div class="form-field"><label>Fecha Vencimiento</label>
-        <input type="date" id="po-vence">
-      </div>
-    </div>
-    <div class="form-row c3">
-      ${htmlMonedaBancoCuenta('pot','RD$',undefined,undefined)}
-    </div>
-    <div class="form-field"><label>Notas / Referencia</label>
-      <textarea id="po-notas" rows="2" placeholder="Garantía, condiciones..."></textarea>
-    </div>`,
+    <div id="po-cxc-info" style="margin-top:12px"></div>`,
   `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-   <button class="btn btn-primary" onclick="guardarPrestamoOtorgado()">✅ Registrar Préstamo</button>`);
+   <button class="btn btn-primary" onclick="continuarPrestamoOtorgado()">Continuar →</button>`);
 }
 
-function guardarPrestamoOtorgado(){
+function detectarCxCClientePO(cliId){
+  const info=document.getElementById('po-cxc-info');
+  if(!info)return;
+  if(!cliId){info.innerHTML='';return;}
+  // Buscar CxC pendientes de venta para este cliente
+  const cxcsPend=(DB.cxc||[]).filter(x=>x.clienteId===cliId&&(x.status==='PENDIENTE'||x.status==='PARCIAL')&&x.ventaId&&!x.esPrestamo);
+  if(cxcsPend.length){
+    info.innerHTML=`
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;font-size:13px">
+        <div style="font-weight:700;color:var(--blue);margin-bottom:8px">📋 CxC de venta encontrada:</div>
+        ${cxcsPend.map(x=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #dbeafe">
+          <div>
+            <span style="font-family:monospace;font-size:11px;color:var(--blue)">${escHtml(x.factura||'—')}</span>
+            <span style="font-size:12px;margin-left:8px">${escHtml(x.concepto||'Pendiente de venta')}</span>
+          </div>
+          <span style="font-weight:800;color:var(--red)">${fmt(x.saldo)}</span>
+        </div>`).join('')}
+        <div style="font-size:12px;color:var(--blue);margin-top:8px">✅ Se creará el plan de pagos sobre esta CxC existente.</div>
+      </div>`;
+  } else {
+    info.innerHTML=`
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;font-size:13px">
+        <div style="color:#16a34a;font-weight:600">ℹ️ Sin CxC de venta pendiente — se registrará como préstamo independiente y se creará una CxC nueva.</div>
+      </div>`;
+  }
+}
+
+function continuarPrestamoOtorgado(){
   const cliId=document.getElementById('po-cli')?.value;
   if(!cliId){toast('Selecciona un cliente','error');return;}
   const cli=DB.clientes.find(c=>c.id===cliId);
-  const monto=parseFloat((document.getElementById('po-monto')?.value||'0').replace(/,/g,''));
+  const cxcsPend=(DB.cxc||[]).filter(x=>x.clienteId===cliId&&(x.status==='PENDIENTE'||x.status==='PARCIAL')&&x.ventaId&&!x.esPrestamo);
+  if(cxcsPend.length){
+    // Tiene CxC de venta — abrir plan de pagos sobre la primera (o la de mayor saldo)
+    const cxcTarget=cxcsPend.reduce((a,b)=>parseFloat(a.saldo)>=parseFloat(b.saldo)?a:b);
+    closeModal();
+    setTimeout(()=>modalPlanPagosCXC(cxcTarget.id),150);
+  } else {
+    // Préstamo independiente — mostrar formulario completo
+    closeModal();
+    setTimeout(()=>_modalPrestamoIndependiente(cliId,cli?.nombre||''),150);
+  }
+}
+
+function _modalPrestamoIndependiente(cliId,cliNombre){
+  openModal(`🤝 Préstamo Independiente — ${escHtml(cliNombre)}`,`
+    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:12px">
+      ⚠️ Este cliente no tiene ventas pendientes. Se creará una CxC nueva y se registrará salida en Caja.
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Monto del Préstamo</label>
+        <input type="text" id="pi-monto" placeholder="0.00" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
+      </div>
+      <div class="form-field"><label>Fecha</label>
+        <input type="date" id="pi-fecha" value="${today()}">
+      </div>
+    </div>
+    <div class="form-row c3">
+      <div class="form-field"><label>Tasa Mensual (%)</label>
+        <input type="number" id="pi-tasa" step="0.01" placeholder="Ej: 2.0">
+      </div>
+      <div class="form-field"><label>Plazo (meses)</label>
+        <input type="number" id="pi-plazo" placeholder="Ej: 12">
+      </div>
+      <div class="form-field"><label>Tipo</label>
+        <select id="pi-tipo">
+          <option value="FRANCESA">Francesa (cuota fija)</option>
+          <option value="CAPITAL_FIJO">Capital Fijo</option>
+          <option value="LINEA_CREDITO">Línea de Crédito</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('pi','RD$',undefined,undefined)}
+    </div>
+    <div class="form-field"><label>Notas</label>
+      <textarea id="pi-notas" rows="2" placeholder="Garantía, condiciones..."></textarea>
+    </div>`,
+  `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+   <button class="btn btn-primary" onclick="guardarPrestamoIndependiente('${cliId}','${escHtml(cliNombre)}')">✅ Registrar</button>`);
+}
+
+function guardarPrestamoIndependiente(cliId,cliNombre){
+  const monto=parseFloat((document.getElementById('pi-monto')?.value||'0').replace(/,/g,''));
   if(!monto){toast('Ingresa el monto','error');return;}
-  const tasa=parseFloat(document.getElementById('po-tasa')?.value||0)||0;
-  const plazo=parseInt(document.getElementById('po-plazo')?.value||0)||0;
-  const tipo=document.getElementById('po-tipo')?.value||'FRANCESA';
-  const fecha=document.getElementById('po-fecha')?.value||today();
-  const vence=document.getElementById('po-vence')?.value||'';
-  const notas=document.getElementById('po-notas')?.value||'';
-  const moneda=document.getElementById('pot-moneda')?.value||'RD$';
-  const banco=document.getElementById('pot-banco')?.value||'';
-  const cuenta=document.getElementById('pot-cuenta')?.value||'';
+  const tasa=parseFloat(document.getElementById('pi-tasa')?.value||0)||0;
+  const plazo=parseInt(document.getElementById('pi-plazo')?.value||0)||0;
+  const tipo=document.getElementById('pi-tipo')?.value||'FRANCESA';
+  const fecha=document.getElementById('pi-fecha')?.value||today();
+  const moneda=document.getElementById('pi-moneda')?.value||'RD$';
+  const banco=document.getElementById('pi-banco')?.value||'';
+  const cuenta=document.getElementById('pi-cuenta')?.value||'';
+  const notas=document.getElementById('pi-notas')?.value||'';
   const cxcId=uid();
-  // Crear CxC con badge PRÉSTAMO
+  // Crear CxC independiente
   if(!DB.cxc)DB.cxc=[];
-  DB.cxc.push({
-    id:cxcId,clienteId:cliId,cliente:cli?.nombre||'',
+  const nuevaCxC={
+    id:cxcId,clienteId:cliId,cliente:cliNombre,
     concepto:`Préstamo otorgado — ${fmtMoneyDisplay(monto)} ${moneda}`,
-    total:monto,saldo:monto,pagos:[],
-    moneda,fechaVence:vence||undefined,
-    status:'PENDIENTE',esPrestamo:true,tasaMensual:tasa,plazo,tipo,
-    notas,fecha,banco,cuenta
-  });
-  // Registrar salida en Caja
+    total:monto,saldo:monto,abonado:0,pagos:[],
+    moneda,status:'PENDIENTE',esPrestamo:true,fecha,notas
+  };
+  // Crear plan de pagos automáticamente si tiene tasa/plazo
+  if(plazo&&tipo!=='LINEA_CREDITO'){
+    const rows=calcTablaAmortizacion(monto,tasa,plazo,tipo==='CAPITAL_FIJO'?'CAPITAL_FIJO':'FRANCESA');
+    const cuotas=rows.map((r,idx)=>{
+      const d=new Date(fecha+'T12:00:00');d.setMonth(d.getMonth()+idx);
+      return{num:r.num,cuota:r.cuota,capital:r.capital,interes:r.interes,saldo:r.saldo,
+        fechaVence:d.toISOString().slice(0,10),pagada:false,fechaPago:null};
+    });
+    nuevaCxC.planPagos={tipo,tasaMensual:tasa,plazo,fechaInicio:fecha,cuotas};
+  } else if(tipo==='LINEA_CREDITO'){
+    nuevaCxC.planPagos={tipo:'LINEA_CREDITO',tasaMensual:tasa,plazo:0,fechaInicio:fecha,cuotas:[]};
+  }
+  DB.cxc.push(nuevaCxC);
+  // Salida en Caja
   if(!DB.caja)DB.caja=[];
   DB.caja.push({id:uid(),tipo:'SALIDA',fecha,monto,moneda,banco,cuenta,
-    descripcion:`Préstamo otorgado a ${cli?.nombre||'Cliente'}`,
+    descripcion:`Préstamo otorgado a ${cliNombre}`,
     categoria:'Préstamo Otorgado',responsable:currentUser?.nombre||''});
   sDB('cxc');sDB('caja');
   if(typeof fbGuardar==='function'&&window._fbActivo){fbGuardar('cxc').catch(()=>{});fbGuardar('caja').catch(()=>{});}
-  closeModal();toast('Préstamo otorgado registrado ✓','success');renderCXC();
+  closeModal();toast('Préstamo independiente registrado ✓','success');renderCXC();
 }
+
+// Alias mantenido por compatibilidad
+function guardarPrestamoOtorgado(){guardarPrestamoIndependiente('','');}
 
 function renderCuentas(){
   const esAdmin=currentUser?.role==='admin';
@@ -8527,6 +8591,8 @@ function renderCXC(){
         </select>
         <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
         <button id="cxc-btn-cobrar" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('cobrar')">💵 Registrar Cobro</button>
+        <button id="cxc-btn-plan" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('plan')">📋 Plan de Pagos</button>
+        <button id="cxc-btn-abono" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('abono')">💰 Abono Extra</button>
         <button id="cxc-btn-historial" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('historial')">👁 Historial</button>
         ${(currentUser?.role==='admin'||canDo('eliminar'))?`<button id="cxc-btn-eliminar" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('eliminar')">🗑 Eliminar</button>`:''}
         <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
@@ -8576,7 +8642,7 @@ function renderCXC(){
           <td><div style="font-family:monospace;font-size:11px;font-weight:700;color:var(--blue)">${escHtml(x.factura||'—')}</div></td>
           <td><div style="font-weight:700">${escHtml(x.cliente||'—')}</div></td>
           <td style="min-width:120px">${(()=>{const vCxC=DB.vehiculos.find(vv=>vv.id===x.vehiculoId);const nm=vCxC?(vCxC.marca+' '+vCxC.modelo+(vCxC.anio?' '+vCxC.anio:'')):(x.vehiculo||'');const vi=vCxC?vCxC.vin||'':'';return nm?`<div style="font-weight:700;font-size:12px">${escHtml(nm)}</div><div style="font-family:monospace;font-size:10px;color:var(--blue);margin-top:2px">${escHtml(vi||'Sin VIN')}</div>`:'<span style="color:var(--gray)">—</span>';})()}</td>
-          <td>${tipoBadge}<div style="font-size:11px;color:var(--gray);margin-top:2px">${escHtml(x.concepto||'—')}</div></td>
+          <td>${tipoBadge}${x.planPagos?'<span style="background:#dcfce7;color:#16a34a;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;margin-left:3px">📋 PLAN</span>':''}<div style="font-size:11px;color:var(--gray);margin-top:2px">${escHtml(x.concepto||'—')}</div></td>
           <td style="font-weight:600">${fV(x.total)}</td>
           <td style="color:var(--green);font-weight:600">${fV(x.abonado||0)}</td>
           <td style="font-weight:800;color:${parseFloat(x.saldo||0)>0?'var(--red)':'var(--green)'}">${fV(x.saldo||0)}</td>
@@ -8597,6 +8663,8 @@ function selCXC(id,tr){
   const x=DB.cxc.find(c=>c.id===id);
   const actB=(bid,bg,c)=>{const b=document.getElementById(bid);if(b){b.disabled=false;b.style.cssText='background:'+bg+';color:'+c+';cursor:pointer;border:none;';}};
   if(x?.status!=='SALDADO')actB('cxc-btn-cobrar','#16a34a','#fff');
+  if(x?.status!=='SALDADO')actB('cxc-btn-plan','#7c3aed','#fff');
+  if(x?.status!=='SALDADO')actB('cxc-btn-abono','#d97706','#fff');
   actB('cxc-btn-historial','#475569','#fff');
   if(currentUser?.role==='admin'||canDo('eliminar'))actB('cxc-btn-eliminar','#dc2626','#fff');
 }
@@ -8738,6 +8806,8 @@ function guardarCXCManual(){
 function cxcAccion(accion){
   if(!cxcSelectedId)return;
   if(accion==='cobrar'){if(!canDo('editar')){toast('No tienes permiso para registrar cobros','error');return;}abonarCXC(cxcSelectedId);}
+  else if(accion==='plan')modalPlanPagosCXC(cxcSelectedId);
+  else if(accion==='abono')modalAbonoExtraordinarioCXC(cxcSelectedId);
   else if(accion==='historial')verAbonosCXC(cxcSelectedId);
   else if(accion==='eliminar'){
     if(!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}
@@ -8747,6 +8817,244 @@ function cxcAccion(accion){
        <button class="btn btn-red" onclick="DB.cxc=DB.cxc.filter(c=>c.id!=='${cxcSelectedId}');sDB('cxc');closeModal();toast('Eliminado','success');renderCXC()">🗑 Eliminar</button>`);
   }
 }
+
+/* ══════════════════════════════════════════
+   PLAN DE PAGOS CXC
+══════════════════════════════════════════ */
+function modalPlanPagosCXC(id){
+  const x=DB.cxc.find(c=>c.id===id);if(!x)return;
+  const plan=x.planPagos||null;
+  const tieneTabla=plan&&plan.cuotas&&plan.cuotas.length;
+  openModal(`📋 Plan de Pagos — ${escHtml(x.cliente||'')}`,`
+    <div style="background:var(--blue3);border-radius:8px;padding:10px;margin-bottom:12px;font-size:13px">
+      <strong>Saldo pendiente:</strong> ${fmt(x.saldo||0)} ${x.moneda||'RD$'}
+      ${plan?` &nbsp;|&nbsp; <strong>Tipo:</strong> ${plan.tipo} &nbsp;|&nbsp; <strong>Tasa:</strong> ${plan.tasaMensual}% mensual`:'' }
+    </div>
+    ${tieneTabla?`
+    <div style="margin-bottom:12px">
+      <div style="font-size:12px;font-weight:700;color:var(--blue);margin-bottom:8px">Tabla de cuotas actual:</div>
+      <div class="table-wrap" style="max-height:280px;overflow-y:auto"><table style="font-size:12px;width:100%;border-collapse:collapse">
+        <thead><tr style="background:var(--navy);color:#fff">
+          <th style="padding:5px 8px">#</th><th style="padding:5px 8px">Vence</th>
+          <th style="padding:5px 8px">Cuota</th><th style="padding:5px 8px">Capital</th>
+          <th style="padding:5px 8px">Interés</th><th style="padding:5px 8px">Saldo</th><th style="padding:5px 8px">Estado</th>
+        </tr></thead>
+        <tbody>
+          ${plan.cuotas.map((c,i)=>`<tr style="background:${c.pagada?'#f0fdf4':''};border-bottom:1px solid var(--gray3)">
+            <td style="padding:4px 8px;text-align:center">${c.num}</td>
+            <td style="padding:4px 8px;font-size:11px">${fmtDate(c.fechaVence)||'—'}</td>
+            <td style="padding:4px 8px;font-weight:700">${fmt(c.cuota)}</td>
+            <td style="padding:4px 8px">${fmt(c.capital)}</td>
+            <td style="padding:4px 8px;color:var(--red)">${fmt(c.interes)}</td>
+            <td style="padding:4px 8px;font-family:monospace">${fmt(c.saldo)}</td>
+            <td style="padding:4px 8px">${c.pagada?`<span style="color:var(--green);font-weight:700">✅ ${fmtDate(c.fechaPago||'')}</span>`:'<span style="color:var(--gray)">Pendiente</span>'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+    </div>
+    <hr style="border:none;border-top:1px solid var(--gray3);margin:10px 0">
+    <div style="font-size:12px;font-weight:700;color:var(--gray);margin-bottom:8px">¿Modificar el plan?</div>
+    `:''}
+    <div class="form-row c3">
+      <div class="form-field"><label>Tipo de Amortización</label>
+        <select id="pp-tipo" onchange="calcCuotasPlanCXC('${id}')">
+          <option value="FRANCESA" ${plan?.tipo==='FRANCESA'?'selected':''}>Francesa (cuota fija)</option>
+          <option value="CAPITAL_FIJO" ${plan?.tipo==='CAPITAL_FIJO'?'selected':''}>Capital Fijo</option>
+          <option value="LINEA_CREDITO" ${plan?.tipo==='LINEA_CREDITO'?'selected':''}>Línea de Crédito</option>
+        </select>
+      </div>
+      <div class="form-field"><label>Tasa Mensual (%)</label>
+        <input type="number" id="pp-tasa" step="0.01" placeholder="Ej: 2.0" value="${plan?.tasaMensual||''}" oninput="calcCuotasPlanCXC('${id}')">
+      </div>
+      <div class="form-field"><label>Plazo (meses)</label>
+        <input type="number" id="pp-plazo" placeholder="Ej: 12" value="${plan?.plazo||''}" oninput="calcCuotasPlanCXC('${id}')">
+      </div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label>Fecha inicio (1ra cuota)</label>
+        <input type="date" id="pp-fecha" value="${plan?.fechaInicio||today()}">
+      </div>
+      <div class="form-field"><label>Cuota Estimada</label>
+        <input type="text" id="pp-cuota-est" readonly style="background:#f8fafc;font-weight:700;color:var(--blue)">
+      </div>
+    </div>`,
+  `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+   ${tieneTabla?`<button class="btn btn-red btn-sm" onclick="eliminarPlanPagosCXC('${id}')">🗑 Eliminar Plan</button>`:''}
+   <button class="btn btn-primary" onclick="guardarPlanPagosCXC('${id}')">💾 ${tieneTabla?'Actualizar Plan':'Crear Plan'}</button>`);
+  // Auto-calc if data exists
+  if(plan?.tasaMensual&&plan?.plazo)setTimeout(()=>calcCuotasPlanCXC(id),50);
+}
+
+function calcCuotasPlanCXC(id){
+  const x=DB.cxc.find(c=>c.id===id);if(!x)return;
+  const saldo=parseFloat(x.saldo||0);
+  const t=(parseFloat(document.getElementById('pp-tasa')?.value||0)||0)/100;
+  const n=parseInt(document.getElementById('pp-plazo')?.value||0)||0;
+  const tipo=document.getElementById('pp-tipo')?.value||'FRANCESA';
+  const el=document.getElementById('pp-cuota-est');
+  if(!el||!saldo||!n)return;
+  if(tipo==='LINEA_CREDITO'){el.value='Saldo libre';return;}
+  const c=t===0?saldo/n:saldo*(t*Math.pow(1+t,n))/(Math.pow(1+t,n)-1);
+  el.value=fmtMoneyDisplay(c);
+}
+
+function eliminarPlanPagosCXC(id){
+  openModal('🗑 Eliminar Plan de Pagos',
+    `<p style="font-size:13px">¿Estás seguro? Se eliminará la tabla de cuotas pero <strong>los pagos registrados no se borran</strong>. La CxC vuelve a su estado original.</p>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-red" onclick="_confirmarEliminarPlan('${id}')">🗑 Sí, Eliminar Plan</button>`);
+}
+function _confirmarEliminarPlan(id){
+  const i=DB.cxc.findIndex(c=>c.id===id);if(i<0)return;
+  delete DB.cxc[i].planPagos;
+  sDB('cxc');
+  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('cxc').catch(()=>{});
+  closeModal();
+  toast('Plan de pagos eliminado — CxC en estado original ✓','success');
+  renderCXC();
+}
+
+function guardarPlanPagosCXC(id){
+  const i=DB.cxc.findIndex(c=>c.id===id);if(i<0)return;
+  const tipo=document.getElementById('pp-tipo')?.value||'FRANCESA';
+  const tasa=parseFloat(document.getElementById('pp-tasa')?.value||0)||0;
+  const plazo=parseInt(document.getElementById('pp-plazo')?.value||0)||0;
+  const fechaInicio=document.getElementById('pp-fecha')?.value||today();
+  if(!plazo&&tipo!=='LINEA_CREDITO'){toast('Ingresa el plazo','error');return;}
+  const saldo=parseFloat(DB.cxc[i].saldo||0);
+  const rows=tipo==='LINEA_CREDITO'?[]:calcTablaAmortizacion(saldo,tasa,plazo,tipo==='CAPITAL_FIJO'?'CAPITAL_FIJO':'FRANCESA');
+  // Preserve existing pagos
+  const existing=DB.cxc[i].planPagos?.cuotas||[];
+  const cuotas=rows.map((r,idx)=>{
+    const prev=existing[idx];
+    const d=new Date(fechaInicio+'T12:00:00');
+    d.setMonth(d.getMonth()+idx);
+    return {
+      num:r.num,cuota:r.cuota,capital:r.capital,interes:r.interes,saldo:r.saldo,
+      fechaVence:d.toISOString().slice(0,10),
+      pagada:prev?.pagada||false,fechaPago:prev?.fechaPago||null,pagoId:prev?.pagoId||null
+    };
+  });
+  DB.cxc[i].planPagos={tipo,tasaMensual:tasa,plazo,fechaInicio,cuotas};
+  sDB('cxc');
+  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('cxc').catch(()=>{});
+  closeModal();toast('Plan de pagos '+(existing.length?'actualizado':'creado')+' ✓','success');renderCXC();
+}
+
+/* ══ ABONO EXTRAORDINARIO CXC ══ */
+function modalAbonoExtraordinarioCXC(id){
+  const x=DB.cxc.find(c=>c.id===id);if(!x)return;
+  const plan=x.planPagos;
+  const esLinea=plan?.tipo==='LINEA_CREDITO';
+  const pendientes=plan?.cuotas?.filter(c=>!c.pagada)||[];
+  openModal(`💰 Abono Extraordinario — ${escHtml(x.cliente||'')}`,`
+    <div style="background:var(--amber2);border-radius:8px;padding:10px;margin-bottom:12px;font-size:13px">
+      <strong>Saldo actual:</strong> ${fmt(x.saldo||0)} ${x.moneda||'RD$'}
+      ${plan?` &nbsp;|&nbsp; Tipo: <strong>${plan.tipo}</strong>`:''}
+      ${!esLinea&&pendientes.length?` &nbsp;|&nbsp; Cuotas pendientes: <strong>${pendientes.length}</strong>`:''}
+    </div>
+    ${!esLinea&&plan?`<div style="font-size:12px;color:var(--blue);background:var(--blue3);border-radius:6px;padding:8px;margin-bottom:10px">
+      ℹ️ El abono se aplicará adelantando cuotas desde la más próxima. <strong>No se cobran los intereses de las cuotas adelantadas.</strong>
+    </div>`:''}
+    ${esLinea||!plan?`<div style="font-size:12px;color:var(--gray);background:#f8fafc;border-radius:6px;padding:8px;margin-bottom:10px">
+      ℹ️ El abono se aplica directamente al capital. Los intereses del próximo período se calcularán sobre el saldo menor.
+    </div>`:''}
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Monto del Abono</label>
+        <input type="text" id="ae-monto" placeholder="0.00" oninput="fmtMoneyInput(this);calcAbonoExtraCXC('${id}')" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
+      </div>
+      <div class="form-field"><label>Fecha</label>
+        <input type="date" id="ae-fecha" value="${today()}">
+      </div>
+    </div>
+    ${!esLinea&&plan?`<div id="ae-preview" style="font-size:12px;color:var(--gray);margin-top:4px"></div>`:''}
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('ae',x.moneda||'RD$',undefined,undefined)}
+    </div>
+    <div class="form-field"><label>Nota</label>
+      <input type="text" id="ae-nota" placeholder="Referencia del abono...">
+    </div>`,
+  `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+   <button class="btn btn-amber" onclick="confirmarAbonoExtraCXC('${id}')">✅ Confirmar Abono</button>`);
+}
+
+function calcAbonoExtraCXC(id){
+  const x=DB.cxc.find(c=>c.id===id);if(!x)return;
+  const plan=x.planPagos;
+  if(!plan||plan.tipo==='LINEA_CREDITO')return;
+  const monto=parseFloat((document.getElementById('ae-monto')?.value||'0').replace(/,/g,''))||0;
+  const prev=document.getElementById('ae-preview');if(!prev)return;
+  if(!monto){prev.textContent='';return;}
+  const pendientes=plan.cuotas.filter(c=>!c.pagada);
+  let restante=monto;let cuotasAdel=0;let capitalPagado=0;let interesesAhorrados=0;
+  for(const c of pendientes){
+    if(restante<=0)break;
+    if(restante>=c.capital){
+      restante-=c.capital;cuotasAdel++;capitalPagado+=c.capital;interesesAhorrados+=c.interes;
+    } else {
+      capitalPagado+=restante;restante=0;
+    }
+  }
+  prev.innerHTML=`<strong style="color:var(--green)">✅ Cuotas a adelantar: ${cuotasAdel}</strong> &nbsp;|&nbsp; Capital pagado: ${fmt(capitalPagado)} &nbsp;|&nbsp; <span style="color:var(--green)">Intereses ahorrados: ${fmt(interesesAhorrados)}</span>`;
+}
+
+function confirmarAbonoExtraCXC(id){
+  const i=DB.cxc.findIndex(c=>c.id===id);if(i<0)return;
+  const monto=parseFloat((document.getElementById('ae-monto')?.value||'0').replace(/,/g,''));
+  if(!monto||monto<=0){toast('Ingresa un monto válido','error');return;}
+  const fecha=document.getElementById('ae-fecha')?.value||today();
+  const nota=document.getElementById('ae-nota')?.value||'';
+  const banco=document.getElementById('ae-banco')?.value||'';
+  const cuenta=document.getElementById('ae-cuenta')?.value||'';
+  const plan=DB.cxc[i].planPagos;
+  const esLinea=plan?.tipo==='LINEA_CREDITO';
+  let capitalPagado=monto;
+  // Apply to plan cuotas if applicable
+  if(plan&&!esLinea){
+    let restante=monto;
+    DB.cxc[i].planPagos.cuotas=plan.cuotas.map(c=>{
+      if(c.pagada||restante<=0)return c;
+      if(restante>=c.capital){
+        restante-=c.capital;
+        return {...c,pagada:true,fechaPago:fecha,abonoExtra:true,interesAhorrado:c.interes};
+      } else {
+        const parcial=restante;restante=0;
+        return {...c,capitalParcial:(c.capitalParcial||0)+parcial};
+      }
+    });
+    capitalPagado=monto-restante;
+  }
+  // Update CxC saldo
+  DB.cxc[i].saldo=Math.max(0,(DB.cxc[i].saldo||0)-capitalPagado);
+  DB.cxc[i].abonado=(DB.cxc[i].abonado||0)+capitalPagado;
+  const saldado=DB.cxc[i].saldo<=0;
+  DB.cxc[i].status=saldado?'SALDADO':DB.cxc[i].abonado>0?'PARCIAL':'PENDIENTE';
+  if(!DB.cxc[i].pagos)DB.cxc[i].pagos=[];
+  const pagoObj={id:uid(),fecha,monto:capitalPagado,banco,cuenta,nota,tipo:'ABONO_EXTRA',saldado};
+  DB.cxc[i].pagos.push(pagoObj);
+  // Sync venta
+  if(DB.cxc[i].ventaId){
+    const vi=DB.ventas.findIndex(v=>v.id===DB.cxc[i].ventaId);
+    if(vi>=0){
+      DB.ventas[vi].pendiente=DB.cxc[i].saldo;
+      DB.ventas[vi].inicial=(DB.ventas[vi].inicial||0)+capitalPagado;
+      if(saldado){DB.ventas[vi].estadoVenta=DB.ventas[vi].fechaEntrega?'VENDIDO':'TRÁNSITO';}
+      sDB('ventas');
+    }
+  }
+  // Caja entry
+  if(!DB.caja)DB.caja=[];
+  DB.caja.push({id:uid(),fecha,tipo:'ENTRADA',categoria:'Abono Extra CxC',
+    descripcion:`Abono extraordinario: ${DB.cxc[i].cliente}`,
+    monto:capitalPagado,moneda:DB.cxc[i].moneda||'RD$',banco,cuenta,responsable:currentUser?.nombre||''});
+  sDB('cxc');sDB('caja');
+  if(typeof fbGuardar==='function'&&window._fbActivo){fbGuardar('cxc').catch(()=>{});fbGuardar('caja').catch(()=>{});}
+  closeModal();
+  imprimirReciboAbonoExtra(DB.cxc[i],pagoObj);
+  toast('Abono extraordinario registrado ✓','success');
+  renderCXC();
+}
+/* ══ FIN PLAN DE PAGOS / ABONO EXTRA ══ */
 
 function abonarCXC(id){
   const x=DB.cxc.find(c=>c.id===id);if(!x)return;
@@ -8838,9 +9146,15 @@ function confirmarAbonarCXC(id){
   const saldado=DB.cxc[i].saldo<=0;
   DB.cxc[i].status=saldado?'SALDADO':DB.cxc[i].abonado>0?'PARCIAL':'PENDIENTE';
   if(!DB.cxc[i].pagos)DB.cxc[i].pagos=[];
-  DB.cxc[i].pagos.push({id:uid(),fecha:fechaCobro,monto,cuenta:cuentaCobro,nota:notaCobro,saldado,
+  const pagoObj={id:uid(),fecha:fechaCobro,monto,cuenta:cuentaCobro,nota:notaCobro,saldado,
     ...(esUSD&&tasa?{tasa,equivRD,moneda:'USD'}:{})
-  });
+  };
+  DB.cxc[i].pagos.push(pagoObj);
+  // Marcar cuota del plan como pagada si existe
+  if(DB.cxc[i].planPagos?.cuotas){
+    const ci=DB.cxc[i].planPagos.cuotas.findIndex(c=>!c.pagada);
+    if(ci>=0){DB.cxc[i].planPagos.cuotas[ci].pagada=true;DB.cxc[i].planPagos.cuotas[ci].fechaPago=fechaCobro;DB.cxc[i].planPagos.cuotas[ci].pagoId=pagoObj.id;}
+  }
   if(DB.cxc[i].ventaId){
     const vi=DB.ventas.findIndex(v=>v.id===DB.cxc[i].ventaId);
     if(vi>=0){
@@ -8857,7 +9171,13 @@ function confirmarAbonarCXC(id){
     referencia:bancoCobro?(bancoCobro+' / '+cuentaCobro):cuentaCobro,responsable:currentUser.nombre});
   sDB('cxc');sDB('caja');
   closeModal();
-  imprimirReciboCobro(DB.cxc[i],{id:uid(),fecha:fechaCobro,monto,cuenta:cuentaCobro,nota:notaCobro,saldado,tasa,equivRD});
+  // Print receipt — use plan receipt if plan exists
+  const cuotaNum=DB.cxc[i].planPagos?.cuotas?.filter(c=>c.pagada).length||0;
+  if(DB.cxc[i].planPagos&&cuotaNum>0){
+    imprimirReciboConPlan(DB.cxc[i],pagoObj,cuotaNum);
+  } else {
+    imprimirReciboCobro(DB.cxc[i],pagoObj);
+  }
   toast(saldado?'✅ Cuenta saldada — Generando recibo...':'💵 Abono registrado — Generando recibo...','success');
   renderCXC();
 }
@@ -8935,6 +9255,117 @@ function imprimirCXC(){
   <div class="noprint" style="margin-top:20px;text-align:center">
     <button onclick="window.print()" style="padding:10px 24px;background:${esUSD?'#2563eb':'#d97706'};color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">🖨️ Imprimir / Guardar PDF</button>
   </div>
+  </body></html>`);
+  win.document.close();
+}
+
+function _buildReciboCopia(empresa,logo,rnc,tel,dir,tituloTipo,cxc,pago,cuotaInfo,esAbonoExtra){
+  const fV=(n)=>(cxc.moneda||'RD$')==='USD'?'$'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(n);
+  const logoHtml=logo?'<img src="'+logo+'" style="width:56px;height:56px;object-fit:contain;border-radius:6px">'+'>'  :'<div style="width:56px;height:56px;background:#2563eb;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#fff;font-size:20px">'+(empresa||'J')[0]+'</div>';
+  return `
+  <div style="border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;font-family:Arial,sans-serif;font-size:12px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;border-bottom:2px solid #0f172a;padding-bottom:8px">
+      ${logoHtml}
+      <div style="flex:1">
+        <div style="font-size:15px;font-weight:900;color:#0f172a">${escHtml(empresa||'')}</div>
+        ${rnc?`<div style="font-size:11px;color:#2563eb;font-weight:700">RNC: ${escHtml(rnc)}</div>`:''}
+        ${tel?`<div style="font-size:11px;color:#6b7280">${escHtml(tel)}</div>`:''}
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:13px;font-weight:900;color:#2563eb;text-transform:uppercase">${tituloTipo}</div>
+        <div style="font-size:11px;color:#6b7280">Fecha: ${fmtDate(pago.fecha)}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px">
+      <div><span style="font-size:10px;color:#94a3b8;text-transform:uppercase;font-weight:700">Cliente</span><div style="font-weight:700;font-size:13px">${escHtml(cxc.cliente||'—')}</div></div>
+      <div><span style="font-size:10px;color:#94a3b8;text-transform:uppercase;font-weight:700">Vehículo</span><div style="font-weight:600;font-size:12px">${escHtml(cxc.vehiculo||cxc.concepto||'—')}</div></div>
+      ${cuotaInfo?`<div><span style="font-size:10px;color:#94a3b8;text-transform:uppercase;font-weight:700">Cuota #</span><div style="font-weight:700;font-size:13px;color:#2563eb">${cuotaInfo.num}</div></div>`:''}
+      ${cuotaInfo?`<div><span style="font-size:10px;color:#94a3b8;text-transform:uppercase;font-weight:700">Próxima Cuota</span><div style="font-weight:600;font-size:12px">${fmtDate(cuotaInfo.proxFecha)||'—'}</div></div>`:''}
+    </div>
+    <div style="background:#f8fafc;border-radius:6px;padding:10px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="color:#6b7280">${esAbonoExtra?'Abono Extraordinario':'Monto Pagado'}</span>
+        <span style="font-weight:800;font-size:14px;color:#0f172a">${fV(pago.monto)}</span>
+      </div>
+      ${cuotaInfo&&!esAbonoExtra?`
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px;font-size:11px">
+        <span style="color:#6b7280">Capital</span><span>${fV(cuotaInfo.capital)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:2px;font-size:11px">
+        <span style="color:#6b7280">Interés</span><span style="color:#dc2626">${fV(cuotaInfo.interes)}</span>
+      </div>`:''}
+      ${esAbonoExtra&&cuotaInfo?.interesesAhorrados?`<div style="display:flex;justify-content:space-between;font-size:11px"><span style="color:#6b7280">Intereses ahorrados</span><span style="color:#16a34a;font-weight:700">${fV(cuotaInfo.interesesAhorrados)}</span></div>`:''}
+      <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #e2e8f0;padding-top:6px">
+        <span style="font-weight:700">Saldo Restante</span>
+        <span style="font-weight:800;color:${parseFloat(cxc.saldo||0)>0?'#dc2626':'#16a34a'}">${fV(cxc.saldo||0)}</span>
+      </div>
+    </div>
+    ${pago.nota?`<div style="font-size:11px;color:#6b7280;margin-bottom:8px">Nota: ${escHtml(pago.nota)}</div>`:''}
+    <div style="display:flex;justify-content:space-between;margin-top:16px;padding-top:12px;border-top:1px solid #e2e8f0">
+      <div style="text-align:center;width:45%">
+        <div style="height:36px;border-bottom:1px solid #0f172a;margin-bottom:4px"></div>
+        <div style="font-size:10px;color:#6b7280">Firma del Cliente</div>
+      </div>
+      <div style="text-align:center;width:45%">
+        <div style="height:36px;border-bottom:1px solid #0f172a;margin-bottom:4px"></div>
+        <div style="font-size:10px;color:#6b7280">${escHtml(empresa||'Empresa')}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function imprimirReciboConPlan(cxc, pago, cuotaNum){
+  const empresa=DB.config.empresa||'JEYCO AUTO';
+  const logo=DB.config.logoData||'';
+  const rnc=DB.config.rnc||'';
+  const tel=DB.config.telefono||'';
+  const dir=DB.config.direccion||'';
+  const plan=cxc.planPagos;
+  const cuota=plan?.cuotas?.[cuotaNum-1]||null;
+  const proxCuota=plan?.cuotas?.find((c,i)=>i>=(cuotaNum)&&!c.pagada)||null;
+  const cuotaInfo=cuota?{num:cuota.num,capital:cuota.capital,interes:cuota.interes,proxFecha:proxCuota?.fechaVence}:null;
+  const copia=_buildReciboCopia(empresa,logo,rnc,tel,dir,'Recibo de Cuota',cxc,pago,cuotaInfo,false);
+  const win=window.open('','_blank','width=800,height=700');
+  if(!win)return;
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Recibo Cuota #${cuotaNum}</title>
+  <style>body{margin:0;padding:16px;background:#fff}@media print{body{padding:0}}</style>
+  </head><body>
+  <div style="max-width:420px;margin:0 auto">
+    <div style="font-size:10px;color:#94a3b8;text-align:center;margin-bottom:8px;font-weight:700;text-transform:uppercase">COPIA CLIENTE</div>
+    ${copia}
+    <div style="border-top:2px dashed #94a3b8;margin:16px 0;text-align:center;font-size:10px;color:#94a3b8">— CORTAR AQUÍ —</div>
+    <div style="font-size:10px;color:#94a3b8;text-align:center;margin-bottom:8px;font-weight:700;text-transform:uppercase">COPIA EMPRESA</div>
+    ${copia}
+  </div>
+  <script>window.onload=()=>{window.print();}<\/script>
+  </body></html>`);
+  win.document.close();
+}
+
+function imprimirReciboAbonoExtra(cxc, pago){
+  const empresa=DB.config.empresa||'JEYCO AUTO';
+  const logo=DB.config.logoData||'';
+  const rnc=DB.config.rnc||'';
+  const tel=DB.config.telefono||'';
+  // Count cuotas adelantadas for info
+  const plan=cxc.planPagos;
+  const cuotasAdel=plan?.cuotas?.filter(c=>c.abonoExtra&&c.fechaPago===pago.fecha).length||0;
+  const interesesAhorrados=plan?.cuotas?.filter(c=>c.abonoExtra&&c.fechaPago===pago.fecha).reduce((a,c)=>a+(c.interesAhorrado||c.interes||0),0)||0;
+  const cuotaInfo=cuotasAdel?{interesesAhorrados}:null;
+  const copia=_buildReciboCopia(empresa,logo,rnc,tel,'','Abono Extraordinario',cxc,pago,cuotaInfo,true);
+  const win=window.open('','_blank','width=800,height=700');
+  if(!win)return;
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Abono Extraordinario</title>
+  <style>body{margin:0;padding:16px;background:#fff}@media print{body{padding:0}}</style>
+  </head><body>
+  <div style="max-width:420px;margin:0 auto">
+    <div style="font-size:10px;color:#94a3b8;text-align:center;margin-bottom:8px;font-weight:700;text-transform:uppercase">COPIA CLIENTE</div>
+    ${copia}
+    <div style="border-top:2px dashed #94a3b8;margin:16px 0;text-align:center;font-size:10px;color:#94a3b8">— CORTAR AQUÍ —</div>
+    <div style="font-size:10px;color:#94a3b8;text-align:center;margin-bottom:8px;font-weight:700;text-transform:uppercase">COPIA EMPRESA</div>
+    ${copia}
+  </div>
+  <script>window.onload=()=>{window.print();}<\/script>
   </body></html>`);
   win.document.close();
 }
