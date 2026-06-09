@@ -1079,6 +1079,14 @@ function checkAlerts(){
     const docsPend=DB.ventas.filter(v=>v.docsPendientes&&v.fechaLimDocs);
     docsPend.forEach(v=>{const vencida=v.fechaLimDocs<=hoy;showNotif('Entrega docs '+(vencida?'VENCIDA':'pendiente')+': '+(v.vehiculo||''),'Límite: '+fmtDate(v.fechaLimDocs),vencida?'danger':'warning');});
   }
+  // Alerta: Cuotas CxC vencidas
+  if(puedeVer('CXC_VENCIDA')){
+    const hoy2=today();
+    (DB.cxc||[]).filter(x=>x.planPagos?.cuotas).forEach(x=>{
+      const venc=x.planPagos.cuotas.filter(c=>!c.pagada&&c.fechaVence&&c.fechaVence<hoy2);
+      if(venc.length)showNotif('🔴 Cuota(s) vencida(s): '+escHtml(x.cliente||''),venc.length+' cuota(s) — vence desde '+fmtDate(venc[0].fechaVence),'danger');
+    });
+  }
   // Alerta: Endorso sin placa original +60 días → amarilla
   if(puedeVer('PLACA_60')){
     const hoyDate2=new Date();
@@ -4201,7 +4209,14 @@ function renderAlertas(){
     const venc=v.fechaLimDocs<=hoy;
     alertas.push({tipo:'DOCS',nivel:venc?'danger':'warning',titulo:venc?'Documentos de entrega VENCIDOS':'Documentos de entrega pendientes',msg:`${v.vehiculo||''} — Límite: ${fmtDate(v.fechaLimDocs)}`,modulo:'ventas',id:'doc_'+v.id});
   });
-  // 8. Endorso sin placa original +60 días → amarilla
+  // 8. Cuotas CxC vencidas
+  (DB.cxc||[]).filter(x=>x.planPagos?.cuotas).forEach(x=>{
+    const hoyD=hoy;
+    const venc=x.planPagos.cuotas.filter(c=>!c.pagada&&c.fechaVence&&c.fechaVence<hoyD);
+    if(venc.length)alertas.push({tipo:'CXC_VENCIDA',nivel:'danger',titulo:'Cuota(s) vencida(s) — Plan de Pagos',
+      msg:`${x.cliente||''} — ${venc.length} cuota(s) desde ${fmtDate(venc[0].fechaVence)}`,modulo:'cxc',id:'cv_'+x.id});
+  });
+  // 9. Endorso sin placa original +60 días → amarilla
   DB.ventas.filter(v=>v.tipoTransferencia==='endoso'&&!v.placaOriginalFecha&&v.fecha).forEach(v=>{
     const dias=Math.floor((hoyDate-new Date(v.fecha+'T12:00:00'))/(1000*60*60*24));
     if(dias>=60)alertas.push({tipo:'PLACA_60',nivel:'warning',titulo:'Endorso sin placa original +60 días',msg:`${v.vehiculo||''} — ${v.cliente} (${dias} días desde venta)`,modulo:'ventas',id:'p60_'+v.id});
@@ -8765,7 +8780,7 @@ function renderCXC(){
           <td><div style="font-family:monospace;font-size:11px;font-weight:700;color:var(--blue)">${escHtml(x.factura||'—')}</div></td>
           <td><div style="font-weight:700">${escHtml(x.cliente||'—')}</div></td>
           <td style="min-width:120px">${(()=>{const vCxC=DB.vehiculos.find(vv=>vv.id===x.vehiculoId);const nm=vCxC?(vCxC.marca+' '+vCxC.modelo+(vCxC.anio?' '+vCxC.anio:'')):(x.vehiculo||'');const vi=vCxC?vCxC.vin||'':'';return nm?`<div style="font-weight:700;font-size:12px">${escHtml(nm)}</div><div style="font-family:monospace;font-size:10px;color:var(--blue);margin-top:2px">${escHtml(vi||'Sin VIN')}</div>`:'<span style="color:var(--gray)">—</span>';})()}</td>
-          <td>${tipoBadge}${x.planPagos?'<span style="background:#dcfce7;color:#16a34a;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;margin-left:3px">📋 PLAN</span>':''}<div style="font-size:11px;color:var(--gray);margin-top:2px">${escHtml(x.concepto||'—')}</div></td>
+          <td>${tipoBadge}${x.planPagos?'<span style="background:#dcfce7;color:#16a34a;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;margin-left:3px">📋 PLAN</span>':''}${(()=>{if(!x.planPagos)return'';const hoy=today();const venc=x.planPagos.cuotas?.filter(c=>!c.pagada&&c.fechaVence&&c.fechaVence<hoy)||[];return venc.length?'<span style="background:#fef2f2;color:var(--red);padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;margin-left:3px">⚠️ '+venc.length+' vencida(s)</span>':''})()}<div style="font-size:11px;color:var(--gray);margin-top:2px">${escHtml(x.concepto||'—')}</div></td>
           <td style="font-weight:600">${fV(x.total)}</td>
           <td style="color:var(--green);font-weight:600">${fV(x.abonado||0)}</td>
           <td style="font-weight:800;color:${parseFloat(x.saldo||0)>0?'var(--red)':'var(--green)'}">${fV(x.saldo||0)}</td>
@@ -9273,8 +9288,33 @@ function abonarCXC(id){
   const fV=(n)=>esUSD?'$'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(n);
   const cuentas=DB.config.cuentas&&DB.config.cuentas.length?DB.config.cuentas:['Caja General'];
   const freqLabel={semanal:'Semanal',quincenal:'Quincenal',mensual:'Mensual'};
+  // Plan de pagos — próxima cuota pendiente
+  const plan=x.planPagos;
+  const proxCuota=plan?.cuotas?.find(c=>!c.pagada)||null;
+  const hoy=today();
+  // Cuotas vencidas (no pagadas y fecha <= hoy)
+  const cuotasVencidas=plan?.cuotas?.filter(c=>!c.pagada&&c.fechaVence&&c.fechaVence<hoy)||[];
+  const planInfo=proxCuota?`
+    <div style="background:#f0fdf4;border:1.5px solid #86efac;border-radius:8px;padding:10px 14px;margin-bottom:10px">
+      <div style="font-size:11px;font-weight:700;color:#16a34a;margin-bottom:6px">📋 PRÓXIMA CUOTA A PAGAR</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:12px">
+        <div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;font-weight:700">Cuota #</div><div style="font-weight:800;color:#2563eb;font-size:15px">${proxCuota.num}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;font-weight:700">Vence</div><div style="font-weight:700;color:${proxCuota.fechaVence<hoy?'var(--red)':'var(--navy)'}">${fmtDate(proxCuota.fechaVence)}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;font-weight:700">Capital</div><div style="font-weight:700">${fV(proxCuota.capital)}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);text-transform:uppercase;font-weight:700">Interés</div><div style="font-weight:700;color:var(--red)">${fV(proxCuota.interes)}</div></div>
+      </div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid #bbf7d0;display:flex;justify-content:space-between;font-size:13px">
+        <span style="font-weight:700">Total cuota</span>
+        <span style="font-weight:800;font-size:15px;color:#16a34a">${fV(proxCuota.cuota)}</span>
+      </div>
+    </div>
+    ${cuotasVencidas.length?`<div style="background:#fef2f2;border:1.5px solid #fca5a5;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px">
+      <span style="color:var(--red);font-weight:700">⚠️ ${cuotasVencidas.length} cuota(s) vencida(s)</span> — 
+      La más antigua venció el <strong>${fmtDate(cuotasVencidas[0].fechaVence)}</strong>
+    </div>`:''}`:
+    plan?'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:8px;margin-bottom:10px;font-size:12px">✅ Todas las cuotas del plan están pagadas</div>':'';
   openModal('💵 Registrar Cobro — '+escHtml(x.cliente),`
-    <div style="background:var(--blue3);border-radius:8px;padding:12px;margin-bottom:14px">
+    <div style="background:var(--blue3);border-radius:8px;padding:12px;margin-bottom:10px">
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px">
         <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Factura</div><div style="font-weight:700;font-family:monospace">${escHtml(x.factura||'—')}</div></div>
         <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Vehículo</div><div style="font-weight:700">${escHtml(x.vehiculo||'—')}</div></div>
@@ -9282,9 +9322,10 @@ function abonarCXC(id){
       </div>
       ${x.frecuenciaPago?`<div style="margin-top:8px;font-size:11px;color:var(--gray)">Pago ${freqLabel[x.frecuenciaPago]||x.frecuenciaPago}${x.proxPago?' — Próximo: <strong>'+fmtDate(x.proxPago)+'</strong>':''}</div>`:''}
     </div>
+    ${planInfo}
     <div class="form-row c2">
-      <div class="form-field"><label class="required">Monto a Cobrar (${esUSD?'USD':'RD$'})</label>
-        <input type="text" id="cxca-monto" value="${fmtMoneyDisplay(x.saldo||0)}" oninput="fmtMoneyInput(this);${esUSD?'calcEquivCXCA();':''}" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" placeholder="0.00">
+      <div class="form-field"><label class="required">Monto a Cobrar (${esUSD?'USD':'RD$'})${proxCuota?' <span style="font-size:10px;color:#16a34a;font-weight:700">← monto de cuota #'+proxCuota.num+'</span>':''}</label>
+        <input type="text" id="cxca-monto" value="${proxCuota?fmtMoneyDisplay(proxCuota.cuota):fmtMoneyDisplay(x.saldo||0)}" oninput="fmtMoneyInput(this);${esUSD?'calcEquivCXCA();':''}" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" placeholder="0.00">
       </div>
       <div class="form-field"><label>Fecha</label>
         <input type="date" id="cxca-fecha" value="${today()}">
