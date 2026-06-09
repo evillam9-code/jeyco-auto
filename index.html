@@ -2138,32 +2138,113 @@ function guardarCajaMov(tipo){
 
 // ══ GASTOS ══
 let gasSelectedId=null;
+let _gastosFiltro={search:'',desde:'',hasta:'',periodo:'',cat:''};
 function renderGastos(){
-  const total=DB.gastos.reduce((a,g)=>a+parseFloat(g.monto||0),0);
   const ds='background:#e2e8f0;color:#adb5bd;cursor:not-allowed;border:1px solid #dee2e6';
+  const cats=['Todos',...new Set(DB.gastos.map(g=>g.categoria||'General').filter(Boolean))].sort();
+  // Períodos rápidos
+  const periodos=[...new Set(DB.gastos.map(g=>(g.fecha||'').slice(0,7)).filter(Boolean))].sort().reverse();
   document.getElementById('page-gastos').innerHTML=`
     <div class="page-header">
-      <div><h1>🏢 Gastos de Empresa</h1><p>Total: ${fmt(total)}</p></div>
+      <div><h1>🏢 Gastos de Empresa</h1><p id="gas-total-lbl">Cargando...</p></div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         <button id="gas-btn-editar" disabled class="btn btn-sm" style="${ds}" onclick="gasAccion('editar')">✏️ Editar</button>
         ${(currentUser?.role==='admin'||canDo('eliminar'))?`<button id="gas-btn-eliminar" disabled class="btn btn-sm" style="${ds}" onclick="gasAccion('eliminar')">🗑 Eliminar</button>`:''}
-        <button class="btn btn-secondary btn-sm" onclick="imprimirGastos()">📄 PDF</button>
+        <button class="btn btn-secondary btn-sm" onclick="imprimirGastosFiltrado()">📄 PDF</button>
         <button class="btn btn-primary" onclick="nuevoGasto()">➕ Nuevo Gasto</button>
       </div>
     </div>
-    <div class="card"><div class="search-wrap"><input class="search-input" placeholder="Buscar..." oninput="filterTable('gas-tbl',this.value)"></div>
-      <div class="table-wrap"><table id="gas-tbl"><thead><tr><th style="width:36px"></th><th>Fecha</th><th>Categoría</th><th>Suplidor</th><th>Descripción</th><th>Forma Pago</th><th>Estado</th><th>Monto</th><th>Por</th></tr></thead>
-        <tbody>${DB.gastos.slice().reverse().map((g)=>{return`<tr onclick="selGasto('${g.id}',this)" style="cursor:pointer">
-          <td style="text-align:center"><input type="radio" name="gas-sel" onclick="event.stopPropagation();selGasto('${g.id}',this.closest('tr'))" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blue)"></td>
-          <td>${fmtDate(g.fecha)}</td><td><span class="badge badge-amber">${escHtml(g.categoria||'General')}</span></td>
-          <td style="font-size:12px">${escHtml(g.suplidor||'—')}</td>
-          <td>${escHtml(g.descripcion||'—')}</td>
-          <td><span class="badge ${g.formaPago==='CREDITO'?'badge-amber':'badge-green'}">${g.formaPago==='CREDITO'?'Crédito':'Contado'}</span></td>
-          <td><span class="badge ${g.statusGasto==='SALDADO'?'badge-green':g.statusGasto==='ABONADO'?'badge-amber':'badge-red'}">${g.statusGasto||'SALDADO'}</span></td>
-          <td style="font-weight:700;color:var(--red)">${fmt(g.monto)}</td>
-          <td style="font-size:12px">${escHtml(g.responsable||'—')}</td>
-        </tr>`;}).join('')||'<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--gray)">Sin gastos</td></tr>'}
-        </tbody></table></div></div>`;
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div class="form-field" style="margin:0;flex:1;min-width:140px">
+          <label style="font-size:11px">🔍 Buscar</label>
+          <input class="search-input" style="margin:0;padding:7px 10px" placeholder="Suplidor, descripción..." 
+            value="${_gastosFiltro.search}" oninput="_gastosFiltro.search=this.value;_renderGastosTabla()">
+        </div>
+        <div class="form-field" style="margin:0">
+          <label style="font-size:11px">📅 Período</label>
+          <select style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px" 
+            onchange="_gastosFiltro.periodo=this.value;_gastosFiltro.desde='';_gastosFiltro.hasta='';document.getElementById('gas-desde').value='';document.getElementById('gas-hasta').value='';_renderGastosTabla()">
+            <option value="">Todos los períodos</option>
+            ${periodos.map(p=>`<option value="${p}" ${_gastosFiltro.periodo===p?'selected':''}>${p.slice(0,4)} — ${['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][parseInt(p.slice(5,7))-1]}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-field" style="margin:0">
+          <label style="font-size:11px">📆 Desde</label>
+          <input type="date" id="gas-desde" value="${_gastosFiltro.desde}" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px"
+            onchange="_gastosFiltro.desde=this.value;_gastosFiltro.periodo='';_renderGastosTabla()">
+        </div>
+        <div class="form-field" style="margin:0">
+          <label style="font-size:11px">📆 Hasta</label>
+          <input type="date" id="gas-hasta" value="${_gastosFiltro.hasta}" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px"
+            onchange="_gastosFiltro.hasta=this.value;_gastosFiltro.periodo='';_renderGastosTabla()">
+        </div>
+        <div class="form-field" style="margin:0">
+          <label style="font-size:11px">🏷️ Categoría</label>
+          <select style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px"
+            onchange="_gastosFiltro.cat=this.value==='Todos'?'':this.value;_renderGastosTabla()">
+            ${cats.map(c=>`<option value="${c}" ${(_gastosFiltro.cat||'Todos')===c?'selected':''}>${c}</option>`).join('')}
+          </select>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="_gastosFiltro={search:'',desde:'',hasta:'',periodo:'',cat:''};renderGastos()" title="Limpiar filtros">🔄</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="table-wrap"><table id="gas-tbl">
+        <thead><tr><th style="width:36px"></th><th>Fecha</th><th>Categoría</th><th>Suplidor</th><th>Descripción</th><th>Forma Pago</th><th>Estado</th><th>Monto</th><th>Por</th></tr></thead>
+        <tbody id="gas-tbody"></tbody>
+      </table></div>
+    </div>`;
+  _renderGastosTabla();
+}
+
+function _gastosFiltrar(){
+  let g=DB.gastos.slice().reverse();
+  const f=_gastosFiltro;
+  if(f.search){const q=f.search.toLowerCase();g=g.filter(x=>(x.suplidor||'').toLowerCase().includes(q)||(x.descripcion||'').toLowerCase().includes(q)||(x.categoria||'').toLowerCase().includes(q));}
+  if(f.periodo)g=g.filter(x=>(x.fecha||'').slice(0,7)===f.periodo);
+  if(f.desde)g=g.filter(x=>(x.fecha||'')>=f.desde);
+  if(f.hasta)g=g.filter(x=>(x.fecha||'')<=f.hasta);
+  if(f.cat)g=g.filter(x=>(x.categoria||'General')===f.cat);
+  return g;
+}
+
+function _renderGastosTabla(){
+  const tbody=document.getElementById('gas-tbody');
+  const lbl=document.getElementById('gas-total-lbl');
+  if(!tbody)return;
+  const g=_gastosFiltrar();
+  const total=g.reduce((a,x)=>a+parseFloat(x.monto||0),0);
+  const totalAll=DB.gastos.reduce((a,x)=>a+parseFloat(x.monto||0),0);
+  if(lbl)lbl.textContent=g.length===DB.gastos.length
+    ?`${g.length} gastos — Total: ${fmt(total)}`
+    :`${g.length} de ${DB.gastos.length} gastos — Total filtrado: ${fmt(total)} (Total general: ${fmt(totalAll)})`;
+  tbody.innerHTML=g.map(x=>`<tr onclick="selGasto('${x.id}',this)" style="cursor:pointer">
+    <td style="text-align:center"><input type="radio" name="gas-sel" onclick="event.stopPropagation();selGasto('${x.id}',this.closest('tr'))" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blue)"></td>
+    <td>${fmtDate(x.fecha)}</td>
+    <td><span class="badge badge-amber">${escHtml(x.categoria||'General')}</span></td>
+    <td style="font-size:12px">${escHtml(x.suplidor||'—')}</td>
+    <td>${escHtml(x.descripcion||'—')}</td>
+    <td><span class="badge ${x.formaPago==='CREDITO'?'badge-amber':'badge-green'}">${x.formaPago==='CREDITO'?'Crédito':'Contado'}</span></td>
+    <td><span class="badge ${x.statusGasto==='SALDADO'?'badge-green':x.statusGasto==='ABONADO'?'badge-amber':'badge-red'}">${x.statusGasto||'SALDADO'}</span></td>
+    <td style="font-weight:700;color:var(--red)">${fmt(x.monto)}</td>
+    <td style="font-size:12px">${escHtml(x.responsable||'—')}</td>
+  </tr>`).join('')||'<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--gray)">Sin gastos con los filtros aplicados</td></tr>';
+}
+
+function imprimirGastosFiltrado(){
+  const g=_gastosFiltrar();
+  const total=g.reduce((a,x)=>a+parseFloat(x.monto||0),0);
+  const f=_gastosFiltro;
+  const periodoLabel=f.periodo?f.periodo:f.desde||f.hasta?`${f.desde||'…'} al ${f.hasta||'…'}`:'Todos los períodos';
+  const win=window.open('','_blank','width=900,height=600');
+  win.document.write('<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Gastos</title><style>body{font-family:Arial,sans-serif;padding:20px;font-size:12px}table{width:100%;border-collapse:collapse;margin-top:14px}th{background:#0f172a;color:#fff;padding:8px;text-align:left;font-size:11px}td{padding:7px 8px;border-bottom:1px solid #e2e8f0}tr:nth-child(even){background:#f8fafc}@media print{.np{display:none}}</style></head><body>'+
+  '<div style="display:flex;justify-content:space-between;border-bottom:2px solid #dc2626;padding-bottom:12px;margin-bottom:14px"><div><h2 style="font-size:18px;margin:0">'+escHtml(DB.config.empresa||'JEYCO AUTO')+'</h2><div style="color:#6b7280">REPORTE DE GASTOS — '+escHtml(periodoLabel)+(f.cat?' | Categoría: '+f.cat:'')+'</div></div><div style="font-size:11px;color:#6b7280;text-align:right">'+fmtDate(today())+'<br>Total: <strong>'+fmt(total)+'</strong></div></div>'+
+  '<table><thead><tr><th>Fecha</th><th>Categoría</th><th>Suplidor</th><th>Descripción</th><th>Forma Pago</th><th>Estado</th><th>Monto</th></tr></thead><tbody>'+
+  g.map(x=>'<tr><td>'+fmtDate(x.fecha)+'</td><td>'+escHtml(x.categoria||'—')+'</td><td>'+escHtml(x.suplidor||'—')+'</td><td>'+escHtml(x.descripcion||'—')+'</td><td>'+(x.formaPago==='CREDITO'?'Crédito':'Contado')+'</td><td>'+(x.statusGasto||'SALDADO')+'</td><td style="font-weight:700;color:#dc2626">'+fmt(x.monto)+'</td></tr>').join('')+
+  '<tr style="background:#dbeafe"><td colspan="6" style="font-weight:800">TOTAL</td><td style="font-weight:800;color:#2563eb">'+fmt(total)+'</td></tr>'+
+  '</tbody></table><div class="np" style="margin-top:20px;text-align:center"><button onclick="window.print()" style="padding:10px 24px;background:#dc2626;color:#fff;border:none;border-radius:6px;cursor:pointer">🖨️ Imprimir / PDF</button></div></body></html>');
+  win.document.close();
 }
 function selGasto(id,tr){
   gasSelectedId=id;
@@ -3481,26 +3562,69 @@ function confirmarBorrarClienteCumple(id){
 ══════════════════════════════════════════════ */
 function calcTablaAmortizacion(monto,tasa,plazo,tipo){
   // tasa = % mensual, plazo = meses
+  // Tipos: CAP_INT_AMORT | CAP_INT_FIJO | SOLO_INT_AMORT | SOLO_INT_FIJO
   const t=tasa/100;
   const rows=[];
   let saldo=monto;
   for(let i=1;i<=plazo;i++){
-    const interes=saldo*t;
-    let capital,cuota;
-    if(tipo==='FRANCESA'){
-      // Cuota fija
+    let capital,interes,cuota;
+    if(tipo==='CAP_INT_AMORT'||tipo==='FRANCESA'){
+      // Capital + Interés Amortizable (Francesa) — cuota fija, interés baja con saldo
       const cf=t===0?monto/plazo:monto*(t*Math.pow(1+t,plazo))/(Math.pow(1+t,plazo)-1);
+      interes=saldo*t;
       capital=cf-interes;
       cuota=cf;
-    } else {
-      // Capital Fijo
+    } else if(tipo==='CAP_INT_FIJO'||tipo==='CAPITAL_FIJO'){
+      // Capital + Interés Fijo — capital fijo, interés siempre sobre monto original
       capital=monto/plazo;
+      interes=monto*t;  // siempre sobre el capital original
       cuota=capital+interes;
+    } else if(tipo==='SOLO_INT_AMORT'){
+      // Solo Interés Amortizable — paga interés sobre saldo, capital al final
+      interes=saldo*t;
+      capital=i===plazo?saldo:0;  // capital completo en última cuota
+      cuota=interes+(i===plazo?saldo:0);
+    } else if(tipo==='SOLO_INT_FIJO'||tipo==='LINEA_CREDITO'){
+      // Solo Interés Fijo — interés fijo sobre capital original, capital al final
+      interes=monto*t;
+      capital=i===plazo?monto:0;
+      cuota=interes+(i===plazo?monto:0);
+    } else {
+      // Fallback: Francesa
+      const cf=t===0?monto/plazo:monto*(t*Math.pow(1+t,plazo))/(Math.pow(1+t,plazo)-1);
+      interes=saldo*t; capital=cf-interes; cuota=cf;
     }
     saldo=Math.max(0,saldo-capital);
     rows.push({num:i,cuota,capital,interes,saldo});
   }
   return rows;
+}
+
+// Labels amigables para cada tipo
+function labelTipoPrestamo(tipo){
+  return {
+    'CAP_INT_AMORT':'Capital + Interés Amortizable',
+    'FRANCESA':'Capital + Interés Amortizable',
+    'CAP_INT_FIJO':'Capital + Interés Fijo',
+    'CAPITAL_FIJO':'Capital + Interés Fijo',
+    'SOLO_INT_AMORT':'Solo Interés Amortizable',
+    'SOLO_INT_FIJO':'Solo Interés Fijo',
+    'LINEA_CREDITO':'Solo Interés Fijo'
+  }[tipo]||tipo;
+}
+
+// HTML de opciones de tipo de amortización
+function htmlTipoAmortOpts(selected){
+  const tipos=[
+    {v:'CAP_INT_AMORT',l:'Capital + Interés Amortizable (cuota fija)'},
+    {v:'CAP_INT_FIJO', l:'Capital + Interés Fijo (interés sobre capital original)'},
+    {v:'SOLO_INT_AMORT',l:'Solo Interés Amortizable (capital al final, interés sobre saldo)'},
+    {v:'SOLO_INT_FIJO', l:'Solo Interés Fijo (capital al final, interés fijo mensual)'},
+  ];
+  return tipos.map(t=>`<option value="${t.v}" ${selected===t.v||
+    (selected==='FRANCESA'&&t.v==='CAP_INT_AMORT')||
+    (selected==='CAPITAL_FIJO'&&t.v==='CAP_INT_FIJO')||
+    (selected==='LINEA_CREDITO'&&t.v==='SOLO_INT_FIJO')?'selected':''}>${t.l}</option>`).join('');
 }
 
 function renderPrestamos(){
@@ -3561,9 +3685,7 @@ function nuevoPrestamo(){
     <div class="form-row c3">
       <div class="form-field"><label class="required">Tipo</label>
         <select id="pr-tipo">
-          <option value="FRANCESA">Francesa (cuota fija)</option>
-          <option value="CAPITAL_FIJO">Capital Fijo</option>
-          <option value="LINEA_CREDITO">Línea de Crédito</option>
+${htmlTipoAmortOpts('')}
         </select>
       </div>
       <div class="form-field"><label class="required">Monto del Préstamo</label>
@@ -3596,13 +3718,14 @@ function nuevoPrestamo(){
 
 function calcCuotaPrestamo(){
   const m=parseFloat((document.getElementById('pr-monto')?.value||'0').replace(/,/g,''))||0;
-  const t=(parseFloat(document.getElementById('pr-tasa')?.value||0)||0)/100;
+  const tasa=parseFloat(document.getElementById('pr-tasa')?.value||0)||0;
   const n=parseInt(document.getElementById('pr-plazo')?.value||0)||0;
+  const tipo=document.getElementById('pr-tipo')?.value||'CAP_INT_AMORT';
   const el=document.getElementById('pr-cuota-est');
   if(!el)return;
   if(m&&n){
-    const c=t===0?m/n:m*(t*Math.pow(1+t,n))/(Math.pow(1+t,n)-1);
-    el.value=fmtMoneyDisplay(c);
+    const rows=calcTablaAmortizacion(m,tasa,n,tipo);
+    el.value=rows.length?fmtMoneyDisplay(rows[0].cuota):'';
   }else el.value='';
 }
 
@@ -3839,9 +3962,7 @@ function _modalPrestamoIndependiente(cliId,cliNombre){
       </div>
       <div class="form-field"><label>Tipo</label>
         <select id="pi-tipo">
-          <option value="FRANCESA">Francesa (cuota fija)</option>
-          <option value="CAPITAL_FIJO">Capital Fijo</option>
-          <option value="LINEA_CREDITO">Línea de Crédito</option>
+${htmlTipoAmortOpts('')}
         </select>
       </div>
     </div>
@@ -8591,6 +8712,8 @@ function renderCXC(){
         </select>
         <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
         <button id="cxc-btn-cobrar" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('cobrar')">💵 Registrar Cobro</button>
+        <button id="cxc-btn-edit-prestamo" style="display:none;${ds}" class="btn btn-sm" onclick="cxcAccion('editPrestamo')">✏️ Editar Préstamo</button>
+        <button id="cxc-btn-del-prestamo" style="display:none;${ds}" class="btn btn-sm" onclick="cxcAccion('delPrestamo')">🗑 Eliminar Préstamo</button>
         <button id="cxc-btn-plan" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('plan')">📋 Plan de Pagos</button>
         <button id="cxc-btn-abono" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('abono')">💰 Abono Extra</button>
         <button id="cxc-btn-historial" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('historial')">👁 Historial</button>
@@ -8667,6 +8790,15 @@ function selCXC(id,tr){
   if(x?.status!=='SALDADO')actB('cxc-btn-abono','#d97706','#fff');
   actB('cxc-btn-historial','#475569','#fff');
   if(currentUser?.role==='admin'||canDo('eliminar'))actB('cxc-btn-eliminar','#dc2626','#fff');
+  // Botones exclusivos para préstamo otorgado
+  const btnEdit=document.getElementById('cxc-btn-edit-prestamo');
+  const btnDel=document.getElementById('cxc-btn-del-prestamo');
+  if(btnEdit)btnEdit.style.display=x?.esPrestamo?'inline-flex':'none';
+  if(btnDel)btnDel.style.display=x?.esPrestamo?'inline-flex':'none';
+  if(x?.esPrestamo){
+    if(btnEdit){btnEdit.disabled=false;btnEdit.style.cssText='background:#2563eb;color:#fff;cursor:pointer;';}
+    if(btnDel){btnDel.disabled=false;btnDel.style.cssText='background:#dc2626;color:#fff;cursor:pointer;';}
+  }
 }
 
 function nuevaCXCManual(){
@@ -8808,6 +8940,8 @@ function cxcAccion(accion){
   if(accion==='cobrar'){if(!canDo('editar')){toast('No tienes permiso para registrar cobros','error');return;}abonarCXC(cxcSelectedId);}
   else if(accion==='plan')modalPlanPagosCXC(cxcSelectedId);
   else if(accion==='abono')modalAbonoExtraordinarioCXC(cxcSelectedId);
+  else if(accion==='editPrestamo')editarPrestamoOtorgado(cxcSelectedId);
+  else if(accion==='delPrestamo')eliminarPrestamoOtorgado(cxcSelectedId);
   else if(accion==='historial')verAbonosCXC(cxcSelectedId);
   else if(accion==='eliminar'){
     if(!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}
@@ -8821,6 +8955,85 @@ function cxcAccion(accion){
 /* ══════════════════════════════════════════
    PLAN DE PAGOS CXC
 ══════════════════════════════════════════ */
+function editarPrestamoOtorgado(id){
+  const x=DB.cxc.find(c=>c.id===id);if(!x||!x.esPrestamo)return;
+  openModal(`✏️ Editar Préstamo — ${escHtml(x.cliente||'')}`,`
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Monto Total</label>
+        <input type="text" id="ep-monto" value="${fmtMoneyDisplay(x.total||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
+      </div>
+      <div class="form-field"><label>Fecha</label>
+        <input type="date" id="ep-fecha" value="${x.fecha||today()}">
+      </div>
+    </div>
+    <div class="form-row c3">
+      <div class="form-field"><label>Tasa Mensual (%)</label>
+        <input type="number" id="ep-tasa" step="0.01" value="${x.planPagos?.tasaMensual||x.tasaMensual||''}">
+      </div>
+      <div class="form-field"><label>Plazo (meses)</label>
+        <input type="number" id="ep-plazo" value="${x.planPagos?.plazo||x.plazo||''}">
+      </div>
+      <div class="form-field"><label>Tipo</label>
+        <select id="ep-tipo">${htmlTipoAmortOpts(x.planPagos?.tipo||x.tipo||'CAP_INT_AMORT')}</select>
+      </div>
+    </div>
+    <div class="form-field"><label>Notas</label>
+      <textarea id="ep-notas" rows="2">${escHtml(x.notas||'')}</textarea>
+    </div>
+    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:8px;font-size:12px;margin-top:8px">
+      ⚠️ Si cambias el monto o tipo, el plan de pagos se recalculará desde cero.
+    </div>`,
+  `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+   <button class="btn btn-primary" onclick="guardarEditPrestamoOtorgado('${id}')">💾 Guardar</button>`);
+}
+
+function guardarEditPrestamoOtorgado(id){
+  const i=DB.cxc.findIndex(c=>c.id===id);if(i<0)return;
+  const monto=parseFloat((document.getElementById('ep-monto')?.value||'0').replace(/,/g,''));
+  if(!monto){toast('Ingresa el monto','error');return;}
+  const tasa=parseFloat(document.getElementById('ep-tasa')?.value||0)||0;
+  const plazo=parseInt(document.getElementById('ep-plazo')?.value||0)||0;
+  const tipo=document.getElementById('ep-tipo')?.value||'CAP_INT_AMORT';
+  const fecha=document.getElementById('ep-fecha')?.value||today();
+  const notas=document.getElementById('ep-notas')?.value||'';
+  DB.cxc[i].total=monto;
+  DB.cxc[i].notas=notas;
+  DB.cxc[i].fecha=fecha;
+  // Recalcular plan si tiene plazo
+  if(plazo){
+    const rows=calcTablaAmortizacion(monto,tasa,plazo,tipo);
+    const cuotas=rows.map((r,idx)=>{
+      const d=new Date(fecha+'T12:00:00');d.setMonth(d.getMonth()+idx);
+      const prev=DB.cxc[i].planPagos?.cuotas?.[idx];
+      return{num:r.num,cuota:r.cuota,capital:r.capital,interes:r.interes,saldo:r.saldo,
+        fechaVence:d.toISOString().slice(0,10),
+        pagada:prev?.pagada||false,fechaPago:prev?.fechaPago||null};
+    });
+    DB.cxc[i].planPagos={tipo,tasaMensual:tasa,plazo,fechaInicio:fecha,cuotas};
+  }
+  sDB('cxc');
+  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('cxc').catch(()=>{});
+  closeModal();toast('Préstamo actualizado ✓','success');renderCXC();
+}
+
+function eliminarPrestamoOtorgado(id){
+  const x=DB.cxc.find(c=>c.id===id);if(!x||!x.esPrestamo)return;
+  openModal('🗑 Eliminar Préstamo Otorgado',`
+    <p style="font-size:13px">¿Eliminar el préstamo de <strong>${escHtml(x.cliente||'')}</strong> por <strong>${fmt(x.total||0)}</strong>?</p>
+    <p style="font-size:12px;color:var(--gray)">Solo se elimina esta CxC de préstamo. Las ventas y otras CxC no se tocan.</p>`,
+  `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+   <button class="btn btn-red" onclick="_confirmarEliminarPrestamoCXC('${id}')">🗑 Sí, Eliminar</button>`);
+}
+
+function _confirmarEliminarPrestamoCXC(id){
+  const i=DB.cxc.findIndex(c=>c.id===id);if(i<0)return;
+  DB.cxc.splice(i,1);
+  sDB('cxc');
+  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('cxc').catch(()=>{});
+  cxcSelectedId=null;
+  closeModal();toast('Préstamo otorgado eliminado ✓','success');renderCXC();
+}
+
 function modalPlanPagosCXC(id){
   const x=DB.cxc.find(c=>c.id===id);if(!x)return;
   const plan=x.planPagos||null;
@@ -8858,9 +9071,7 @@ function modalPlanPagosCXC(id){
     <div class="form-row c3">
       <div class="form-field"><label>Tipo de Amortización</label>
         <select id="pp-tipo" onchange="calcCuotasPlanCXC('${id}')">
-          <option value="FRANCESA" ${plan?.tipo==='FRANCESA'?'selected':''}>Francesa (cuota fija)</option>
-          <option value="CAPITAL_FIJO" ${plan?.tipo==='CAPITAL_FIJO'?'selected':''}>Capital Fijo</option>
-          <option value="LINEA_CREDITO" ${plan?.tipo==='LINEA_CREDITO'?'selected':''}>Línea de Crédito</option>
+${htmlTipoAmortOpts('')}
         </select>
       </div>
       <div class="form-field"><label>Tasa Mensual (%)</label>
@@ -8890,12 +9101,11 @@ function calcCuotasPlanCXC(id){
   const saldo=parseFloat(x.saldo||0);
   const t=(parseFloat(document.getElementById('pp-tasa')?.value||0)||0)/100;
   const n=parseInt(document.getElementById('pp-plazo')?.value||0)||0;
-  const tipo=document.getElementById('pp-tipo')?.value||'FRANCESA';
+  const tipo=document.getElementById('pp-tipo')?.value||'CAP_INT_AMORT';
   const el=document.getElementById('pp-cuota-est');
-  if(!el||!saldo||!n)return;
-  if(tipo==='LINEA_CREDITO'){el.value='Saldo libre';return;}
-  const c=t===0?saldo/n:saldo*(t*Math.pow(1+t,n))/(Math.pow(1+t,n)-1);
-  el.value=fmtMoneyDisplay(c);
+  if(!el||!saldo||!n){if(el)el.value='';return;}
+  const rows=calcTablaAmortizacion(saldo,t*100,n,tipo);
+  el.value=rows.length?fmtMoneyDisplay(rows[0].cuota):'';
 }
 
 function eliminarPlanPagosCXC(id){
