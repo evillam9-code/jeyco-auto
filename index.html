@@ -1448,6 +1448,7 @@ function renderInventario(){
   invSelectedId=null;
   const filtroEstado=document.getElementById('inv-estado-filter')?.value||'INVENTARIO';
   const filtroTipo=document.getElementById('inv-tipo-filter')?.value||'ALL';
+  const filtroProp=document.getElementById('inv-prop-filter')?.value||'ALL';
   // Orden fijo: EN EEUU → ADUANA → ACTIVO → resto
   const ordenStatus={'EN EEUU':0,'ADUANA':1,'ACTIVO':2,'TRÁNSITO':3,'VENDIDO':4};
   let veh=[...DB.vehiculos];
@@ -1457,6 +1458,7 @@ function renderInventario(){
     veh=veh.filter(v=>v.status===filtroEstado);
   }
   if(filtroTipo!=='ALL')veh=veh.filter(v=>v.tipoCompra===filtroTipo);
+  if(filtroProp!=='ALL')veh=veh.filter(v=>(v.propietario||'')=== filtroProp);
   // Aplicar orden fijo
   veh.sort((a,b)=>(ordenStatus[a.status]??9)-(ordenStatus[b.status]??9));
   // Contadores
@@ -1486,6 +1488,10 @@ function renderInventario(){
           <option value="IMPORTACION">Importación</option>
           <option value="LOCAL">Compra Local</option>
           <option value="RECIBIDO">Recibido</option>
+        </select>
+        <select id="inv-prop-filter" onchange="renderInventario()" style="width:150px;padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
+          <option value="ALL">Todos los propietarios</option>
+          ${(DB.config.propietarios||[]).map(p=>`<option value="${escHtml(p)}" ${p===filtroProp?'selected':''}>${escHtml(p)}</option>`).join('')}
         </select>
         <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
         <button id="inv-btn-editar" disabled class="btn btn-sm" style="${btnDis}" onclick="invAccion('editar')" title="Editar">✏️ Editar</button>
@@ -1535,6 +1541,7 @@ function renderInventario(){
     </div>`;
   const se=document.getElementById('inv-estado-filter');if(se)se.value=filtroEstado;
   const st=document.getElementById('inv-tipo-filter');if(st)st.value=filtroTipo;
+  const sp=document.getElementById('inv-prop-filter');if(sp)sp.value=filtroProp;
 }
 
 function formVehiculo(v){
@@ -2794,6 +2801,8 @@ function imprimirPagosNomina(){
 
 
 function renderInformes(){
+  const pg=document.getElementById('page-informes');
+  if(!pg){setTimeout(renderInformes,300);return;}
   const mes=document.getElementById('inf-mes')?.value||today().slice(0,7);
   const ventasMes=DB.ventas.filter(v=>v.fecha?.startsWith(mes));
   const gastosMes=DB.gastos.filter(g=>g.fecha?.startsWith(mes));
@@ -2821,7 +2830,7 @@ function renderInformes(){
   const nominaMes=DB.nomina.filter(e=>e.activo).reduce((a,e)=>a+parseFloat(e.salario||0),0);
   const gastosCat={};gastosMes.forEach(g=>{gastosCat[g.categoria||'General']=(gastosCat[g.categoria||'General']||0)+parseFloat(g.monto||0);});
 
-  document.getElementById('page-informes').innerHTML=`
+  pg.innerHTML=`
     <div class="page-header">
       <div><h1>📊 Informe Mensual</h1><p>Período: ${mes}</p></div>
       <div style="display:flex;gap:8px;align-items:center">
@@ -3886,149 +3895,6 @@ function guardarAbonoCapital(pid){
 }
 /* ══ FIN MÓDULO PRÉSTAMOS ══ */
 
-function nuevaPrestamoOtorgado(){
-  // Paso 1: seleccionar cliente para detectar si ya tiene CxC de venta pendiente
-  openModal('🤝 Préstamo Otorgado — Seleccionar Cliente',`
-    <p style="font-size:13px;color:var(--gray);margin-bottom:14px">
-      Si el cliente ya tiene una CxC pendiente de venta, se creará el plan de pagos sobre esa cuenta.<br>
-      Si no tiene ninguna, se registrará como préstamo independiente.
-    </p>
-    <div class="form-field"><label class="required">Cliente</label>
-      <select id="po-cli" onchange="detectarCxCClientePO(this.value)" style="font-size:14px;padding:10px">
-        <option value="">Seleccionar...</option>
-        ${DB.clientes.map(c=>`<option value="${c.id}">${escHtml(c.nombre)}</option>`).join('')}
-      </select>
-    </div>
-    <div id="po-cxc-info" style="margin-top:12px"></div>`,
-  `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-   <button class="btn btn-primary" onclick="continuarPrestamoOtorgado()">Continuar →</button>`);
-}
-
-function detectarCxCClientePO(cliId){
-  const info=document.getElementById('po-cxc-info');
-  if(!info)return;
-  if(!cliId){info.innerHTML='';return;}
-  // Buscar CxC pendientes de venta para este cliente
-  const cxcsPend=(DB.cxc||[]).filter(x=>x.clienteId===cliId&&(x.status==='PENDIENTE'||x.status==='PARCIAL')&&x.ventaId&&!x.esPrestamo);
-  if(cxcsPend.length){
-    info.innerHTML=`
-      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px;font-size:13px">
-        <div style="font-weight:700;color:var(--blue);margin-bottom:8px">📋 CxC de venta encontrada:</div>
-        ${cxcsPend.map(x=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #dbeafe">
-          <div>
-            <span style="font-family:monospace;font-size:11px;color:var(--blue)">${escHtml(x.factura||'—')}</span>
-            <span style="font-size:12px;margin-left:8px">${escHtml(x.concepto||'Pendiente de venta')}</span>
-          </div>
-          <span style="font-weight:800;color:var(--red)">${fmt(x.saldo)}</span>
-        </div>`).join('')}
-        <div style="font-size:12px;color:var(--blue);margin-top:8px">✅ Se creará el plan de pagos sobre esta CxC existente.</div>
-      </div>`;
-  } else {
-    info.innerHTML=`
-      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px;font-size:13px">
-        <div style="color:#16a34a;font-weight:600">ℹ️ Sin CxC de venta pendiente — se registrará como préstamo independiente y se creará una CxC nueva.</div>
-      </div>`;
-  }
-}
-
-function continuarPrestamoOtorgado(){
-  const cliId=document.getElementById('po-cli')?.value;
-  if(!cliId){toast('Selecciona un cliente','error');return;}
-  const cli=DB.clientes.find(c=>c.id===cliId);
-  const cxcsPend=(DB.cxc||[]).filter(x=>x.clienteId===cliId&&(x.status==='PENDIENTE'||x.status==='PARCIAL')&&x.ventaId&&!x.esPrestamo);
-  if(cxcsPend.length){
-    // Tiene CxC de venta — abrir plan de pagos sobre la primera (o la de mayor saldo)
-    const cxcTarget=cxcsPend.reduce((a,b)=>parseFloat(a.saldo)>=parseFloat(b.saldo)?a:b);
-    closeModal();
-    setTimeout(()=>modalPlanPagosCXC(cxcTarget.id),150);
-  } else {
-    // Préstamo independiente — mostrar formulario completo
-    closeModal();
-    setTimeout(()=>_modalPrestamoIndependiente(cliId,cli?.nombre||''),150);
-  }
-}
-
-function _modalPrestamoIndependiente(cliId,cliNombre){
-  openModal(`🤝 Préstamo Independiente — ${escHtml(cliNombre)}`,`
-    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:8px 12px;font-size:12px;margin-bottom:12px">
-      ⚠️ Este cliente no tiene ventas pendientes. Se creará una CxC nueva y se registrará salida en Caja.
-    </div>
-    <div class="form-row c2">
-      <div class="form-field"><label class="required">Monto del Préstamo</label>
-        <input type="text" id="pi-monto" placeholder="0.00" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
-      </div>
-      <div class="form-field"><label>Fecha</label>
-        <input type="date" id="pi-fecha" value="${today()}">
-      </div>
-    </div>
-    <div class="form-row c3">
-      <div class="form-field"><label>Tasa Mensual (%)</label>
-        <input type="number" id="pi-tasa" step="0.01" placeholder="Ej: 2.0">
-      </div>
-      <div class="form-field"><label>Plazo (meses)</label>
-        <input type="number" id="pi-plazo" placeholder="Ej: 12">
-      </div>
-      <div class="form-field"><label>Tipo</label>
-        <select id="pi-tipo">
-${htmlTipoAmortOpts('')}
-        </select>
-      </div>
-    </div>
-    <div class="form-row c3">
-      ${htmlMonedaBancoCuenta('pi','RD$',undefined,undefined)}
-    </div>
-    <div class="form-field"><label>Notas</label>
-      <textarea id="pi-notas" rows="2" placeholder="Garantía, condiciones..."></textarea>
-    </div>`,
-  `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-   <button class="btn btn-primary" onclick="guardarPrestamoIndependiente('${cliId}','${escHtml(cliNombre)}')">✅ Registrar</button>`);
-}
-
-function guardarPrestamoIndependiente(cliId,cliNombre){
-  const monto=parseFloat((document.getElementById('pi-monto')?.value||'0').replace(/,/g,''));
-  if(!monto){toast('Ingresa el monto','error');return;}
-  const tasa=parseFloat(document.getElementById('pi-tasa')?.value||0)||0;
-  const plazo=parseInt(document.getElementById('pi-plazo')?.value||0)||0;
-  const tipo=document.getElementById('pi-tipo')?.value||'FRANCESA';
-  const fecha=document.getElementById('pi-fecha')?.value||today();
-  const moneda=document.getElementById('pi-moneda')?.value||'RD$';
-  const banco=document.getElementById('pi-banco')?.value||'';
-  const cuenta=document.getElementById('pi-cuenta')?.value||'';
-  const notas=document.getElementById('pi-notas')?.value||'';
-  const cxcId=uid();
-  // Crear CxC independiente
-  if(!DB.cxc)DB.cxc=[];
-  const nuevaCxC={
-    id:cxcId,clienteId:cliId,cliente:cliNombre,
-    concepto:`Préstamo otorgado — ${fmtMoneyDisplay(monto)} ${moneda}`,
-    total:monto,saldo:monto,abonado:0,pagos:[],
-    moneda,status:'PENDIENTE',esPrestamo:true,fecha,notas
-  };
-  // Crear plan de pagos automáticamente si tiene tasa/plazo
-  if(plazo&&tipo!=='LINEA_CREDITO'){
-    const rows=calcTablaAmortizacion(monto,tasa,plazo,tipo==='CAPITAL_FIJO'?'CAPITAL_FIJO':'FRANCESA');
-    const cuotas=rows.map((r,idx)=>{
-      const d=new Date(fecha+'T12:00:00');d.setMonth(d.getMonth()+idx);
-      return{num:r.num,cuota:r.cuota,capital:r.capital,interes:r.interes,saldo:r.saldo,
-        fechaVence:d.toISOString().slice(0,10),pagada:false,fechaPago:null};
-    });
-    nuevaCxC.planPagos={tipo,tasaMensual:tasa,plazo,fechaInicio:fecha,cuotas};
-  } else if(tipo==='LINEA_CREDITO'){
-    nuevaCxC.planPagos={tipo:'LINEA_CREDITO',tasaMensual:tasa,plazo:0,fechaInicio:fecha,cuotas:[]};
-  }
-  DB.cxc.push(nuevaCxC);
-  // Salida en Caja
-  if(!DB.caja)DB.caja=[];
-  DB.caja.push({id:uid(),tipo:'SALIDA',fecha,monto,moneda,banco,cuenta,
-    descripcion:`Préstamo otorgado a ${cliNombre}`,
-    categoria:'Préstamo Otorgado',responsable:currentUser?.nombre||''});
-  sDB('cxc');sDB('caja');
-  if(typeof fbGuardar==='function'&&window._fbActivo){fbGuardar('cxc').catch(()=>{});fbGuardar('caja').catch(()=>{});}
-  closeModal();toast('Préstamo independiente registrado ✓','success');renderCXC();
-}
-
-// Alias mantenido por compatibilidad
-function guardarPrestamoOtorgado(){guardarPrestamoIndependiente('','');}
 
 function renderCuentas(){
   const esAdmin=currentUser?.role==='admin';
@@ -5191,7 +5057,7 @@ function renderGastosVeh(){
           return`<tr onclick="selGVeh('${g.id}',this)" style="cursor:pointer">
             <td style="text-align:center"><input type="radio" name="gveh-sel" onclick="event.stopPropagation();selGVeh('${g.id}',this.closest('tr'))" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blue)"></td>
             <td style="font-size:12px">${fmtDate(g.fecha)}</td>
-            <td style="font-size:12px;font-weight:600">${v?escHtml(v.codigo+' '+v.marca+' '+v.modelo):'—'}</td>
+            <td style="font-size:12px;font-weight:600">${v?escHtml(v.codigo+' '+v.marca+' '+v.modelo+(v.anio?' '+v.anio:'')+(v.color?' — '+v.color:'')):'—'}</td>
             <td style="font-size:12px">${escHtml(g.suplidor||'—')}</td>
             <td><span class="badge badge-amber" style="font-size:11px">${escHtml(g._origen==='manual'?(g.descripcion||g.tipo||'—'):g.tipo||'—')}</span></td>
             
@@ -5430,6 +5296,12 @@ function editarGastoVeh(gid){
   const g=gastos[i];
   const tiposGasto=(DB.config.tiposGastoVeh&&DB.config.tiposGastoVeh.length)?DB.config.tiposGastoVeh:TIPOS_GASTO_VEH;
   const cuentas=DB.config.cuentas&&DB.config.cuentas.length?DB.config.cuentas:['Caja General'];
+  const bancoCuentas=DB.config.bancoCuentas||[];
+  const opcionesCuenta=bancoCuentas.length
+    ?bancoCuentas.flatMap(b=>b.cuentas&&b.cuentas.length
+      ?b.cuentas.map(ct=>{const val=b.banco+' — '+ct.numero+' ('+ct.tipo+')';return`<option value="${escHtml(val)}" ${g.cuenta===val?'selected':''}>${escHtml(b.banco+' — '+ct.numero)}</option>`;})
+      :[`<option value="${escHtml(b.banco)}" ${g.cuenta===b.banco?'selected':''}>${escHtml(b.banco)}</option>`])
+    :cuentas.map(c=>`<option ${c===g.cuenta?'selected':''}>${escHtml(c)}</option>`);
   const vActual=DB.vehiculos.find(x=>x.id===g.vehiculoId);
   openModal('✏️ Editar Gasto de Vehículo',`
     <div class="form-row c2">
@@ -5453,7 +5325,7 @@ function editarGastoVeh(gid){
         <select id="egv-tipo">${tiposGasto.map(t=>`<option ${t===g.tipo?'selected':''}>${t}</option>`).join('')}</select>
       </div>
       <div class="form-field"><label>Cuenta de Salida</label>
-        <select id="egv-cuenta">${cuentas.map(c=>`<option ${c===g.cuenta?'selected':''}>${escHtml(c)}</option>`).join('')}</select>
+        <select id="egv-cuenta">${opcionesCuenta.join('')}</select>
       </div>
     </div>
     <div class="form-row c3">
@@ -7028,6 +6900,7 @@ function guardarEditarVenta(vid){
   DB.ventas[i].gestor=gestor;
   DB.ventas[i].endosoMonto=endosoMonto;
   DB.ventas[i].traspasoMonto=traspasoMonto;
+  DB.ventas[i].montoTraspaso=traspasoMonto; // sincronizar ambos campos
   DB.ventas[i].traspasoPagado=traspasoPagado;
   DB.ventas[i].comentario=comentario;
   if(tieneRec&&recVehiculo){
@@ -7035,9 +6908,19 @@ function guardarEditarVenta(vid){
   } else if(!tieneRec){
     DB.ventas[i].vehiculoRecibido=null;
   }
-  // Actualizar CXC
-  const ci=DB.cxc.findIndex(x=>x.ventaId===vid);
+  // Actualizar CXC de venta
+  const ci=DB.cxc.findIndex(x=>x.ventaId===vid&&!x.esTraspaso);
   if(ci>=0){DB.cxc[ci].saldo=pendiente;DB.cxc[ci].abonado=inicial;DB.cxc[ci].status=pendiente<=0?'SALDADO':inicial>0?'PARCIAL':'PENDIENTE';DB.cxc[ci].cliente=cli?.nombre||DB.cxc[ci].cliente;sDB('cxc');}
+  // Actualizar CXC de traspaso si existe y el monto cambió
+  const ciTrasp=DB.cxc.findIndex(x=>x.ventaId===vid&&x.esTraspaso);
+  if(ciTrasp>=0&&traspasoMonto>0){
+    const yaAbonado=DB.cxc[ciTrasp].abonado||0;
+    const nuevoSaldo=Math.max(0,traspasoMonto-yaAbonado);
+    DB.cxc[ciTrasp].total=traspasoMonto;
+    DB.cxc[ciTrasp].saldo=nuevoSaldo;
+    DB.cxc[ciTrasp].status=nuevoSaldo<=0?'SALDADO':yaAbonado>0?'PARCIAL':'PENDIENTE';
+    sDB('cxc');
+  }
   // Actualizar estado del vehículo
   const vi=DB.vehiculos.findIndex(x=>x.id===vehId);
   if(vi>=0){DB.vehiculos[vi].status=estado==='VENDIDO'?'VENDIDO':'TRÁNSITO';sDB('vehiculos');}
@@ -7102,7 +6985,7 @@ function imprimirFactura(vid){
     .obs-box{background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:10px 12px;margin-top:12px;font-size:11px;color:#92400e}
     /* PIE */
     .pie{text-align:center;font-size:10px;color:#94a3b8;margin-top:24px;padding-top:12px;border-top:1px solid #e2e8f0}
-    @media print{.np{display:none}body{padding:0}.page{padding:20px}}
+    @page{size:letter;margin:8mm}@media print{.np{display:none}body{padding:0;font-size:11px}.page{padding:12px}}
   </style></head><body><div class="page">
 
   <!-- ENCABEZADO -->
@@ -7172,13 +7055,16 @@ function imprimirFactura(vid){
       ${(()=>{
         const esUSD=v.moneda==='USD';
         const fV=(n)=>esUSD?'USD $'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2}):'RD$ '+parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2});
+        const montoTraspp=parseFloat(v.traspasoMonto||v.montoTraspaso||0);
+        const traspNoPagado=v.tipoTransferencia==='traspaso'&&montoTraspp>0&&(v.traspasoPagadoCliente===false||v.traspasoPagado==='no');
+        const totalPendiente=parseFloat(v.pendiente||0)+(traspNoPagado?montoTraspp:0);
         return`
         <tr><td class="lbl">Precio de Venta</td><td class="val">${fV(v.precioVenta)}</td></tr>
         <tr><td class="lbl">Inicial Recibido</td><td class="val" style="color:#16a34a">${fV(v.inicial||0)}</td></tr>
         ${rec?.vehiculo?`<tr><td class="lbl">Vehículo Recibido — ${escHtml(rec.vehiculo)}</td><td class="val" style="color:#16a34a">${fV(rec.monto||0)}</td></tr>`:''}
-        ${parseFloat(v.pendiente||0)>0
-          ?`<tr class="fin-pend"><td>⚠️ PENDIENTE POR COBRAR</td><td class="val">${fV(v.pendiente)}</td></tr>`
-          :''}`;
+        ${parseFloat(v.pendiente||0)>0?`<tr class="fin-pend"><td>⚠️ PENDIENTE VENTA</td><td class="val">${fV(v.pendiente)}</td></tr>`:''}
+        ${traspNoPagado?`<tr style="background:#fff7ed"><td style="color:#c2410c;font-weight:700">🔄 TRASPASO/MATRÍCULA PENDIENTE</td><td class="val" style="color:#c2410c">${fV(montoTraspp)}</td></tr>`:''}
+        ${totalPendiente>0?`<tr style="background:#fef2f2"><td style="font-weight:900;color:#dc2626">⚠️ TOTAL A DEBER</td><td style="text-align:right;font-weight:900;font-size:15px;color:#dc2626">${fV(totalPendiente)}</td></tr>`:''}\`;
       })()}
     </table>
   </div>
@@ -7503,7 +7389,7 @@ function imprimirCotizacion(i){
   .firma{margin-top:48px;text-align:center}
   .firma-linea{border-top:1px solid #000;padding-top:5px;font-size:11px;color:#475569;display:inline-block;min-width:200px}
   .pie{text-align:center;font-size:9px;color:#94a3b8;margin-top:20px;padding-top:10px;border-top:1px solid #e2e8f0}
-  @media print{.noprint{display:none}}</style></head><body><div class="page">
+  @page{size:letter;margin:8mm}@media print{.noprint{display:none}}</style></head><body><div class="page">
   <div class="hdr">
     <div style="display:flex;align-items:center">
       ${logo?`<img src="${logo}" style="width:60px;height:60px;object-fit:contain;border-radius:10px">`:`<div class="logo-box">${escHtml(empresa[0])}</div>`}
@@ -8543,7 +8429,7 @@ function imprimirReciboPagoCXP(g, pago){
     .firma-linea{border-top:1px solid #000;padding-top:5px;text-align:center;font-size:10px;color:#475569}
     .firma-nombre{font-size:12px;font-weight:700;color:#0f172a;margin-top:2px}
     .pie{text-align:center;font-size:9px;color:#94a3b8;margin-top:20px;padding-top:10px;border-top:1px solid #e2e8f0}
-    @media print{.noprint{display:none}body{padding:0}.page{padding:20px}}
+    @page{size:letter;margin:8mm}@media print{.noprint{display:none}body{padding:0;font-size:11px}.page{padding:12px}}
   </style></head><body><div class="page">
   <div class="hdr">
     <div style="display:flex;align-items:center">
@@ -8727,16 +8613,13 @@ function renderCXC(){
         </select>
         <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
         <button id="cxc-btn-cobrar" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('cobrar')">💵 Registrar Cobro</button>
-        <button id="cxc-btn-edit-prestamo" style="display:none;${ds}" class="btn btn-sm" onclick="cxcAccion('editPrestamo')">✏️ Editar Préstamo</button>
-        <button id="cxc-btn-del-prestamo" style="display:none;${ds}" class="btn btn-sm" onclick="cxcAccion('delPrestamo')">🗑 Eliminar Préstamo</button>
         <button id="cxc-btn-plan" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('plan')">📋 Plan de Pagos</button>
         <button id="cxc-btn-abono" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('abono')">💰 Abono Extra</button>
         <button id="cxc-btn-historial" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('historial')">👁 Historial</button>
         ${(currentUser?.role==='admin'||canDo('eliminar'))?`<button id="cxc-btn-eliminar" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('eliminar')">🗑 Eliminar</button>`:''}
         <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
         <button class="btn btn-secondary btn-sm" onclick="imprimirCXC()">📄 PDF</button>
-        ${(currentUser?.role==='admin'||canDo('editar'))?`<button class="btn btn-primary" onclick="nuevaCXCManual()">➕ Nueva CxC</button>
-          <button class="btn btn-sm" style="background:#7c3aed;color:#fff" onclick="nuevaPrestamoOtorgado()">🤝 Préstamo Otorgado</button>`:''}
+        ${(currentUser?.role==='admin'||canDo('editar'))?`<button class="btn btn-primary" onclick="nuevaCXCManual()">➕ Nueva CxC</button>`:''}
       </div>
     </div>
 
@@ -8805,15 +8688,7 @@ function selCXC(id,tr){
   if(x?.status!=='SALDADO')actB('cxc-btn-abono','#d97706','#fff');
   actB('cxc-btn-historial','#475569','#fff');
   if(currentUser?.role==='admin'||canDo('eliminar'))actB('cxc-btn-eliminar','#dc2626','#fff');
-  // Botones exclusivos para préstamo otorgado
-  const btnEdit=document.getElementById('cxc-btn-edit-prestamo');
-  const btnDel=document.getElementById('cxc-btn-del-prestamo');
-  if(btnEdit)btnEdit.style.display=x?.esPrestamo?'inline-flex':'none';
-  if(btnDel)btnDel.style.display=x?.esPrestamo?'inline-flex':'none';
-  if(x?.esPrestamo){
-    if(btnEdit){btnEdit.disabled=false;btnEdit.style.cssText='background:#2563eb;color:#fff;cursor:pointer;';}
-    if(btnDel){btnDel.disabled=false;btnDel.style.cssText='background:#dc2626;color:#fff;cursor:pointer;';}
-  }
+
 }
 
 function nuevaCXCManual(){
@@ -8955,8 +8830,6 @@ function cxcAccion(accion){
   if(accion==='cobrar'){if(!canDo('editar')){toast('No tienes permiso para registrar cobros','error');return;}abonarCXC(cxcSelectedId);}
   else if(accion==='plan')modalPlanPagosCXC(cxcSelectedId);
   else if(accion==='abono')modalAbonoExtraordinarioCXC(cxcSelectedId);
-  else if(accion==='editPrestamo')editarPrestamoOtorgado(cxcSelectedId);
-  else if(accion==='delPrestamo')eliminarPrestamoOtorgado(cxcSelectedId);
   else if(accion==='historial')verAbonosCXC(cxcSelectedId);
   else if(accion==='eliminar'){
     if(!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}
@@ -8970,84 +8843,6 @@ function cxcAccion(accion){
 /* ══════════════════════════════════════════
    PLAN DE PAGOS CXC
 ══════════════════════════════════════════ */
-function editarPrestamoOtorgado(id){
-  const x=DB.cxc.find(c=>c.id===id);if(!x||!x.esPrestamo)return;
-  openModal(`✏️ Editar Préstamo — ${escHtml(x.cliente||'')}`,`
-    <div class="form-row c2">
-      <div class="form-field"><label class="required">Monto Total</label>
-        <input type="text" id="ep-monto" value="${fmtMoneyDisplay(x.total||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
-      </div>
-      <div class="form-field"><label>Fecha</label>
-        <input type="date" id="ep-fecha" value="${x.fecha||today()}">
-      </div>
-    </div>
-    <div class="form-row c3">
-      <div class="form-field"><label>Tasa Mensual (%)</label>
-        <input type="number" id="ep-tasa" step="0.01" value="${x.planPagos?.tasaMensual||x.tasaMensual||''}">
-      </div>
-      <div class="form-field"><label>Plazo (meses)</label>
-        <input type="number" id="ep-plazo" value="${x.planPagos?.plazo||x.plazo||''}">
-      </div>
-      <div class="form-field"><label>Tipo</label>
-        <select id="ep-tipo">${htmlTipoAmortOpts(x.planPagos?.tipo||x.tipo||'CAP_INT_AMORT')}</select>
-      </div>
-    </div>
-    <div class="form-field"><label>Notas</label>
-      <textarea id="ep-notas" rows="2">${escHtml(x.notas||'')}</textarea>
-    </div>
-    <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:8px;font-size:12px;margin-top:8px">
-      ⚠️ Si cambias el monto o tipo, el plan de pagos se recalculará desde cero.
-    </div>`,
-  `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-   <button class="btn btn-primary" onclick="guardarEditPrestamoOtorgado('${id}')">💾 Guardar</button>`);
-}
-
-function guardarEditPrestamoOtorgado(id){
-  const i=DB.cxc.findIndex(c=>c.id===id);if(i<0)return;
-  const monto=parseFloat((document.getElementById('ep-monto')?.value||'0').replace(/,/g,''));
-  if(!monto){toast('Ingresa el monto','error');return;}
-  const tasa=parseFloat(document.getElementById('ep-tasa')?.value||0)||0;
-  const plazo=parseInt(document.getElementById('ep-plazo')?.value||0)||0;
-  const tipo=document.getElementById('ep-tipo')?.value||'CAP_INT_AMORT';
-  const fecha=document.getElementById('ep-fecha')?.value||today();
-  const notas=document.getElementById('ep-notas')?.value||'';
-  DB.cxc[i].total=monto;
-  DB.cxc[i].notas=notas;
-  DB.cxc[i].fecha=fecha;
-  // Recalcular plan si tiene plazo
-  if(plazo){
-    const rows=calcTablaAmortizacion(monto,tasa,plazo,tipo);
-    const cuotas=rows.map((r,idx)=>{
-      const d=new Date(fecha+'T12:00:00');d.setMonth(d.getMonth()+idx);
-      const prev=DB.cxc[i].planPagos?.cuotas?.[idx];
-      return{num:r.num,cuota:r.cuota,capital:r.capital,interes:r.interes,saldo:r.saldo,
-        fechaVence:d.toISOString().slice(0,10),
-        pagada:prev?.pagada||false,fechaPago:prev?.fechaPago||null};
-    });
-    DB.cxc[i].planPagos={tipo,tasaMensual:tasa,plazo,fechaInicio:fecha,cuotas};
-  }
-  sDB('cxc');
-  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('cxc').catch(()=>{});
-  closeModal();toast('Préstamo actualizado ✓','success');renderCXC();
-}
-
-function eliminarPrestamoOtorgado(id){
-  const x=DB.cxc.find(c=>c.id===id);if(!x||!x.esPrestamo)return;
-  openModal('🗑 Eliminar Préstamo Otorgado',`
-    <p style="font-size:13px">¿Eliminar el préstamo de <strong>${escHtml(x.cliente||'')}</strong> por <strong>${fmt(x.total||0)}</strong>?</p>
-    <p style="font-size:12px;color:var(--gray)">Solo se elimina esta CxC de préstamo. Las ventas y otras CxC no se tocan.</p>`,
-  `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-   <button class="btn btn-red" onclick="_confirmarEliminarPrestamoCXC('${id}')">🗑 Sí, Eliminar</button>`);
-}
-
-function _confirmarEliminarPrestamoCXC(id){
-  const i=DB.cxc.findIndex(c=>c.id===id);if(i<0)return;
-  DB.cxc.splice(i,1);
-  sDB('cxc');
-  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('cxc').catch(()=>{});
-  cxcSelectedId=null;
-  closeModal();toast('Préstamo otorgado eliminado ✓','success');renderCXC();
-}
 
 function modalPlanPagosCXC(id){
   const x=DB.cxc.find(c=>c.id===id);if(!x)return;
@@ -9656,7 +9451,7 @@ function imprimirReciboCobro(cxc, pago){
     .firma-linea{border-top:1px solid #000;padding-top:5px;text-align:center;font-size:10px;color:#475569}
     .firma-nombre{font-size:12px;font-weight:700;color:#0f172a;margin-top:2px}
     .pie{text-align:center;font-size:9px;color:#94a3b8;margin-top:20px;padding-top:10px;border-top:1px solid #e2e8f0}
-    @media print{.noprint{display:none}body{padding:0}.page{padding:20px}}
+    @page{size:letter;margin:8mm}@media print{.noprint{display:none}body{padding:0;font-size:11px}.page{padding:12px}}
   </style></head><body><div class="page">
   <div class="hdr">
     <div style="display:flex;align-items:center">
@@ -9786,7 +9581,7 @@ function imprimirResumenPagosCXC(id){
     .g{background:#dcfce7;color:#16a34a}.a{background:#fef3c7;color:#d97706}.r{background:#fee2e2;color:#dc2626}
     .saldo-final{margin-top:12px;padding:12px 16px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;font-size:15px;font-weight:900;background:${parseFloat(x.saldo||0)<=0?'#dcfce7':'#fee2e2'};color:${parseFloat(x.saldo||0)<=0?'#16a34a':'#dc2626'}}
     .pie{text-align:center;font-size:9px;color:#94a3b8;margin-top:24px;padding-top:10px;border-top:1px solid #e2e8f0}
-    @media print{.noprint{display:none}body{padding:0}.page{padding:20px}}
+    @page{size:letter;margin:8mm}@media print{.noprint{display:none}body{padding:0;font-size:11px}.page{padding:12px}}
   </style></head><body><div class="page">
 
   <!-- ENCABEZADO -->
@@ -11133,6 +10928,28 @@ function _hacerBackup(){
   });
 }
 
+// ══ RESTAURAR DESDE BACKUP DE EMERGENCIA ══
+// Se puede llamar desde consola: restaurarDesdeEmergencia()
+window.restaurarDesdeEmergencia=async function(){
+  try{
+    const raw=localStorage.getItem('jeyco_emergency_backup');
+    if(!raw){alert('❌ No hay backup de emergencia en este navegador.');return;}
+    const snap=JSON.parse(raw);
+    const fecha=snap.fecha?new Date(snap.fecha).toLocaleString('es-DO'):'desconocida';
+    const info=`Backup del: ${fecha}\nVehículos: ${(snap.vehiculos||[]).length}\nVentas: ${(snap.ventas||[]).length}\nClientes: ${(snap.clientes||[]).length}\n\n¿Restaurar estos datos en Firebase?`;
+    if(!confirm(info))return;
+    const keys=['vehiculos','ventas','clientes','cxc','cxp','gastosVehiculos','gastos','caja','suplidores'];
+    for(const k of keys){
+      if(snap[k]&&snap[k].length>0){
+        DB[k]=snap[k];
+        await window._fbDB.collection(window._fbCol).doc(k).set({valor:JSON.stringify(snap[k])});
+        console.log('✅ Restaurado:',k,snap[k].length,'registros');
+      }
+    }
+    alert('✅ Datos restaurados desde backup de emergencia.\n\nRecarga la página para ver los cambios.');
+  }catch(e){alert('❌ Error al restaurar: '+e.message);}
+};
+
 function _ejecutarBackup(){
   const ahora=new Date();
   const pad=n=>String(n).padStart(2,'0');
@@ -11249,12 +11066,60 @@ function _ejecutarBackupAuto(){
 function _verificarBackupAdmin(){
   if(!currentUser||currentUser.role!=='admin')return;
   const hoy=new Date();
-  const diaSemana=hoy.getDay(); // 0=dom,1=lun,...,6=sab
+  const diaSemana=hoy.getDay();
   const esDiaHabil=(diaSemana>=1&&diaSemana<=6);
-  if(!esDiaHabil)return; // domingo no hace backup
   const fechaHoy=hoy.toISOString().slice(0,10);
   const lastBackupFecha=(DB.config._lastBackup||'').slice(0,10);
-  if(lastBackupFecha===fechaHoy)return; // ya se hizo hoy
+
+  // ══ BACKUP DE EMERGENCIA EN localStorage ══
+  // Cada vez que el admin entra y Firebase está cargado, guarda copia local silenciosa
+  setTimeout(()=>{
+    if(!window._fbCargado)return;
+    try{
+      const snap={
+        fecha:new Date().toISOString(),
+        vehiculos:DB.vehiculos||[],
+        ventas:DB.ventas||[],
+        clientes:DB.clientes||[],
+        cxc:DB.cxc||[],
+        cxp:DB.cxp||[],
+        gastosVehiculos:DB.gastosVehiculos||[],
+        gastos:DB.gastos||[],
+        caja:DB.caja||[],
+        suplidores:DB.suplidores||[],
+        config:DB.config||{}
+      };
+      // Solo guardar si hay datos reales
+      if((snap.vehiculos.length>0||snap.ventas.length>0)){
+        localStorage.setItem('jeyco_emergency_backup', JSON.stringify(snap));
+        localStorage.setItem('jeyco_emergency_backup_fecha', fechaHoy);
+        console.log('🛡️ Backup emergencia guardado en localStorage:',snap.vehiculos.length,'vehículos,',snap.ventas.length,'ventas');
+      }
+    }catch(e){console.warn('No se pudo guardar backup emergencia:',e.message);}
+  },5000);
+
+  // ══ RECORDATORIO DE BACKUP CADA 7 DÍAS ══
+  if(!esDiaHabil)return;
+  const lastRec=localStorage.getItem('jeyco_backup_recordatorio')||'';
+  const diasSinBackup=lastBackupFecha?Math.floor((new Date()-new Date(lastBackupFecha))/(1000*60*60*24)):999;
+  if(diasSinBackup>=7&&lastRec!==fechaHoy){
+    localStorage.setItem('jeyco_backup_recordatorio',fechaHoy);
+    setTimeout(()=>{
+      if(document.getElementById('backup-reminder'))return;
+      const rem=document.createElement('div');
+      rem.id='backup-reminder';
+      const isMobile=window.innerWidth<=768;
+      rem.style.cssText='position:fixed;top:'+(isMobile?'52':'56')+'px;left:'+(isMobile?'0':'220')+'px;right:0;background:#d97706;color:#fff;padding:9px 20px;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:space-between;z-index:149;box-shadow:0 2px 8px rgba(0,0,0,.2)';
+      rem.innerHTML=`<span>⚠️ Han pasado <strong>${diasSinBackup} días</strong> sin descargar un backup. Se recomienda hacerlo semanalmente.</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button onclick="showPage('backup');document.getElementById('backup-reminder').remove()" style="padding:4px 14px;background:rgba(255,255,255,0.25);color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-weight:700">📥 Hacer Backup</button>
+          <button onclick="document.getElementById('backup-reminder').remove()" style="padding:4px 10px;background:rgba(0,0,0,.2);color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">✕</button>
+        </div>`;
+      document.body.appendChild(rem);
+    },4000);
+  }
+
+  if(lastBackupFecha===fechaHoy)return;
   // Hacer backup automático en segundo plano
   setTimeout(()=>{
     if(!window._fbActivo||!window._fbCargado)return;
@@ -11356,6 +11221,11 @@ async function fbCargar(){
             }
           }
           loaded=true;
+          // Actualizar conteo mínimo conocido para protección anti-borrado
+          if(!window._fbConteoMinimo) window._fbConteoMinimo={};
+          if(Array.isArray(DB[key])&&DB[key].length>0){
+            window._fbConteoMinimo[key]=Math.max(window._fbConteoMinimo[key]||0,DB[key].length);
+          }
         }
       }
     }catch(e){console.warn('FB load error:',key,e.message);}
@@ -11389,7 +11259,23 @@ function _mostrarErrorSinFirebase(){
   </div>`;
   document.body.appendChild(ov);
 }
+// Claves críticas que nunca deben sobrescribirse con array vacío
+const _CLAVES_CRITICAS=['vehiculos','ventas','clientes','cxc','cxp','gastosVehiculos','gastos','caja','nomina','suplidores','cotizaciones','autorizaciones','seguros'];
+// Conteo mínimo conocido de registros en Firebase (se actualiza al cargar)
+if(!window._fbConteoMinimo) window._fbConteoMinimo={};
+
 window.sDB = function(key){
+  // PROTECCIÓN ANTI-BORRADO: nunca sobrescribir Firebase con array vacío
+  // si ya sabemos que había datos
+  if(_CLAVES_CRITICAS.includes(key)){
+    const val=DB[key];
+    const esVacio=Array.isArray(val)&&val.length===0;
+    const minimoConocido=window._fbConteoMinimo[key]||0;
+    if(esVacio&&minimoConocido>0){
+      console.warn(`🛡️ PROTECCIÓN: Se bloqueó sobrescribir "${key}" con array vacío (Firebase tenía ${minimoConocido} registros)`);
+      return; // BLOQUEAR — no guardar nada
+    }
+  }
   if(!window._fbActivo){
     // Sin Firebase: guardar local solo como cache de lectura, pero bloquear la acción
     try { _sDB_orig(key); } catch(e){}
@@ -11398,6 +11284,10 @@ window.sDB = function(key){
   }
   // Con Firebase activo: guardar local + Firebase
   try { _sDB_orig(key); } catch(e){}
+  // Actualizar conteo mínimo conocido
+  if(_CLAVES_CRITICAS.includes(key)&&Array.isArray(DB[key])&&DB[key].length>0){
+    window._fbConteoMinimo[key]=Math.max(window._fbConteoMinimo[key]||0, DB[key].length);
+  }
   const dot=document.getElementById('fb-dot');
   const txt=document.getElementById('fb-text');
   if(dot) dot.style.background='#f59e0b';
@@ -11626,6 +11516,40 @@ window.fbIniciar = async function(){
         };
         if(_renderMap[_pid])setTimeout(_renderMap[_pid],300);
       }
+      // Sincronizar status de vehículos con ventas (corrige casos como J-00049)
+      let _syncChanged=false;
+      (DB.ventas||[]).forEach(venta=>{
+        if(venta.vehiculoId&&venta.estadoVenta){
+          const vi=DB.vehiculos.findIndex(x=>x.id===venta.vehiculoId);
+          if(vi>=0){
+            const vehStatus=DB.vehiculos[vi].status;
+            const ventaStatus=venta.estadoVenta;
+            // Si la venta dice TRÁNSITO o VENDIDO pero el vehículo dice ACTIVO → sincronizar
+            if((ventaStatus==='TRÁNSITO'||ventaStatus==='VENDIDO')&&vehStatus==='ACTIVO'){
+              DB.vehiculos[vi].status=ventaStatus==='VENDIDO'?'VENDIDO':'TRÁNSITO';
+              _syncChanged=true;
+            }
+          }
+        }
+      });
+      if(_syncChanged){sDB('vehiculos');console.log('✅ Status vehículos sincronizado con ventas');}
+      // Sincronizar montos de CxC de traspaso con la venta correspondiente
+      let _traspSyncChanged=false;
+      (DB.ventas||[]).forEach(venta=>{
+        const montoCorr=parseFloat(venta.traspasoMonto||venta.montoTraspaso||0);
+        if(montoCorr>0&&venta.tipoTransferencia==='traspaso'){
+          const ci=DB.cxc.findIndex(x=>x.ventaId===venta.id&&x.esTraspaso);
+          if(ci>=0&&DB.cxc[ci].total!==montoCorr){
+            const yaAbonado=DB.cxc[ci].abonado||0;
+            DB.cxc[ci].total=montoCorr;
+            DB.cxc[ci].saldo=Math.max(0,montoCorr-yaAbonado);
+            DB.cxc[ci].status=DB.cxc[ci].saldo<=0?'SALDADO':yaAbonado>0?'PARCIAL':'PENDIENTE';
+            _traspSyncChanged=true;
+            console.log('✅ CxC traspaso corregida para venta',venta.factura,': total',montoCorr);
+          }
+        }
+      });
+      if(_traspSyncChanged){sDB('cxc');}
     } else {
       const keys=['config','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
         'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','log'];
