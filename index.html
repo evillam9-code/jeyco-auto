@@ -7064,7 +7064,7 @@ function imprimirFactura(vid){
         ${rec?.vehiculo?`<tr><td class="lbl">Vehículo Recibido — ${escHtml(rec.vehiculo)}</td><td class="val" style="color:#16a34a">${fV(rec.monto||0)}</td></tr>`:''}
         ${parseFloat(v.pendiente||0)>0?`<tr class="fin-pend"><td>⚠️ PENDIENTE VENTA</td><td class="val">${fV(v.pendiente)}</td></tr>`:''}
         ${traspNoPagado?`<tr style="background:#fff7ed"><td style="color:#c2410c;font-weight:700">🔄 TRASPASO/MATRÍCULA PENDIENTE</td><td class="val" style="color:#c2410c">${fV(montoTraspp)}</td></tr>`:''}
-        ${totalPendiente>0?`<tr style="background:#fef2f2"><td style="font-weight:900;color:#dc2626">⚠️ TOTAL A DEBER</td><td style="text-align:right;font-weight:900;font-size:15px;color:#dc2626">${fV(totalPendiente)}</td></tr>`:''}\`;
+        ${totalPendiente>0?`<tr style="background:#fef2f2"><td style="font-weight:900;color:#dc2626">⚠️ TOTAL A DEBER</td><td style="text-align:right;font-weight:900;font-size:15px;color:#dc2626">${fV(totalPendiente)}</td></tr>`:''}`;
       })()}
     </table>
   </div>
