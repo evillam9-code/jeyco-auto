@@ -1062,18 +1062,24 @@ function abrirFichaVehiculo(vehiculoId){
 
   <div class="grid3">
     <div class="stat" style="background:#f1f5f9"><div style="font-size:9px;color:#64748b;font-weight:700">PROPIETARIO</div><div style="font-weight:800;font-size:13px">${escHtml(v.propietario||'—')}</div></div>
-    <div class="stat" style="background:#fef3c7"><div style="font-size:9px;color:#92400e;font-weight:700">TOTAL GASTOS</div><div style="font-weight:800;font-size:13px;color:#92400e">${fmt(totalCostos)}</div></div>
+    ${venta?`<div class="stat" style="background:#eff6ff"><div style="font-size:9px;color:#1d4ed8;font-weight:700">CLIENTE</div><div style="font-weight:800;font-size:13px">${escHtml(venta.cliente||'—')}</div></div>`:`<div class="stat" style="background:#f1f5f9"><div style="font-size:9px;color:#64748b;font-weight:700">CLIENTE</div><div style="font-weight:800;font-size:13px;color:#94a3b8">— (no vendido)</div></div>`}
     <div class="stat" style="background:#f1f5f9"><div style="font-size:9px;color:#64748b;font-weight:700">FECHA REGISTRO</div><div style="font-weight:800;font-size:13px">${fmtDate(v.fecha)||'—'}</div></div>
   </div>
 
   ${venta?`
   <div class="grid3">
-    <div class="stat" style="background:#eff6ff"><div style="font-size:9px;color:#1d4ed8;font-weight:700">CLIENTE</div><div style="font-weight:800;font-size:13px">${escHtml(venta.cliente||'—')}</div></div>
+    <div class="stat" style="background:#fef3c7"><div style="font-size:9px;color:#92400e;font-weight:700">TOTAL GASTOS</div><div style="font-weight:800;font-size:13px;color:#92400e">${fmt(totalCostos)}</div></div>
     <div class="stat" style="background:#eff6ff"><div style="font-size:9px;color:#1d4ed8;font-weight:700">PRECIO VENTA</div><div style="font-weight:800;font-size:13px">${fmt(venta.precioVenta||0)}</div></div>
     <div class="stat" style="background:${beneficio>=0?'#f0fdf4':'#fef2f2'}"><div style="font-size:9px;color:${beneficio>=0?'#16a34a':'#dc2626'};font-weight:700">BENEFICIO (Venta - Costos)</div><div style="font-weight:900;font-size:15px;color:${beneficio>=0?'#16a34a':'#dc2626'}">${fmt(beneficio)}</div></div>
   </div>
   <div class="veh-sub" style="margin-bottom:10px">Factura: <strong style="font-family:monospace">${escHtml(venta.factura||'—')}</strong> · Fecha de venta: <strong>${fmtDate(venta.fecha)}</strong></div>
-  `:'<div class="resumen" style="margin-bottom:10px;text-align:center;color:#94a3b8">🚗 Este vehículo aún no ha sido vendido — sin información de beneficio</div>'}
+  `:`
+  <div class="grid3">
+    <div class="stat" style="background:#fef3c7"><div style="font-size:9px;color:#92400e;font-weight:700">TOTAL GASTOS</div><div style="font-weight:800;font-size:13px;color:#92400e">${fmt(totalCostos)}</div></div>
+    <div class="stat" style="background:#f1f5f9"><div style="font-size:9px;color:#64748b;font-weight:700">PRECIO VENTA</div><div style="font-weight:800;font-size:13px;color:#94a3b8">— (no vendido)</div></div>
+    <div class="stat" style="background:#f1f5f9"><div style="font-size:9px;color:#64748b;font-weight:700">BENEFICIO</div><div style="font-weight:800;font-size:13px;color:#94a3b8">—</div></div>
+  </div>
+  <div class="resumen" style="margin-bottom:10px;text-align:center;color:#94a3b8">🚗 Este vehículo aún no ha sido vendido</div>`}
 
   <div class="grid2">
     <div>
@@ -12023,6 +12029,19 @@ window.fbIniciar = async function(){
     if(loaded){
       setStatus('#22c55e','✓ Firebase');
       window._fbCargado=true;
+      // Refrescar currentUser con los datos reales de Firebase y reaplicar permisos del menú
+      if(window.currentUser&&Array.isArray(DB.users)){
+        const _meFresh=DB.users.find(u=>u.id===window.currentUser.id);
+        if(_meFresh){
+          window.currentUser=Object.assign({},window.currentUser,{
+            modulos:_meFresh.modulos,
+            permisos:_meFresh.permisos,
+            role:_meFresh.role,
+            alertasPermitidas:_meFresh.alertasPermitidas
+          });
+          if(typeof aplicarPermisosNav==='function')aplicarPermisosNav();
+        }
+      }
       // Activar listeners de tiempo real
       if(typeof fbActivarListeners==='function') fbActivarListeners();
       // Actualizar sidebar con logo de Firebase
@@ -12061,6 +12080,21 @@ window.fbIniciar = async function(){
         }
       });
       if(_syncChanged){sDB('vehiculos');console.log('✅ Status vehículos sincronizado con ventas');}
+      // ══ CORRECCIÓN ÚNICA: monto de traspaso de J-00061 (17,500 → 18,500) ══
+      (()=>{
+        const vJ61=DB.vehiculos.find(v=>v.codigo==='J-00061');
+        if(!vJ61)return;
+        const ventaJ61=DB.ventas.find(v=>v.vehiculoId===vJ61.id);
+        if(!ventaJ61)return;
+        const cxcT=DB.cxc.find(c=>c.ventaId===ventaJ61.id&&c.esTraspaso);
+        if(cxcT&&parseFloat(cxcT.total||0)===17500&&(!cxcT.pagos||cxcT.pagos.length===0)){
+          cxcT.total=18500;
+          cxcT.saldo=18500;
+          cxcT.status='PENDIENTE';
+          sDB('cxc');
+          console.log('✅ CxC de traspaso de J-00061 corregida a 18,500');
+        }
+      })();
       // ══ RESOLVER DUPLICADOS DE CxC DE TRASPASO ══
       // Si una venta tiene más de una CxC de traspaso, conserva la que coincide
       // con el monto correcto de la venta (o ajusta una a ese monto) y elimina las demás sin pagos
