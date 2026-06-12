@@ -12096,36 +12096,28 @@ window.fbIniciar = async function(){
         }
       });
       if(_syncChanged){sDB('vehiculos');console.log('✅ Status vehículos sincronizado con ventas');}
-      // ══ CORRECCIÓN ÚNICA: CxC de traspaso de J-00061 = 18,500 ══
+      // ══ CORRECCIÓN ÚNICA: vincular CxC de traspaso de J-00061 a su venta ══
       (()=>{
         const vJ61=DB.vehiculos.find(v=>v.codigo==='J-00061');
         if(!vJ61)return;
         const ventaJ61=DB.ventas.find(v=>v.vehiculoId===vJ61.id);
         if(!ventaJ61)return;
-        let cxcT=DB.cxc.find(c=>c.ventaId===ventaJ61.id&&c.esTraspaso);
+        // Ya hay una CxC bien vinculada con esTraspaso → nada que hacer
+        if(DB.cxc.find(c=>c.ventaId===ventaJ61.id&&c.esTraspaso))return;
+        // Buscar la CxC creada manualmente (18,500, mismo cliente, sin ventaId)
+        let cxcT=DB.cxc.find(c=>!c.ventaId&&c.cliente===ventaJ61.cliente&&parseFloat(c.total||0)===18500);
         if(cxcT){
-          if(parseFloat(cxcT.total||0)!==18500&&(!cxcT.pagos||cxcT.pagos.length===0)){
-            cxcT.total=18500;
-            cxcT.saldo=18500;
-            cxcT.abonado=0;
-            cxcT.status='PENDIENTE';
-            sDB('cxc');
-            console.log('✅ CxC de traspaso de J-00061 corregida a 18,500');
-          }
-        } else {
-          DB.cxc.push({
-            id:uid(),ventaId:ventaJ61.id,factura:ventaJ61.factura,
-            cliente:ventaJ61.cliente,clienteId:ventaJ61.clienteId,
-            vehiculo:vJ61.codigo+' '+vJ61.marca+' '+vJ61.modelo,
-            concepto:'Traspaso/Matrícula pendiente — '+vJ61.codigo,
-            moneda:'RD$',
-            total:18500,abonado:0,saldo:18500,
-            fecha:ventaJ61.fecha,fechaVence:'',
-            status:'PENDIENTE',pagos:[],
-            esTraspaso:true
-          });
+          cxcT.ventaId=ventaJ61.id;
+          cxcT.vehiculoId=vJ61.id;
+          cxcT.vehiculo=vJ61.codigo+' '+vJ61.marca+' '+vJ61.modelo;
+          cxcT.factura=ventaJ61.factura;
+          cxcT.clienteId=ventaJ61.clienteId||cxcT.clienteId;
+          cxcT.esTraspaso=true;
+          if(!cxcT.pagos)cxcT.pagos=[];
+          if(!cxcT.moneda)cxcT.moneda='RD$';
+          if(!cxcT.concepto)cxcT.concepto='Traspaso/Matrícula pendiente — '+vJ61.codigo;
           sDB('cxc');
-          console.log('✅ CxC de traspaso de J-00061 creada automáticamente (18,500)');
+          console.log('✅ CxC de traspaso de J-00061 vinculada correctamente a la venta');
         }
       })();
       // ══ RESOLVER DUPLICADOS DE CxC DE TRASPASO ══
