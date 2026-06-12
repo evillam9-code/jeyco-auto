@@ -893,7 +893,13 @@ function _consultasDatos(){
     const totalCostos=gastosVeh.reduce((a,g)=>a+parseFloat(g.montoFactura||g.monto||0),0);
     const seguro=(DB.seguros||[]).find(s=>s.vehiculoId===v.id);
     const beneficio=venta?parseFloat(venta.precioVenta||0)-totalCostos:null;
-    return{v,venta,cxcVenta,cxcTrasp,gastosVeh,totalCostos,seguro,beneficio};
+    let estadoDinamico=v.status||'—';
+    if(venta){
+      const pendVenta=cxcVenta?parseFloat(cxcVenta.saldo||0):0;
+      const pendTrasp=cxcTrasp?parseFloat(cxcTrasp.saldo||0):0;
+      estadoDinamico=(pendVenta>0||pendTrasp>0)?'TRÁNSITO':'VENDIDO';
+    }
+    return{v,venta,cxcVenta,cxcTrasp,gastosVeh,totalCostos,seguro,beneficio,estadoDinamico};
   });
 }
 function _renderConsultasTabla(){
@@ -927,7 +933,7 @@ function _renderConsultasTabla(){
   if(f.estado){
     if(f.estado==='TRASPASO_PEND')datos=datos.filter(d=>d.cxcTrasp&&parseFloat(d.cxcTrasp.saldo||0)>0);
     else if(f.estado==='CXC_PEND')datos=datos.filter(d=>d.cxcVenta&&parseFloat(d.cxcVenta.saldo||0)>0);
-    else datos=datos.filter(d=>d.v.status===f.estado);
+    else datos=datos.filter(d=>d.estadoDinamico===f.estado||d.v.status===f.estado);
   }
   datos.sort((a,b)=>{
     const na=parseInt((a.v.codigo||'').replace(/\D/g,''))||0;
@@ -936,13 +942,13 @@ function _renderConsultasTabla(){
   });
   const sc={ACTIVO:'badge-green',VENDIDO:'badge-blue',ADUANA:'badge-amber','TRÁNSITO':'badge-purple','EN EEUU':'badge-gray'};
   tbody.innerHTML=datos.length?datos.map(d=>{
-    const{v,venta,cxcVenta,cxcTrasp,beneficio}=d;
+    const{v,venta,cxcVenta,cxcTrasp,beneficio,estadoDinamico}=d;
     return`<tr style="cursor:pointer" onclick="abrirFichaVehiculo('${v.id}')">
       <td style="font-family:monospace;font-weight:700">${escHtml(v.codigo||'—')}</td>
       <td><div style="font-weight:700">${escHtml((v.marca||'')+' '+(v.modelo||''))}</div><div style="font-size:11px;color:var(--gray)">${v.anio||''}${v.color?' · '+escHtml(v.color):''}</div></td>
       <td style="font-size:12px">${escHtml(v.propietario||'—')}</td>
       <td style="font-size:12px">${escHtml(v.suplidor||'—')}</td>
-      <td><span class="badge ${sc[v.status]||'badge-gray'}">${v.status||'—'}</span></td>
+      <td><span class="badge ${sc[estadoDinamico]||'badge-gray'}">${estadoDinamico==='TRÁNSITO'?'EN TRÁNSITO':estadoDinamico}</span></td>
       <td style="font-size:12px">${escHtml(venta?.cliente||'—')}</td>
       <td style="font-weight:700;color:${cxcVenta&&parseFloat(cxcVenta.saldo||0)>0?'var(--red)':'var(--green)'}">${cxcVenta?fmt(cxcVenta.saldo||0):'—'}</td>
       <td style="font-weight:700;color:${cxcTrasp&&parseFloat(cxcTrasp.saldo||0)>0?'#c2410c':'var(--green)'}">${cxcTrasp?fmt(cxcTrasp.saldo||0):'—'}</td>
@@ -1003,7 +1009,7 @@ function abrirFichaVehiculo(vehiculoId){
       <div class="resumen">
         <div class="resumen-row"><span>Total Costos</span><span style="font-weight:700">${fmt(totalCostos)}</span></div>
         <div class="resumen-row"><span>Pagado</span><span style="color:#16a34a;font-weight:700">${fmt(totalCostosPagado)}</span></div>
-        <div class="resumen-row"><span>${totalCostosPend>0?'⏳ Pendiente':'✅ Saldado'}</span><span style="font-weight:800;color:${totalCostosPend>0?'#dc2626':'#16a34a'}">${fmt(totalCostosPend)}</span></div>
+        <div class="resumen-row"><span>${totalCostosPend>0?'⏳ Gastos Pendientes por Pagar':'✅ Gastos Saldados'}</span><span style="font-weight:800;color:${totalCostosPend>0?'#dc2626':'#16a34a'}">${fmt(totalCostosPend)}</span></div>
       </div>
       ${items.length?`<table style="margin-top:6px"><thead><tr><th>Tipo/Descripción</th><th>Suplidor</th><th>Factura</th><th>Pagado</th><th>Pendiente</th><th>Estado</th></tr></thead><tbody>
         ${items.map(g=>`<tr><td>${escHtml(g.tipo||g.descripcion||'—')}</td><td>${escHtml(g.suplidor||'—')}</td><td style="font-weight:700">${fmt(g.montoFactura||g.monto||0)}</td><td style="color:#16a34a">${fmt(g.montoPagado||0)}</td><td style="color:${parseFloat(g.montoPendiente||0)>0?'#dc2626':'#16a34a'}">${fmt(g.montoPendiente||0)}</td><td>${g.statusGasto||'—'}</td></tr>`).join('')}
@@ -1152,7 +1158,7 @@ function exportarConsultasPDF(){
     <td>${escHtml((d.v.marca||'')+' '+(d.v.modelo||''))}${d.v.anio?' '+d.v.anio:''}${d.v.color?' · '+escHtml(d.v.color):''}</td>
     <td>${escHtml(d.v.propietario||'—')}</td>
     <td>${escHtml(d.v.suplidor||'—')}</td>
-    <td>${d.v.status||'—'}</td>
+    <td>${d.estadoDinamico==='TRÁNSITO'?'EN TRÁNSITO':(d.estadoDinamico||'—')}</td>
     <td>${escHtml(d.venta?.cliente||'—')}</td>
     <td>${fmt(d.totalCostos)}</td>
     <td>${d.cxcVenta?fmt(d.cxcVenta.saldo||0):'—'}</td>
@@ -3524,17 +3530,18 @@ function guardarPermisosUsuarioConfig(i){
   if(!u)return;
   const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','prestamos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
   const ALERT_IDS=['SIN_VIN','SIN_COSTO','CXP','CXC_VENCIDA','CXC','SIN_VENDER_6M','SIN_VENDER_1A','DOCS','PLACA_60','PLACA_EXHIB_VENC','PLACA_EXHIB_PROX'];
+  const alertas=ALERT_IDS.filter(id=>document.getElementById(`cfg-alerta-${i}-${id}`)?.checked);
   if(u.role!=='admin'){
     const mods=MODS_IDS.filter(id=>document.getElementById(`cfg-mod-${i}-${id}`)?.checked);
-    const alertas=ALERT_IDS.filter(id=>document.getElementById(`cfg-alerta-${i}-${id}`)?.checked);
     const puedeEditar=document.getElementById(`cfg-edit-${i}`)?.checked||false;
     const puedeEliminar=document.getElementById(`cfg-del-${i}`)?.checked||false;
     const puedeImprimir=document.getElementById(`cfg-print-${i}`)?.checked!==false;
     DB.users[i].modulos=mods;
-    DB.users[i].alertasPermitidas=alertas;
     DB.users[i].permisos={editar:puedeEditar,eliminar:puedeEliminar,imprimir:puedeImprimir};
-    if(currentUser.id===u.id){currentUser=DB.users[i];}
   }
+  // alertasPermitidas se guarda para TODOS los usuarios, incluyendo admin
+  DB.users[i].alertasPermitidas=alertas;
+  if(currentUser.id===u.id){currentUser=DB.users[i];}
   sDB('users');
   toast(`Usuario ${escHtml(u.nombre)} actualizado ✓`,'success');
   if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('users').catch(()=>{});
@@ -5146,7 +5153,7 @@ function renderConfig(){
             +'<div><strong>'+escHtml(u.nombre)+'</strong> <span class="badge '+(u.role==='admin'?'badge-purple':'badge-blue')+'" style="font-size:10px">'+(u.role==='admin'?'Admin':_getRolLabel(u.role))+'</span></div>'
             +'<button class="btn btn-primary btn-sm" onclick="guardarPermisosUsuarioConfig('+ui+')">💾 Guardar</button>'
             +'</div>'
-            +(u.role==='admin'?'<div style="font-size:12px;color:var(--gray);font-style:italic">El administrador tiene acceso total a todos los módulos.</div>'
+            +(u.role==='admin'?'<div style="font-size:12px;color:var(--gray);font-style:italic;margin-bottom:10px">El administrador tiene acceso total a todos los módulos.</div>'
             :'<div style="font-size:11px;font-weight:700;color:var(--gray);text-transform:uppercase;margin-bottom:6px">Módulos:</div>'
             +'<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:10px">'
             +MODS_LIST.map(m=>'<label style="display:flex;align-items:center;gap:3px;font-size:11px;padding:3px 7px;background:#fff;border:1px solid var(--gray3);border-radius:6px;cursor:pointer"><input type="checkbox" id="cfg-mod-'+ui+'-'+m.id+'" '+(mods.includes(m.id)?'checked':'')+' style="accent-color:var(--blue)"> '+m.label+'</label>').join('')
@@ -5155,11 +5162,11 @@ function renderConfig(){
             +'<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer"><input type="checkbox" id="cfg-edit-'+ui+'" '+((u.permisos&&u.permisos.editar)?'checked':'')+' style="accent-color:var(--amber)"> ✏️ Puede Editar</label>'
             +'<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer"><input type="checkbox" id="cfg-del-'+ui+'" '+((u.permisos&&u.permisos.eliminar)?'checked':'')+' style="accent-color:var(--red)"> 🗑 Puede Eliminar</label>'
             +'<label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer"><input type="checkbox" id="cfg-print-'+ui+'" '+(u.permisos&&u.permisos.imprimir!==false?'checked':'')+' style="accent-color:var(--green)"> 🖨️ Puede Imprimir</label>'
-            +'</div>'
+            +'</div>')
             +'<div style="font-size:11px;font-weight:700;color:var(--gray);text-transform:uppercase;margin-bottom:6px">Alertas que ve:</div>'
             +'<div style="display:flex;flex-wrap:wrap;gap:5px">'
             +ALERT_TYPES.map(a=>'<label style="display:flex;align-items:center;gap:3px;font-size:11px;padding:3px 7px;background:#fff;border:1px solid var(--gray3);border-radius:6px;cursor:pointer"><input type="checkbox" id="cfg-alerta-'+ui+'-'+a.id+'" '+(alertas.includes(a.id)?'checked':'')+' style="accent-color:var(--amber)"> '+a.label+'</label>').join('')
-            +'</div>')
+            +'</div>'
             +'</div>';
         }).join('')}
       </div>
@@ -11851,6 +11858,7 @@ async function publicarNuevaVersion(silencioso){
 }
 
 function iniciarVerificadorVersion(){
+  if(location.protocol==='file:')return; // Evitar recargas/errores al abrir el archivo localmente
   window._versionCheckInterval=setInterval(async function(){
     if(!window._fbActivo||!window._fbDB||!window._fbCol)return;
     try{
@@ -12042,6 +12050,12 @@ window.fbIniciar = async function(){
             alertasPermitidas:_meFresh.alertasPermitidas
           });
           if(typeof aplicarPermisosNav==='function')aplicarPermisosNav();
+          // Re-evaluar alertas con permisos frescos de Firebase
+          const _esAdminFresh=window.currentUser.role==='admin';
+          const _tieneAlertasFresh=_esAdminFresh||(window.currentUser.modulos||[]).includes('alertas');
+          const _ac=document.getElementById('alert-container');
+          if(_tieneAlertasFresh){if(typeof checkAlerts==='function')checkAlerts();}
+          else if(_ac)_ac.innerHTML='';
         }
       }
       // Activar listeners de tiempo real
@@ -12082,21 +12096,23 @@ window.fbIniciar = async function(){
         }
       });
       if(_syncChanged){sDB('vehiculos');console.log('✅ Status vehículos sincronizado con ventas');}
-      // ══ CORRECCIÓN ÚNICA: monto de traspaso de J-00061 (17,500 → 18,500) ══
+      // ══ CORRECCIÓN ÚNICA: CxC de traspaso de J-00061 = 18,500 ══
       (()=>{
         const vJ61=DB.vehiculos.find(v=>v.codigo==='J-00061');
         if(!vJ61)return;
         const ventaJ61=DB.ventas.find(v=>v.vehiculoId===vJ61.id);
         if(!ventaJ61)return;
         let cxcT=DB.cxc.find(c=>c.ventaId===ventaJ61.id&&c.esTraspaso);
-        if(cxcT&&parseFloat(cxcT.total||0)===17500&&(!cxcT.pagos||cxcT.pagos.length===0)){
-          cxcT.total=18500;
-          cxcT.saldo=18500;
-          cxcT.status='PENDIENTE';
-          sDB('cxc');
-          console.log('✅ CxC de traspaso de J-00061 corregida a 18,500');
-        } else if(!cxcT){
-          // No existe ninguna CxC de traspaso para esta venta — crearla
+        if(cxcT){
+          if(parseFloat(cxcT.total||0)!==18500&&(!cxcT.pagos||cxcT.pagos.length===0)){
+            cxcT.total=18500;
+            cxcT.saldo=18500;
+            cxcT.abonado=0;
+            cxcT.status='PENDIENTE';
+            sDB('cxc');
+            console.log('✅ CxC de traspaso de J-00061 corregida a 18,500');
+          }
+        } else {
           DB.cxc.push({
             id:uid(),ventaId:ventaJ61.id,factura:ventaJ61.factura,
             cliente:ventaJ61.cliente,clienteId:ventaJ61.clienteId,
