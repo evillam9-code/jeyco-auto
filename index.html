@@ -9409,6 +9409,7 @@ function renderCXC(){
         <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
         <button id="cxc-btn-cobrar" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('cobrar')">💵 Registrar Cobro</button>
         <button id="cxc-btn-historial" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('historial')">👁 Historial</button>
+        <button id="cxc-btn-editar" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('editar')">✏️ Editar</button>
         ${(currentUser?.role==='admin'||canDo('eliminar'))?`<button id="cxc-btn-eliminar" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('eliminar')">🗑 Eliminar</button>`:''}
         <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
         <button class="btn btn-secondary btn-sm" onclick="imprimirCXC()">📄 PDF</button>
@@ -9478,6 +9479,7 @@ function selCXC(id,tr){
   const actB=(bid,bg,c)=>{const b=document.getElementById(bid);if(b){b.disabled=false;b.style.cssText='background:'+bg+';color:'+c+';cursor:pointer;border:none;';}};
   if(x?.status!=='SALDADO')actB('cxc-btn-cobrar','#16a34a','#fff');
   actB('cxc-btn-historial','#475569','#fff');
+  if(currentUser?.role==='admin'||canDo('editar'))actB('cxc-btn-editar','#7c3aed','#fff');
   if(currentUser?.role==='admin'||canDo('eliminar'))actB('cxc-btn-eliminar','#dc2626','#fff');
 
 }
@@ -9620,6 +9622,10 @@ function cxcAccion(accion){
   if(!cxcSelectedId)return;
   if(accion==='cobrar'){if(!canDo('editar')){toast('No tienes permiso para registrar cobros','error');return;}abonarCXC(cxcSelectedId);}
   else if(accion==='historial')verAbonosCXC(cxcSelectedId);
+  else if(accion==='editar'){
+    if(!(currentUser?.role==='admin'||canDo('editar'))){toast('No tienes permiso para editar','error');return;}
+    editarCXCManual(cxcSelectedId);
+  }
   else if(accion==='eliminar'){
     if(!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}
     const x=DB.cxc.find(c=>c.id===cxcSelectedId);
@@ -9632,6 +9638,83 @@ function cxcAccion(accion){
 /* ══════════════════════════════════════════
    PLAN DE PAGOS CXC
 ══════════════════════════════════════════ */
+
+function editarCXCManual(id){
+  const x=DB.cxc.find(c=>c.id===id);if(!x)return;
+  const vehiculosOpts=DB.vehiculos.slice().sort((a,b)=>(a.codigo||'').localeCompare(b.codigo||'')).map(v=>
+    `<option value="${v.id}" ${x.vehiculoId===v.id?'selected':''}>${escHtml(v.codigo+' — '+v.marca+' '+v.modelo)}</option>`).join('');
+  openModal('✏️ Editar CxC — '+escHtml(x.cliente||''),`
+    <div class="form-row c2">
+      <div class="form-field"><label>Cliente</label><input type="text" value="${escHtml(x.cliente||'')}" disabled></div>
+      <div class="form-field"><label class="required">Concepto</label><input type="text" id="ecxc-concepto" value="${escHtml(x.concepto||'')}"></div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Tipo</label>
+        <select id="ecxc-tipo">
+          <option value="manual" ${!x.esTraspaso?'selected':''}>Manual / Venta</option>
+          <option value="traspaso" ${x.esTraspaso?'selected':''}>🔄 Traspaso/Matrícula</option>
+        </select>
+      </div>
+      <div class="form-field"><label>Vehículo Relacionado</label>
+        <select id="ecxc-vehiculo">
+          <option value="">-- Ninguno --</option>
+          ${vehiculosOpts}
+        </select>
+      </div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Monto Total</label>
+        <input type="text" id="ecxc-total" value="${fmtMoneyDisplay(x.total||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
+      </div>
+      <div class="form-field"><label>Moneda</label>
+        <select id="ecxc-moneda">
+          <option value="RD$" ${(x.moneda||'RD$')==='RD$'?'selected':''}>RD$ — Pesos</option>
+          <option value="USD" ${x.moneda==='USD'?'selected':''}>USD — Dólares</option>
+        </select>
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--gray)">⚠️ Al vincular un vehículo, esta CxC aparecerá en su ficha de Consultas. El monto cobrado/abonado no se modifica, solo el total y el saldo se ajustan proporcionalmente.</div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-primary" onclick="guardarEditarCXCManual('${id}')">💾 Guardar</button>`);
+}
+function guardarEditarCXCManual(id){
+  const i=DB.cxc.findIndex(c=>c.id===id);if(i<0)return;
+  const x=DB.cxc[i];
+  const concepto=document.getElementById('ecxc-concepto').value.trim();
+  if(!concepto){toast('Ingresa el concepto','error');return;}
+  const tipo=document.getElementById('ecxc-tipo').value;
+  const vehiculoId=document.getElementById('ecxc-vehiculo').value;
+  const nuevoTotal=parseFloat((document.getElementById('ecxc-total').value||'0').replace(/,/g,''));
+  if(!nuevoTotal||nuevoTotal<=0){toast('Monto inválido','error');return;}
+  const moneda=document.getElementById('ecxc-moneda').value;
+  x.concepto=concepto;
+  x.esTraspaso=tipo==='traspaso';
+  x.total=nuevoTotal;
+  x.saldo=Math.max(0,nuevoTotal-parseFloat(x.abonado||x.abono||0));
+  x.abonado=parseFloat(x.abonado||x.abono||0);
+  x.status=x.saldo<=0?'SALDADO':x.abonado>0?'PARCIAL':'PENDIENTE';
+  x.moneda=moneda;
+  if(vehiculoId){
+    const v=DB.vehiculos.find(vv=>vv.id===vehiculoId);
+    if(v){
+      x.vehiculoId=v.id;
+      x.vehiculo=v.codigo+' '+v.marca+' '+v.modelo;
+      const ventaRel=DB.ventas.find(vt=>vt.vehiculoId===v.id);
+      if(ventaRel){
+        x.ventaId=ventaRel.id;
+        x.factura=x.factura&&!x.factura.startsWith('CXC-')?x.factura:ventaRel.factura;
+        if(!x.clienteId)x.clienteId=ventaRel.clienteId;
+      }
+    }
+  } else {
+    x.vehiculoId='';x.vehiculo='';x.ventaId='';
+  }
+  if(!x.pagos)x.pagos=[];
+  sDB('cxc');
+  closeModal();
+  toast('CxC actualizada ✓','success');
+  renderCXC();
+}
 
 function abonarCXC(id){
   const x=DB.cxc.find(c=>c.id===id);if(!x)return;
