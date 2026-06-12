@@ -904,26 +904,12 @@ function _renderConsultasTabla(){
   const resumen=document.getElementById('consultas-resumen');
   if(!hayFiltro){
     if(card)card.style.display='none';
-    const todos=_consultasDatos();
-    const totalGastos=todos.reduce((a,d)=>a+d.totalCostos,0);
-    const ventas=todos.filter(d=>d.venta);
-    const totalVentas=ventas.reduce((a,d)=>a+parseFloat(d.venta.precioVenta||0),0);
-    const totalBeneficio=ventas.reduce((a,d)=>a+(d.beneficio||0),0);
-    const cxcPend=todos.reduce((a,d)=>a+(d.cxcVenta?parseFloat(d.cxcVenta.saldo||0):0),0);
-    const traspPend=todos.reduce((a,d)=>a+(d.cxcTrasp?parseFloat(d.cxcTrasp.saldo||0):0),0);
     if(resumen)resumen.innerHTML=`
       <div class="card">
-        <div style="text-align:center;padding:24px 10px 14px;color:var(--gray)">
-          <div style="font-size:32px;margin-bottom:8px">🔍</div>
-          <div style="font-size:14px;font-weight:600">Usa los filtros de arriba para buscar un vehículo</div>
-          <div style="font-size:12px;margin-top:4px">Mientras tanto, aquí tienes un resumen general del inventario</div>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:10px">
-          <div class="stat-card amber"><div class="stat-ico">🧾</div><div class="stat-label">Total Gastos</div><div class="stat-value">${fmt(totalGastos)}</div><div class="stat-sub">${todos.length} vehículo(s)</div></div>
-          <div class="stat-card blue"><div class="stat-ico">💰</div><div class="stat-label">Total Ventas</div><div class="stat-value">${fmt(totalVentas)}</div><div class="stat-sub">${ventas.length} vendido(s)</div></div>
-          <div class="stat-card ${totalBeneficio>=0?'green':'red'}"><div class="stat-ico">📈</div><div class="stat-label">Beneficio Total</div><div class="stat-value">${fmt(totalBeneficio)}</div><div class="stat-sub">Ventas - Costos</div></div>
-          <div class="stat-card ${cxcPend>0?'amber':'green'}"><div class="stat-ico">📬</div><div class="stat-label">CxC Pendiente</div><div class="stat-value">${fmt(cxcPend)}</div><div class="stat-sub">Por cobrar de ventas</div></div>
-          <div class="stat-card ${traspPend>0?'amber':'green'}"><div class="stat-ico">🔄</div><div class="stat-label">Traspasos Pend.</div><div class="stat-value">${fmt(traspPend)}</div><div class="stat-sub">Por cobrar de traspasos</div></div>
+        <div style="text-align:center;padding:48px 10px;color:var(--gray)">
+          <div style="font-size:40px;margin-bottom:10px">🔍</div>
+          <div style="font-size:15px;font-weight:600">Escribe un código, cliente, propietario o vehículo</div>
+          <div style="font-size:13px;margin-top:4px">para ver su ficha completa</div>
         </div>
       </div>`;
     return;
