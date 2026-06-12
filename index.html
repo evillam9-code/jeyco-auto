@@ -3545,6 +3545,8 @@ function guardarPermisosUsuarioConfig(i){
   sDB('users');
   toast(`Usuario ${escHtml(u.nombre)} actualizado ✓`,'success');
   if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('users').catch(()=>{});
+  // Re-evaluar alertas inmediatamente con los nuevos permisos (afecta especialmente al admin)
+  if(currentUser.id===u.id&&typeof checkAlerts==='function')checkAlerts();
   // Re-renderizar página activa para reflejar permisos inmediatamente
   const _ap=document.querySelector('.page.active');
   if(_ap){
@@ -5643,7 +5645,7 @@ function renderGastosVeh(){
           <label style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gray)">Vehículo</label>
           <select id="gveh-filtro-veh" onchange="renderGastosVeh()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
             <option value="">Todos los vehículos</option>
-            ${DB.vehiculos.filter(v=>v.status!=='VENDIDO').map(v=>`<option value="${v.id}" ${v.id===filtroVeh?'selected':''}>${escHtml(v.codigo)} — ${escHtml(v.marca)} ${escHtml(v.modelo)}</option>`).join('')}
+            ${[...DB.vehiculos].sort((a,b)=>(parseInt((a.codigo||'').replace(/\D/g,''))||0)-(parseInt((b.codigo||'').replace(/\D/g,''))||0)).map(v=>`<option value="${v.id}" ${v.id===filtroVeh?'selected':''}>${escHtml(v.codigo)} — ${escHtml(v.marca)} ${escHtml(v.modelo)}</option>`).join('')}
           </select>
         </div>
         <div style="display:flex;flex-direction:column;gap:4px">
@@ -12179,6 +12181,21 @@ window.fbIniciar = async function(){
         }
       });
       if(_syncChanged){sDB('vehiculos');console.log('✅ Status vehículos sincronizado con ventas');}
+      // ══ CORRECCIÓN ÚNICA: re-vincular gastos huérfanos de J-00049 al ID correcto del vehículo ══
+      (()=>{
+        const vJ49=DB.vehiculos.find(v=>v.codigo==='J-00049');
+        if(!vJ49)return;
+        const ID_VIEJO='id1778702165961eh3e';
+        let _fixed=0;
+        (DB.gastosVehiculos||[]).forEach(g=>{
+          if(g.vehiculoId===ID_VIEJO){g.vehiculoId=vJ49.id;_fixed++;}
+        });
+        if(_fixed>0){
+          sDB('gastosVehiculos');
+          if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('gastosVehiculos').catch(()=>{});
+          console.log('✅ '+_fixed+' gasto(s) de J-00049 re-vinculados al vehículo correcto');
+        }
+      })();
       // ══ CORRECCIÓN ÚNICA: vincular CxC de traspaso de J-00061 a su venta ══
       (()=>{
         const vJ61=DB.vehiculos.find(v=>v.codigo==='J-00061');
