@@ -762,7 +762,7 @@ function canDo(action){
 function aplicarPermisosNav(){
   if(!currentUser)return;
   // Ocultar nav-items de módulos sin acceso
-  const MODS_NAV=['dashboard','informes','suplidores','inventario','gastosVeh','cxp',
+  const MODS_NAV=['dashboard','informes','consultas','suplidores','inventario','gastosVeh','cxp',
     'clientes','ventas','cxc','gastos','nomina','caja','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cumpleanos','cuentas'];
   MODS_NAV.forEach(id=>{
     const nav=document.getElementById('nav-'+id);
@@ -988,6 +988,13 @@ function abrirFichaVehiculo(vehiculoId){
   const empresa=DB.config.empresa||'JEYCO AUTO';
   const logo=DB.config.logoData||DB.config.logo||'';
   const sc={ACTIVO:'#16a34a',VENDIDO:'#2563eb',ADUANA:'#d97706','TRÁNSITO':'#7c3aed','EN EEUU':'#64748b'};
+  // Estado dinámico: si tiene venta, se basa en si queda algo pendiente (CxC venta o traspaso)
+  let estadoFicha=v.status||'—';
+  if(venta){
+    const pendVenta=cxcVenta?parseFloat(cxcVenta.saldo||0):0;
+    const pendTrasp=cxcTrasp?parseFloat(cxcTrasp.saldo||0):0;
+    estadoFicha=(pendVenta>0||pendTrasp>0)?'TRÁNSITO':'VENDIDO';
+  }
   const tabPagos=(cxc,titulo,color)=>{
     if(!cxc)return'';
     const pagos=cxc.pagos||[];
@@ -1058,11 +1065,11 @@ function abrirFichaVehiculo(vehiculoId){
   <div class="hdr">
     <div>
       <div class="emp-nombre">${logo?`<img src="${logo}" style="height:34px;vertical-align:middle;margin-right:8px">`:''}${escHtml(empresa)}</div>
-      <div class="veh-titulo" style="margin-top:6px">${escHtml(v.codigo||'')} — ${escHtml((v.marca||'')+' '+(v.modelo||''))}</div>
-      <div class="veh-sub">${v.anio||''}${v.color?' · '+escHtml(v.color):''}${v.tipo?' · '+escHtml(v.tipo):''} ${v.vin?'· VIN: '+escHtml(v.vin):''}${v.placa?' · Placa: '+escHtml(v.placa):''}</div>
+      <div class="veh-titulo" style="margin-top:6px">${escHtml(v.codigo||'')} — ${escHtml((v.marca||'')+' '+(v.modelo||''))}${(v.anio||v.color)?` (${v.anio||''}${v.anio&&v.color?' — ':''}${v.color?escHtml(v.color):''})`:''}</div>
+      <div class="veh-sub">${v.tipo?escHtml(v.tipo):''}${v.vin?' · VIN: '+escHtml(v.vin):''}${v.placa?' · Placa: '+escHtml(v.placa):''}</div>
     </div>
     <div style="text-align:right">
-      <span class="badge-estado" style="background:${sc[v.status]||'#64748b'}">${v.status||'—'}</span>
+      <span class="badge-estado" style="background:${sc[estadoFicha]||'#64748b'}">${estadoFicha==='TRÁNSITO'?'EN TRÁNSITO':estadoFicha}</span>
       <div class="veh-sub" style="margin-top:4px">Generado: ${fmtDate(today())}</div>
     </div>
   </div>
@@ -3558,7 +3565,7 @@ function renderUsuarios(){
   }
   const roles=DB.config.roles||[{id:'dueno',nombre:'Dueño'},{id:'secretaria',nombre:'Secretaria'},{id:'asistente',nombre:'Asistente'},{id:'tecnico',nombre:'Técnico'}];
   const MODS=[
-    {id:'dashboard',label:'Dashboard'},{id:'informes',label:'Informe Mensual'},
+    {id:'dashboard',label:'Dashboard'},{id:'informes',label:'Informe Mensual'},{id:'consultas',label:'🔍 Consultas'},
     {id:'inventario',label:'Registro Vehículo'},{id:'gastosVeh',label:'Gastos Vehículo'},
     {id:'cxp',label:'Cuentas por Pagar'},{id:'clientes',label:'Clientes'},
     {id:'ventas',label:'Ventas'},{id:'cxc',label:'Cuentas por Cobrar'},
@@ -3773,7 +3780,7 @@ function editarUsuario(i){
   const u=DB.users[i];
   const roles=DB.config.roles||[{id:'usuario',nombre:'Usuario'}];
   const MODS=[
-    {id:'dashboard',label:'🏠 Inicio'},{id:'informes',label:'📊 Informe Mensual'},
+    {id:'dashboard',label:'🏠 Inicio'},{id:'informes',label:'📊 Informe Mensual'},{id:'consultas',label:'🔍 Consultas'},
     {id:'suplidores',label:'🏭 Suplidores'},{id:'inventario',label:'🚗 Registro Vehículo'},
     {id:'gastosVeh',label:'💸 Gastos Vehículo'},{id:'cxp',label:'📑 Cuentas por Pagar'},
     {id:'clientes',label:'👤 Clientes'},{id:'ventas',label:'💰 Ventas'},
@@ -9429,6 +9436,8 @@ function renderCXC(){
           <option value="PENDIENTE" ${filtroStatus==='PENDIENTE'?'selected':''}>Pendiente / Parcial</option>
           <option value="SALDADO" ${filtroStatus==='SALDADO'?'selected':''}>Saldado</option>
           <option value="TODOS" ${filtroStatus==='TODOS'?'selected':''}>Todos</option>
+          <option value="SALDADO" ${filtroStatus==='SALDADO'?'selected':''}>Saldado</option>
+          <option value="TODOS" ${filtroStatus==='TODOS'?'selected':''}>Todos</option>
         </select>
         <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
         <button id="cxc-btn-cobrar" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('cobrar')">💵 Registrar Cobro</button>
@@ -12100,6 +12109,29 @@ window.fbIniciar = async function(){
         }
       });
       if(_syncChanged){sDB('vehiculos');console.log('✅ Status vehículos sincronizado con ventas');}
+      // ══ RESOLVER DUPLICADOS DE CxC DE TRASPASO ══
+      // Si una venta tiene más de una CxC de traspaso, conserva la que coincide
+      // con el monto correcto de la venta (o ajusta una a ese monto) y elimina las demás sin pagos
+      let _traspDupChanged=false;
+      (DB.ventas||[]).forEach(venta=>{
+        if(venta.tipoTransferencia!=='traspaso')return;
+        const montoCorr=parseFloat(venta.traspasoMonto||venta.montoTraspaso||0);
+        if(montoCorr<=0)return;
+        const cxcsT=DB.cxc.filter(c=>c.ventaId===venta.id&&c.esTraspaso);
+        if(cxcsT.length<=1)return;
+        let correcta=cxcsT.find(c=>parseFloat(c.total||0)===montoCorr);
+        if(!correcta){
+          correcta=cxcsT.find(c=>(c.pagos||[]).length>0)||cxcsT[0];
+          const yaAbonado=correcta.abonado||0;
+          correcta.total=montoCorr;
+          correcta.saldo=Math.max(0,montoCorr-yaAbonado);
+          correcta.status=correcta.saldo<=0?'SALDADO':yaAbonado>0?'PARCIAL':'PENDIENTE';
+        }
+        DB.cxc=DB.cxc.filter(c=>!(cxcsT.includes(c)&&c!==correcta&&(!c.pagos||c.pagos.length===0)));
+        _traspDupChanged=true;
+        console.log('✅ CxC de traspaso duplicada resuelta para venta',venta.factura,'→ se conserva total',correcta.total);
+      });
+      if(_traspDupChanged){sDB('cxc');}
       // Sincronizar montos de CxC de traspaso con la venta correspondiente
       let _traspSyncChanged=false;
       (DB.ventas||[]).forEach(venta=>{
@@ -12117,26 +12149,6 @@ window.fbIniciar = async function(){
         }
       });
       if(_traspSyncChanged){sDB('cxc');}
-      // ══ LIMPIEZA ÚNICA: eliminar CxC de traspaso duplicada (17,500) de J-00061 ══
-      (()=>{
-        const vJ61=DB.vehiculos.find(v=>v.codigo==='J-00061');
-        if(vJ61){
-          const ventaJ61=DB.ventas.find(v=>v.vehiculoId===vJ61.id);
-          if(ventaJ61){
-            const idx=DB.cxc.findIndex(c=>
-              c.ventaId===ventaJ61.id &&
-              c.esTraspaso &&
-              parseFloat(c.total||0)===17500 &&
-              (!c.pagos||c.pagos.length===0)
-            );
-            if(idx>=0){
-              DB.cxc.splice(idx,1);
-              sDB('cxc');
-              console.log('✅ CxC de traspaso duplicada (17,500) eliminada para J-00061');
-            }
-          }
-        }
-      })();
     } else {
       const keys=['config','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
         'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','log'];
