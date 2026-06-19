@@ -1806,14 +1806,38 @@ function invAccion(accion){
   if(accion==='editar'&&!canDo('editar')){toast('No tienes permiso para editar','error');return;}else if(accion==='editar')editarVehiculo(invSelectedId);
   else if(accion==='eliminar'&&!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}else if(accion==='eliminar')eliminarVehiculo(invSelectedId);
 }
+function sincronizarStatusVehiculos(){
+  // Corrige el status de cualquier vehículo que tenga una venta vinculada
+  // pero cuyo status siga como EN EEUU / ADUANA / ACTIVO (no solo ACTIVO, como antes).
+  let _changed=false;
+  (DB.ventas||[]).forEach(venta=>{
+    if(!venta.vehiculoId)return;
+    const vi=DB.vehiculos.findIndex(x=>x.id===venta.vehiculoId);
+    if(vi<0)return;
+    const statusActual=DB.vehiculos[vi].status;
+    if(statusActual==='EN EEUU'||statusActual==='ADUANA'||statusActual==='ACTIVO'){
+      const ventaStatus=venta.estadoVenta;
+      const nuevoStatus=ventaStatus==='VENDIDO'?'VENDIDO':(ventaStatus==='TRÁNSITO'?'TRÁNSITO':(venta.fechaEntrega?'VENDIDO':'TRÁNSITO'));
+      DB.vehiculos[vi].status=nuevoStatus;
+      _changed=true;
+    }
+  });
+  if(_changed){
+    sDB('vehiculos');
+    if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('vehiculos').catch(()=>{});
+    console.log('✅ Status vehículos sincronizado con ventas');
+  }
+  return _changed;
+}
 function renderInventario(){
   const pg=document.getElementById('page-inventario');
   invSelectedId=null;
   const filtroEstado=document.getElementById('inv-estado-filter')?.value||'INVENTARIO';
   const filtroTipo=document.getElementById('inv-tipo-filter')?.value||'ALL';
   const filtroProp=document.getElementById('inv-prop-filter')?.value||'ALL';
-  // Orden fijo: EN EEUU → ADUANA → ACTIVO → resto
-  const ordenStatus={'EN EEUU':0,'ADUANA':1,'ACTIVO':2,'TRÁNSITO':3,'VENDIDO':4};
+  // ══ AUTOCORRECCIÓN: sincronizar status de vehículos con sus ventas cada vez que se abre el registro ══
+  // (antes solo corría una vez al cargar Firebase, y solo si status==='ACTIVO'; ahora cubre EN EEUU/ADUANA también)
+  sincronizarStatusVehiculos();
   let veh=[...DB.vehiculos];
   if(filtroEstado==='INVENTARIO'){
     veh=veh.filter(v=>v.status==='EN EEUU'||v.status==='ADUANA'||v.status==='ACTIVO');
@@ -1822,10 +1846,8 @@ function renderInventario(){
   }
   if(filtroTipo!=='ALL')veh=veh.filter(v=>v.tipoCompra===filtroTipo);
   if(filtroProp!=='ALL')veh=veh.filter(v=>(v.propietario||'')=== filtroProp);
-  // Aplicar orden fijo: primero por estado, luego por código de mayor a menor
+  // Orden: código de mayor a menor (sin agrupar por estado)
   veh.sort((a,b)=>{
-    const so=(ordenStatus[a.status]??9)-(ordenStatus[b.status]??9);
-    if(so!==0)return so;
     const na=parseInt((a.codigo||'').replace(/\D/g,''))||0;
     const nb=parseInt((b.codigo||'').replace(/\D/g,''))||0;
     return nb-na;
@@ -1919,15 +1941,14 @@ function exportarInventarioPDF(){
   const filtroEstado=document.getElementById('inv-estado-filter')?.value||'INVENTARIO';
   const filtroTipo=document.getElementById('inv-tipo-filter')?.value||'ALL';
   const filtroProp=document.getElementById('inv-prop-filter')?.value||'ALL';
-  const ordenStatus={'EN EEUU':0,'ADUANA':1,'ACTIVO':2,'TRÁNSITO':3,'VENDIDO':4};
+  sincronizarStatusVehiculos();
   let veh=[...DB.vehiculos];
   if(filtroEstado==='INVENTARIO')veh=veh.filter(v=>v.status==='EN EEUU'||v.status==='ADUANA'||v.status==='ACTIVO');
   else if(filtroEstado!=='ALL')veh=veh.filter(v=>v.status===filtroEstado);
   if(filtroTipo!=='ALL')veh=veh.filter(v=>v.tipoCompra===filtroTipo);
   if(filtroProp!=='ALL')veh=veh.filter(v=>(v.propietario||'')===filtroProp);
+  // Orden: código de mayor a menor (sin agrupar por estado)
   veh.sort((a,b)=>{
-    const so=(ordenStatus[a.status]??9)-(ordenStatus[b.status]??9);
-    if(so!==0)return so;
     const na=parseInt((a.codigo||'').replace(/\D/g,''))||0;
     const nb=parseInt((b.codigo||'').replace(/\D/g,''))||0;
     return nb-na;
@@ -12166,21 +12187,8 @@ window.fbIniciar = async function(){
         };
         if(_renderMap[_pid])setTimeout(_renderMap[_pid],300);
       }
-      // Sincronizar status de vehículos con ventas (corrige casos como J-00049)
-      let _syncChanged=false;
-      (DB.ventas||[]).forEach(venta=>{
-        if(venta.vehiculoId){
-          const vi=DB.vehiculos.findIndex(x=>x.id===venta.vehiculoId);
-          if(vi>=0&&DB.vehiculos[vi].status==='ACTIVO'){
-            // El vehículo ya tiene una venta registrada → no puede seguir como ACTIVO
-            const ventaStatus=venta.estadoVenta;
-            const nuevoStatus=ventaStatus==='VENDIDO'?'VENDIDO':(ventaStatus==='TRÁNSITO'?'TRÁNSITO':(venta.fechaEntrega?'VENDIDO':'TRÁNSITO'));
-            DB.vehiculos[vi].status=nuevoStatus;
-            _syncChanged=true;
-          }
-        }
-      });
-      if(_syncChanged){sDB('vehiculos');console.log('✅ Status vehículos sincronizado con ventas');}
+      // Sincronizar status de vehículos con ventas (corrige casos como J-00049, J-00061, J-00040, etc.)
+      sincronizarStatusVehiculos();
       // ══ CORRECCIÓN ÚNICA: re-vincular gastos huérfanos de J-00049 al ID correcto del vehículo ══
       (()=>{
         const vJ49=DB.vehiculos.find(v=>v.codigo==='J-00049');
