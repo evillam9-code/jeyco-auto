@@ -2073,7 +2073,12 @@ function formVehiculo(v){
       <div class="form-field"><label>Millaje</label><input type="number" id="v-millas" value="${v?.millas||0}"></div>
     </div>
     <div class="form-row c3">
-      <div class="form-field"><label>Estado</label><select id="v-status">${['EN EEUU','ADUANA','ACTIVO'].map(s=>`<option ${s===v?.status?'selected':''}>${s}</option>`).join('')}</select></div>
+      <div class="form-field"><label>Estado</label>${
+        (v&&(v.status==='TRÁNSITO'||v.status==='VENDIDO'))
+          ? `<input type="text" id="v-status" value="${v.status}" disabled style="background:#f1f5f9;color:#64748b;font-weight:700">
+             <div style="font-size:11px;color:var(--gray);margin-top:3px">Este estado lo controla el módulo de Ventas y no se puede editar aquí.</div>`
+          : `<select id="v-status">${['EN EEUU','ADUANA','ACTIVO'].map(s=>`<option ${s===v?.status?'selected':''}>${s}</option>`).join('')}</select>`
+      }</div>
       <div class="form-field"><label>Tipo de Compra</label><select id="v-tipo-compra">${[['IMPORTACION','Importación'],['LOCAL','Compra Local'],['RECIBIDO','Recibido']].map(([val,lbl])=>`<option value="${val}" ${val===v?.tipoCompra?'selected':''}>${lbl}</option>`).join('')}</select></div>
       <div class="form-field"><label>Fecha de Compra</label><input type="date" id="v-fecha" value="${v?.fecha||today()}"></div>
     </div>
