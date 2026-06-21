@@ -1419,6 +1419,10 @@ function showNotif(title,msg,type='danger'){
 }
 function checkAlerts(){
   const c=document.getElementById('alert-container');if(c)c.innerHTML='';
+  // Popups de alertas desactivados a petición del usuario.
+  // Toda la lógica de detección de alertas vive ahora únicamente en el módulo "Alertas del Sistema" (renderAlertas).
+  return;
+  // eslint-disable-next-line no-unreachable
   // Respetar permisos: si no tiene acceso al módulo alertas, no mostrar popups
   if(!canAccess('alertas'))return;
   const hoy=today();
@@ -3209,8 +3213,9 @@ function renderNomina(){
     <div class="page-header">
       <div><h1>👷 Nómina</h1><p>${DB.nomina.length} empleados — Nómina estimada al mes: ${fmt(total)}</p></div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-        <input type="month" id="nom-mes" value="${mesFiltro}" onchange="renderNomina()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
+        <input type="month" id="nom-mes" value="${mesFiltro}" onchange="renderNomina()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px" title="Filtrar pagos por mes">
         <button class="btn btn-secondary btn-sm" onclick="document.getElementById('nom-mes').value='';renderNomina()">🔄 Todo</button>
+        <button class="btn btn-secondary btn-sm" onclick="imprimirPagosNomina()" title="Exporta/Imprime los pagos del mes filtrado (o todos si no hay filtro)">📄 Exportar Pagos${mesFiltro?' ('+mesFiltro+')':''}</button>
         ${tab==='empleados'?`
           <button id="nom-btn-editar" disabled class="btn btn-sm" style="${ds}" onclick="nomAccion('editar')">✏️ Editar</button>
           <button id="nom-btn-pago" disabled class="btn btn-sm" style="${ds}" onclick="nomAccion('pago')">💵 Registrar Pago</button>
@@ -3219,7 +3224,6 @@ function renderNomina(){
         `:`
           <button id="nom-btn-elim-pago" disabled class="btn btn-sm" style="${ds}" onclick="nomAccion('eliminar-pago')">🗑 Eliminar Pago</button>
           <button id="nom-btn-edit-pago" disabled class="btn btn-sm" style="${ds}" onclick="nomAccion('editar-pago')">&#9999;&#65039; Editar Pago</button>
-          <button class="btn btn-secondary btn-sm" onclick="imprimirPagosNomina()">📄 PDF Pagos</button>
         `}
       </div>
     </div>
@@ -4771,14 +4775,7 @@ function eliminarCuentaBancoCuentas(bi,ci){
   sDB('config');toast('Cuenta eliminada','success');renderCuentas();
 }
 
-function renderAlertas(){
-  // Verificar si el usuario tiene acceso al módulo de alertas
-  const esAdmin=currentUser?.role==='admin';
-  const tieneAccesoAlertas=esAdmin||(currentUser?.modulos||[]).includes('alertas');
-  if(!tieneAccesoAlertas){
-    document.getElementById('page-alertas').innerHTML='<div style="text-align:center;padding:48px"><div style="font-size:48px;margin-bottom:12px">🔒</div><div style="font-size:18px;font-weight:700;color:var(--navy)">Acceso restringido</div><p style="color:var(--gray);margin-top:8px">No tienes permiso para ver las alertas del sistema.<br>Contacta al administrador para solicitar acceso.</p></div>';
-    return;
-  }
+function generarAlertasSistema(){
   const hoy=today();
   const hoyDate=new Date();
   const alertas=[];
@@ -4824,7 +4821,7 @@ function renderAlertas(){
     const venc=v.fechaLimDocs<=hoy;
     alertas.push({tipo:'DOCS',nivel:venc?'danger':'warning',titulo:venc?'Documentos de entrega VENCIDOS':'Documentos de entrega pendientes',msg:`${v.vehiculo||''} — Límite: ${fmtDate(v.fechaLimDocs)}`,modulo:'ventas',id:'doc_'+v.id});
   });
-  // 9. Endorso sin placa original +60 días → amarilla
+  // 8. Endorso sin placa original +60 días → amarilla
   DB.ventas.filter(v=>v.tipoTransferencia==='endoso'&&!v.placaOriginalFecha&&v.fecha).forEach(v=>{
     const dias=Math.floor((hoyDate-new Date(v.fecha+'T12:00:00'))/(1000*60*60*24));
     if(dias>=60)alertas.push({tipo:'PLACA_60',nivel:'warning',titulo:'Endorso sin placa original +60 días',msg:`${v.vehiculo||''} — ${v.cliente} (${dias} días desde venta)`,modulo:'ventas',id:'p60_'+v.id});
@@ -4840,20 +4837,47 @@ function renderAlertas(){
     const restantes=90-dias;
     if(restantes>0&&restantes<=15)alertas.push({tipo:'PLACA_EXHIB_PROX',nivel:'danger',titulo:'Placa exhibición vence pronto',msg:`${v.vehiculo||''} — ${v.cliente} — vence en ${restantes} día(s)`,modulo:'ventas',id:'pep_'+v.id});
   });
+  return alertas;
+}
+const ALERTAS_MODULO_LABEL={inventario:'Inventario',gastosVeh:'Gastos Vehículo',cxp:'CxP',cxc:'CxC',ventas:'Ventas'};
+function renderAlertas(){
+  // Verificar si el usuario tiene acceso al módulo de alertas
+  const esAdmin=currentUser?.role==='admin';
+  const tieneAccesoAlertas=esAdmin||(currentUser?.modulos||[]).includes('alertas');
+  if(!tieneAccesoAlertas){
+    document.getElementById('page-alertas').innerHTML='<div style="text-align:center;padding:48px"><div style="font-size:48px;margin-bottom:12px">🔒</div><div style="font-size:18px;font-weight:700;color:var(--navy)">Acceso restringido</div><p style="color:var(--gray);margin-top:8px">No tienes permiso para ver las alertas del sistema.<br>Contacta al administrador para solicitar acceso.</p></div>';
+    return;
+  }
+  const todasAlertas=generarAlertasSistema();
+  const filtNivel=document.getElementById('alf-nivel')?.value||'';
+  const filtModulo=document.getElementById('alf-modulo')?.value||'';
+  const alertas=todasAlertas.filter(a=>(!filtNivel||a.nivel===filtNivel)&&(!filtModulo||a.modulo===filtModulo));
 
   const danger=alertas.filter(a=>a.nivel==='danger');
   const warning=alertas.filter(a=>a.nivel==='warning');
+  const modulosPresentes=[...new Set(todasAlertas.map(a=>a.modulo))];
 
   document.getElementById('page-alertas').innerHTML=`
     <div class="page-header">
-      <div><h1>🔔 Alertas del Sistema</h1><p>${danger.length} críticas — ${warning.length} advertencias</p></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-secondary btn-sm" onclick="alertasSeleccionadas=new Set(document.querySelectorAll('.alerta-check').forEach(c=>{c.checked=true;alertasSeleccionadas.add(c.value);})||alertasSeleccionadas);renderAlertas()">☑️ Seleccionar Todas</button>
-        <button class="btn btn-secondary btn-sm" onclick="exportarAlertasPDF()">📄 Exportar PDF</button>
+      <div><h1>🔔 Alertas del Sistema</h1><p>${danger.length} críticas — ${warning.length} advertencias${(filtNivel||filtModulo)?' (filtradas de '+todasAlertas.length+' totales)':''}</p></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="alf-nivel" onchange="renderAlertas()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
+          <option value="" ${!filtNivel?'selected':''}>Todos los niveles</option>
+          <option value="danger" ${filtNivel==='danger'?'selected':''}>🔴 Críticas</option>
+          <option value="warning" ${filtNivel==='warning'?'selected':''}>🟡 Advertencias</option>
+        </select>
+        <select id="alf-modulo" onchange="renderAlertas()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
+          <option value="" ${!filtModulo?'selected':''}>Todos los módulos</option>
+          ${modulosPresentes.map(m=>`<option value="${m}" ${filtModulo===m?'selected':''}>${ALERTAS_MODULO_LABEL[m]||m}</option>`).join('')}
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('alf-nivel').value='';document.getElementById('alf-modulo').value='';renderAlertas()">🔄 Limpiar filtro</button>
+        <button class="btn btn-secondary btn-sm" onclick="alertasSeleccionadas=new Set([...document.querySelectorAll('.alerta-check')].map(c=>c.value));renderAlertas()">☑️ Seleccionar visibles</button>
+        <button class="btn btn-secondary btn-sm" onclick="alertasSeleccionadas=new Set();renderAlertas()">⬜ Quitar selección</button>
+        <button class="btn btn-secondary btn-sm" onclick="exportarAlertasPDF()">📄 Exportar PDF${alertasSeleccionadas.size?' ('+alertasSeleccionadas.size+' sel.)':''}</button>
         <button class="btn btn-secondary btn-sm" onclick="renderAlertas()">🔄 Actualizar</button>
       </div>
     </div>
-    ${alertas.length===0?`<div class="card" style="text-align:center;padding:48px"><div style="font-size:48px;margin-bottom:12px">✅</div><div style="font-size:18px;font-weight:700;color:var(--green)">Sin alertas activas</div><p style="color:var(--gray);margin-top:8px">El sistema está en orden</p></div>`:`
+    ${alertas.length===0?`<div class="card" style="text-align:center;padding:48px"><div style="font-size:48px;margin-bottom:12px">✅</div><div style="font-size:18px;font-weight:700;color:var(--green)">${todasAlertas.length===0?'Sin alertas activas':'Sin alertas con este filtro'}</div><p style="color:var(--gray);margin-top:8px">${todasAlertas.length===0?'El sistema está en orden':'Prueba a limpiar el filtro para ver todas las alertas'}</p></div>`:`
     <div class="card">
       ${danger.length?`<div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid var(--red2)">🔴 Críticas (${danger.length})</div>
       ${danger.map(a=>`<div style="display:flex;align-items:flex-start;gap:10px;padding:10px;margin-bottom:6px;background:var(--red2);border-radius:8px;border-left:4px solid var(--red)">
@@ -4870,20 +4894,22 @@ function renderAlertas(){
     </div>`}`;
 }
 function exportarAlertasPDF(){
-  const hoy=today();const hoyDate=new Date();
-  const alertas=[];
-  DB.vehiculos.filter(v=>v.status!=='VENDIDO'&&!v.vin).forEach(v=>alertas.push({nivel:'🔴',titulo:'Sin Chasis/VIN',msg:`${v.codigo||''} ${v.marca} ${v.modelo} ${v.anio}`}));
-  DB.vehiculos.filter(v=>v.status!=='VENDIDO'&&!(DB.gastosVehiculos||[]).some(g=>g.vehiculoId===v.id)).forEach(v=>alertas.push({nivel:'🟡',titulo:'Sin costos',msg:`${v.codigo||''} ${v.marca} ${v.modelo}`}));
-  (DB.gastosVehiculos||[]).filter(g=>parseFloat(g.montoPendiente||0)>0).forEach(g=>{const v=DB.vehiculos.find(x=>x.id===g.vehiculoId);alertas.push({nivel:'🔴',titulo:'CxP Pendiente',msg:`${v?v.codigo:'?'} ${g.tipo} ${fmt(g.montoPendiente)}`});});
-  (DB.cxc||[]).filter(x=>(x.status==='PENDIENTE'||x.status==='PARCIAL')&&x.fechaVence&&x.fechaVence<=hoy).forEach(x=>alertas.push({nivel:'🔴',titulo:'CxC Vencida',msg:`${x.cliente} — ${fmt(x.saldo)}`}));
-  DB.vehiculos.filter(v=>v.status!=='VENDIDO'&&v.fecha).forEach(v=>{const d=Math.floor((hoyDate-new Date(v.fecha+'T12:00:00'))/(1000*60*60*24));if(d>=365)alertas.push({nivel:'🔴',titulo:'1 Año sin vender',msg:`${v.codigo} ${v.marca} ${v.modelo} — ${d} días`});else if(d>=180)alertas.push({nivel:'🟡',titulo:'6 Meses sin vender',msg:`${v.codigo} ${v.marca} ${v.modelo} — ${d} días`});});
+  const hoy=today();
+  const todasAlertas=generarAlertasSistema();
+  const filtNivel=document.getElementById('alf-nivel')?.value||'';
+  const filtModulo=document.getElementById('alf-modulo')?.value||'';
+  const filtradas=todasAlertas.filter(a=>(!filtNivel||a.nivel===filtNivel)&&(!filtModulo||a.modulo===filtModulo));
+  // Si hay alertas marcadas con checkbox dentro de lo filtrado, exportar solo esas. Si no, exportar todo lo filtrado.
+  const idsFiltrados=new Set(filtradas.map(a=>a.id));
+  const seleccionadasEnFiltro=[...alertasSeleccionadas].filter(id=>idsFiltrados.has(id));
+  const lista=seleccionadasEnFiltro.length?filtradas.filter(a=>alertasSeleccionadas.has(a.id)):filtradas;
   const win=window.open('','_blank','width=800,height=600');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Alertas</title><style>body{font-family:Arial,sans-serif;padding:24px;font-size:12px}h2{font-size:18px}table{width:100%;border-collapse:collapse;margin-top:16px}th{background:#0f172a;color:#fff;padding:8px;font-size:11px;text-align:left}td{padding:8px;border-bottom:1px solid #e2e8f0}@media print{button{display:none}}</style></head><body>
   ${DB.config.logoData?`<img src="${DB.config.logoData}" style="max-height:50px;margin-bottom:8px;display:block">`:''}
   <h2>${escHtml(DB.config.empresa||'JEYCO AUTO')} — REPORTE DE ALERTAS</h2>
-  <div style="color:#6b7280;font-size:11px;margin-bottom:16px">Fecha: ${fmtDate(hoy)} | Total: ${alertas.length} alertas</div>
+  <div style="color:#6b7280;font-size:11px;margin-bottom:16px">Fecha: ${fmtDate(hoy)} | Total: ${lista.length} alerta(s)${seleccionadasEnFiltro.length?' (seleccionadas)':(filtNivel||filtModulo)?' (filtradas)':''}</div>
   <table><thead><tr><th>Nivel</th><th>Tipo</th><th>Detalle</th></tr></thead><tbody>
-  ${alertas.map(a=>`<tr><td>${a.nivel}</td><td style="font-weight:700">${escHtml(a.titulo)}</td><td>${escHtml(a.msg)}</td></tr>`).join('')}
+  ${lista.map(a=>`<tr><td>${a.nivel==='danger'?'🔴':'🟡'}</td><td style="font-weight:700">${escHtml(a.titulo)}</td><td>${escHtml(a.msg)}</td></tr>`).join('')||'<tr><td colspan="3" style="text-align:center;color:#94a3b8">Sin alertas</td></tr>'}
   </tbody></table>
   <div style="margin-top:20px;text-align:center"><button onclick="window.print()" style="padding:10px 24px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer">🖨️ Imprimir PDF</button></div>
   </body></html>`);
