@@ -4840,6 +4840,7 @@ function generarAlertasSistema(){
   return alertas;
 }
 const ALERTAS_MODULO_LABEL={inventario:'Inventario',gastosVeh:'Gastos Vehículo',cxp:'CxP',cxc:'CxC',ventas:'Ventas'};
+const ALERTAS_TIPO_LABEL={SIN_VIN:'Sin Chasis/VIN',SIN_COSTO:'Sin costos registrados',CXP:'CxP pendiente',CXC_VENCIDA:'CxC vencida',CXC:'CxC pendiente',SIN_VENDER_1A:'1 año sin venderse',SIN_VENDER_6M:'6 meses sin venderse',DOCS:'Documentos de entrega',PLACA_60:'Endorso sin placa +60 días',PLACA_EXHIB_VENC:'Placa exhibición vencida',PLACA_EXHIB_PROX:'Placa exhibición próx. a vencer'};
 function renderAlertas(){
   // Verificar si el usuario tiene acceso al módulo de alertas
   const esAdmin=currentUser?.role==='admin';
@@ -4851,26 +4852,32 @@ function renderAlertas(){
   const todasAlertas=generarAlertasSistema();
   const filtNivel=document.getElementById('alf-nivel')?.value||'';
   const filtModulo=document.getElementById('alf-modulo')?.value||'';
-  const alertas=todasAlertas.filter(a=>(!filtNivel||a.nivel===filtNivel)&&(!filtModulo||a.modulo===filtModulo));
+  const filtTipo=document.getElementById('alf-tipo')?.value||'';
+  const alertas=todasAlertas.filter(a=>(!filtNivel||a.nivel===filtNivel)&&(!filtModulo||a.modulo===filtModulo)&&(!filtTipo||a.tipo===filtTipo));
 
   const danger=alertas.filter(a=>a.nivel==='danger');
   const warning=alertas.filter(a=>a.nivel==='warning');
   const modulosPresentes=[...new Set(todasAlertas.map(a=>a.modulo))];
+  const tiposPresentes=[...new Set(todasAlertas.map(a=>a.tipo))];
 
   document.getElementById('page-alertas').innerHTML=`
     <div class="page-header">
-      <div><h1>🔔 Alertas del Sistema</h1><p>${danger.length} críticas — ${warning.length} advertencias${(filtNivel||filtModulo)?' (filtradas de '+todasAlertas.length+' totales)':''}</p></div>
+      <div><h1>🔔 Alertas del Sistema</h1><p>${danger.length} críticas — ${warning.length} advertencias${(filtNivel||filtModulo||filtTipo)?' (filtradas de '+todasAlertas.length+' totales)':''}</p></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <select id="alf-nivel" onchange="renderAlertas()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
           <option value="" ${!filtNivel?'selected':''}>Todos los niveles</option>
           <option value="danger" ${filtNivel==='danger'?'selected':''}>🔴 Críticas</option>
           <option value="warning" ${filtNivel==='warning'?'selected':''}>🟡 Advertencias</option>
         </select>
+        <select id="alf-tipo" onchange="renderAlertas()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
+          <option value="" ${!filtTipo?'selected':''}>Todos los tipos</option>
+          ${tiposPresentes.map(t=>`<option value="${t}" ${filtTipo===t?'selected':''}>${ALERTAS_TIPO_LABEL[t]||t}</option>`).join('')}
+        </select>
         <select id="alf-modulo" onchange="renderAlertas()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
           <option value="" ${!filtModulo?'selected':''}>Todos los módulos</option>
           ${modulosPresentes.map(m=>`<option value="${m}" ${filtModulo===m?'selected':''}>${ALERTAS_MODULO_LABEL[m]||m}</option>`).join('')}
         </select>
-        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('alf-nivel').value='';document.getElementById('alf-modulo').value='';renderAlertas()">🔄 Limpiar filtro</button>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('alf-nivel').value='';document.getElementById('alf-modulo').value='';document.getElementById('alf-tipo').value='';renderAlertas()">🔄 Limpiar filtro</button>
         <button class="btn btn-secondary btn-sm" onclick="alertasSeleccionadas=new Set([...document.querySelectorAll('.alerta-check')].map(c=>c.value));renderAlertas()">☑️ Seleccionar visibles</button>
         <button class="btn btn-secondary btn-sm" onclick="alertasSeleccionadas=new Set();renderAlertas()">⬜ Quitar selección</button>
         <button class="btn btn-secondary btn-sm" onclick="exportarAlertasPDF()">📄 Exportar PDF${alertasSeleccionadas.size?' ('+alertasSeleccionadas.size+' sel.)':''}</button>
@@ -4898,7 +4905,8 @@ function exportarAlertasPDF(){
   const todasAlertas=generarAlertasSistema();
   const filtNivel=document.getElementById('alf-nivel')?.value||'';
   const filtModulo=document.getElementById('alf-modulo')?.value||'';
-  const filtradas=todasAlertas.filter(a=>(!filtNivel||a.nivel===filtNivel)&&(!filtModulo||a.modulo===filtModulo));
+  const filtTipo=document.getElementById('alf-tipo')?.value||'';
+  const filtradas=todasAlertas.filter(a=>(!filtNivel||a.nivel===filtNivel)&&(!filtModulo||a.modulo===filtModulo)&&(!filtTipo||a.tipo===filtTipo));
   // Si hay alertas marcadas con checkbox dentro de lo filtrado, exportar solo esas. Si no, exportar todo lo filtrado.
   const idsFiltrados=new Set(filtradas.map(a=>a.id));
   const seleccionadasEnFiltro=[...alertasSeleccionadas].filter(id=>idsFiltrados.has(id));
@@ -4907,7 +4915,7 @@ function exportarAlertasPDF(){
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Alertas</title><style>body{font-family:Arial,sans-serif;padding:24px;font-size:12px}h2{font-size:18px}table{width:100%;border-collapse:collapse;margin-top:16px}th{background:#0f172a;color:#fff;padding:8px;font-size:11px;text-align:left}td{padding:8px;border-bottom:1px solid #e2e8f0}@media print{button{display:none}}</style></head><body>
   ${DB.config.logoData?`<img src="${DB.config.logoData}" style="max-height:50px;margin-bottom:8px;display:block">`:''}
   <h2>${escHtml(DB.config.empresa||'JEYCO AUTO')} — REPORTE DE ALERTAS</h2>
-  <div style="color:#6b7280;font-size:11px;margin-bottom:16px">Fecha: ${fmtDate(hoy)} | Total: ${lista.length} alerta(s)${seleccionadasEnFiltro.length?' (seleccionadas)':(filtNivel||filtModulo)?' (filtradas)':''}</div>
+  <div style="color:#6b7280;font-size:11px;margin-bottom:16px">Fecha: ${fmtDate(hoy)} | Total: ${lista.length} alerta(s)${seleccionadasEnFiltro.length?' (seleccionadas)':(filtNivel||filtModulo||filtTipo)?' (filtradas)':''}</div>
   <table><thead><tr><th>Nivel</th><th>Tipo</th><th>Detalle</th></tr></thead><tbody>
   ${lista.map(a=>`<tr><td>${a.nivel==='danger'?'🔴':'🟡'}</td><td style="font-weight:700">${escHtml(a.titulo)}</td><td>${escHtml(a.msg)}</td></tr>`).join('')||'<tr><td colspan="3" style="text-align:center;color:#94a3b8">Sin alertas</td></tr>'}
   </tbody></table>
