@@ -2543,10 +2543,31 @@ function editarCajaMov(i){
   const c=DB.caja[i];
   if(!c)return;
   const bcs=DB.config.bancoCuentas||[];
+  const sinBanco=!c.banco||c.banco.trim()==='';
   const bancoOpts=bcs.map(b=>`<option value="${escHtml(b.banco)}" ${b.banco===c.banco?'selected':''}>${escHtml(b.banco)}</option>`).join('')||'<option value="">Sin bancos configurados</option>';
-  const bancoActual=bcs.find(b=>b.banco===c.banco)||bcs[0];
-  const cuentaOpts=bancoActual?(bancoActual.cuentas||[]).map(ct=>`<option value="${escHtml(ct.tipo+' — '+ct.numero)}" ${(ct.tipo+' — '+ct.numero)===c.cuenta?'selected':''}>${escHtml(ct.tipo)} — ${escHtml(ct.numero)}</option>`).join(''):'';
+  const bancoActual=bcs.find(b=>b.banco===c.banco);
+  const cuentaOpts=(bancoActual?bancoActual:bcs[0])?(( bancoActual||bcs[0]).cuentas||[]).map(ct=>`<option value="${escHtml(ct.tipo+' — '+ct.numero)}" ${(ct.tipo+' — '+ct.numero)===c.cuenta?'selected':''}>${escHtml(ct.tipo)} — ${escHtml(ct.numero)}</option>`).join(''):'';
   openModal('✏️ Editar Movimiento de Caja',`
+    ${sinBanco?`<div style="background:#fef3c7;border:1.5px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:#92400e">
+      ⚠️ Este movimiento no tiene banco asignado. Selecciona el banco y cuenta correctos.
+    </div>`:''}
+    <div style="background:${sinBanco?'#eff6ff':'var(--gray2)'};border:${sinBanco?'2px solid var(--blue)':'1px solid var(--gray3)'};border-radius:10px;padding:14px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--blue);margin-bottom:10px">🏦 Banco y Cuenta</div>
+      <div class="form-row c2" style="margin-bottom:0">
+        <div class="form-field" style="margin:0"><label class="${sinBanco?'required':''}">Banco</label>
+          <select id="ecm-banco" onchange="(()=>{const bcs=DB.config.bancoCuentas||[];const b=bcs.find(x=>x.banco===this.value);const sel=document.getElementById('ecm-cuenta');if(sel){sel.innerHTML='<option value=\"\">— Sin cuenta —</option>'+(b?(b.cuentas||[]).map(ct=>'<option value=\"'+ct.tipo+' \u2014 '+ct.numero+'\">'+ct.tipo+' \u2014 '+ct.numero+'</option>').join(''):'');}})()">
+            <option value="">— Sin banco —</option>
+            ${bancoOpts}
+          </select>
+        </div>
+        <div class="form-field" style="margin:0"><label>Cuenta</label>
+          <select id="ecm-cuenta">
+            <option value="">— Sin cuenta —</option>
+            ${cuentaOpts}
+          </select>
+        </div>
+      </div>
+    </div>
     <div class="form-row c2">
       <div class="form-field"><label>Fecha</label><input type="date" id="ecm-fecha" value="${c.fecha||''}"></div>
       <div class="form-field"><label>Tipo</label>
@@ -2566,20 +2587,6 @@ function editarCajaMov(i){
       </div>
     </div>
     <div class="form-field"><label>Descripción</label><input type="text" id="ecm-desc" value="${escHtml(c.descripcion||'')}"></div>
-    <div class="form-row c2">
-      <div class="form-field"><label>Banco</label>
-        <select id="ecm-banco" onchange="(()=>{const bcs=DB.config.bancoCuentas||[];const b=bcs.find(x=>x.banco===this.value);const sel=document.getElementById('ecm-cuenta');if(sel){sel.innerHTML=b?(b.cuentas||[]).map(ct=>'<option value=\"'+ct.tipo+' — '+ct.numero+'\">'+ct.tipo+' — '+ct.numero+'</option>').join(''):'<option value=\"\">Sin cuentas</option>';}})()">
-          <option value="">— Sin banco —</option>
-          ${bancoOpts}
-        </select>
-      </div>
-      <div class="form-field"><label>Cuenta</label>
-        <select id="ecm-cuenta">
-          <option value="">— Sin cuenta —</option>
-          ${cuentaOpts}
-        </select>
-      </div>
-    </div>
     <div class="form-field"><label>Categoría</label><input type="text" id="ecm-cat" value="${escHtml(c.categoria||'')}"></div>
   `,`
     <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
@@ -4751,7 +4758,10 @@ function renderCuentas(){
                     <div style="font-size:15px;font-weight:800;font-family:monospace;letter-spacing:1px">${escHtml(c.numero||'—')}</div>
                     <div style="font-size:11px;color:var(--gray);margin-top:4px">${(c.tipo||'').includes('Corriente')?'🔄 Cuenta Corriente':'💰 Cuenta de Ahorro'}</div>
                   </div>
-                  ${(esAdmin||currentUser?.permisos?.editarCuentas||(currentUser?.modulos||[]).includes('cuentas'))?`<button class="btn btn-sm" style="background:var(--red2);color:var(--red);padding:4px 8px" onclick="eliminarCuentaBancoCuentas(${bi},${ci})">✕</button>`:''}
+                  <div style="display:flex;gap:4px">
+                    ${(esAdmin||currentUser?.permisos?.editarCuentas||(currentUser?.modulos||[]).includes('cuentas'))?`<button class="btn btn-sm" style="background:var(--blue3);color:var(--blue);padding:4px 8px" onclick="editarCuentaBanco(${bi},${ci})" title="Editar">✏️</button>`:''}
+                    ${(esAdmin||currentUser?.permisos?.editarCuentas||(currentUser?.modulos||[]).includes('cuentas'))?`<button class="btn btn-sm" style="background:var(--red2);color:var(--red);padding:4px 8px" onclick="eliminarCuentaBancoCuentas(${bi},${ci})">✕</button>`:''}
+                  </div>
                 </div>
               </div>`).join('')||`<div style="color:var(--gray);font-size:13px;padding:8px">Sin cuentas agregadas</div>`}
           </div>
@@ -4843,6 +4853,58 @@ function eliminarCuentaBancoCuentas(bi,ci){
   if(currentUser?.role!=='admin'&&!canDo('eliminar')&&!currentUser?.permisos?.borrarCuentas){toast('Sin permiso','error');return;}
   DB.config.bancoCuentas[bi].cuentas.splice(ci,1);
   sDB('config');toast('Cuenta eliminada','success');renderCuentas();
+}
+function editarCuentaBanco(bi,ci){
+  if(currentUser?.role!=='admin'&&!canDo('editar')&&!currentUser?.permisos?.editarCuentas&&!(currentUser?.modulos||[]).includes('cuentas')){toast('Sin permiso','error');return;}
+  const b=DB.config.bancoCuentas[bi];
+  const c=b.cuentas[ci];
+  if(!b||!c)return;
+  openModal(`✏️ Editar Cuenta — ${escHtml(b.banco)}`,`
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Número de Cuenta</label>
+        <input type="text" id="ec-numero" value="${escHtml(c.numero||'')}" placeholder="0000-0000-0000">
+      </div>
+      <div class="form-field"><label>Tipo de Cuenta</label>
+        <select id="ec-tipo">
+          <option value="Corriente RD$" ${c.tipo==='Corriente RD$'?'selected':''}>Corriente RD$</option>
+          <option value="Corriente USD" ${c.tipo==='Corriente USD'?'selected':''}>Corriente USD</option>
+          <option value="Ahorro RD$" ${c.tipo==='Ahorro RD$'?'selected':''}>Ahorro RD$</option>
+          <option value="Ahorro USD" ${c.tipo==='Ahorro USD'?'selected':''}>Ahorro USD</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-field"><label>Banco</label>
+      <input type="text" value="${escHtml(b.banco)}" disabled style="background:#f1f5f9;color:var(--gray)">
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-primary" onclick="guardarEditCuentaBanco(${bi},${ci})">💾 Guardar</button>`);
+}
+function guardarEditCuentaBanco(bi,ci){
+  const num=document.getElementById('ec-numero')?.value.trim();
+  const tipo=document.getElementById('ec-tipo')?.value||'Corriente RD$';
+  if(!num){toast('El número de cuenta es requerido','error');return;}
+  const b=DB.config.bancoCuentas[bi];
+  const numAnterior=b.cuentas[ci].numero;
+  const tipoAnterior=b.cuentas[ci].tipo;
+  b.cuentas[ci].numero=num;
+  b.cuentas[ci].tipo=tipo;
+  b.cuentas[ci].banco=b.banco;
+  // Actualizar todos los movimientos de caja que referencien la cuenta anterior
+  const claveAnterior=tipoAnterior+' — '+numAnterior;
+  const claveNueva=tipo+' — '+num;
+  let _upd=0;
+  (DB.caja||[]).forEach(mov=>{
+    if(mov.banco===b.banco&&(mov.cuenta===claveAnterior||mov.cuenta===numAnterior)){
+      mov.cuenta=claveNueva;
+      mov.referencia=b.banco+' / '+claveNueva;
+      _upd++;
+    }
+  });
+  sDB('config');
+  if(_upd>0){sDB('caja');console.log('✅ '+_upd+' movimiento(s) de caja actualizados con la nueva cuenta');}
+  closeModal();
+  toast('Cuenta actualizada ✓'+(_upd>0?' — '+_upd+' movimiento(s) de caja corregidos':''),'success');
+  renderCuentas();
 }
 
 function generarAlertasSistema(){
