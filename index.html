@@ -464,8 +464,11 @@ function htmlMonedaBancoCuenta(prefijo, monedaVal, bancoVal, cuentaVal){
   const bcs=DB.config.bancoCuentas||[];
   const bancoSel=bancoVal||(bcs[0]?.banco||'');
   const b=bcs.find(x=>x.banco===bancoSel);
-  const cuentaOpts=(b?b.cuentas:[]).map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}" ${(c.tipo+' — '+c.numero)===(cuentaVal||'')?'selected':''}>${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||'<option value="Caja General">Caja General</option>';
-  const bancoOpts=bcs.map(b2=>`<option value="${escHtml(b2.banco)}" ${b2.banco===bancoSel?'selected':''}>${escHtml(b2.banco)}</option>`).join('')||'<option value="Caja General">Caja General</option>';
+  const monedaInit=monedaVal||'RD$';
+  const _filtrarMoneda=c=>monedaInit==='USD'?(c.tipo||'').includes('USD'):(!(c.tipo||'').includes('USD'));
+  const cuentasFiltradas=(b?b.cuentas:[]).filter(_filtrarMoneda);
+  const cuentaOpts=cuentasFiltradas.map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}" ${(c.tipo+' — '+c.numero)===(cuentaVal||'')?'selected':''}>${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||`<option value="">— Sin cuentas ${monedaInit==='USD'?'USD':'RD$'} en este banco —</option>`;
+  const bancoOpts=bcs.map(b2=>`<option value="${escHtml(b2.banco)}" ${b2.banco===bancoSel?'selected':''}>${escHtml(b2.banco)}</option>`).join('')||'<option value="">Sin bancos configurados</option>';
   return `
     <div class="form-field"><label>Moneda</label>
       <select id="${prefijo}-moneda" onchange="actualizarCuentasGenerico('${prefijo}')">
@@ -489,7 +492,7 @@ function actualizarCuentasGenerico(prefijo){
   const monedaEl=document.getElementById(prefijo+'-moneda');
   const monedaSel=monedaEl?.value||'';
   const cuentas=(b?b.cuentas:[]).filter(c=>!monedaSel||(monedaSel==='USD'?(c.tipo||'').includes('USD'):(!(c.tipo||'').includes('USD'))));
-  cuentaEl.innerHTML=cuentas.map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}">${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||'<option value="Caja General">Caja General</option>';
+  cuentaEl.innerHTML=cuentas.map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}">${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||(monedaSel?`<option value="">— Sin cuentas ${monedaSel==='USD'?'USD':'RD$'} en este banco —</option>`:'<option value="">— Seleccione banco —</option>');
 }
 /* ====== FIN FUNCIÓN GLOBAL ====== */
 
@@ -497,6 +500,7 @@ function bancoCuentaHTML(bancoId,cuentaId,selectedBanco,selectedCuenta,monedaId)
   const bcs=getBancoCuentas();
   const bancoOpts=bcs.map(b=>`<option value="${escHtml(b.banco)}" ${b.banco===selectedBanco?'selected':''}>${escHtml(b.banco)}</option>`).join('')||'<option value="">Sin bancos configurados</option>';
   const b=bcs.find(x=>x.banco===selectedBanco);
+  // Note: bancoCuentaHTML has no moneda context at render time, filter applied dynamically on change
   const cuentas=b?b.cuentas:[];
   const cuentaOpts=cuentas.map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}" ${(c.tipo+' — '+c.numero)===selectedCuenta?'selected':''}>${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||'<option value="">Seleccione banco primero</option>';
   const onchg=monedaId?`getCuentasDeSelBancoConMoneda('${bancoId}','${monedaId}')`:`getCuentasDeSelBanco('${bancoId}','${cuentaId}')`;
@@ -519,7 +523,7 @@ function getCuentasDeSelBancoConMoneda(bancoId,monedaId){
   const bcs=getBancoCuentas();
   const b=bcs.find(x=>x.banco===bancoEl.value);
   const cuentas=(b?b.cuentas:[]).filter(c=>!monedaSel||(monedaSel==='USD'?(c.tipo||'').includes('USD'):(!(c.tipo||'').includes('USD'))));
-  cuentaEl.innerHTML=cuentas.map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}">${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||'<option value="">Sin cuentas para esta moneda</option>';
+  cuentaEl.innerHTML=cuentas.map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}">${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||(monedaSel?`<option value="">— Sin cuentas ${monedaSel==='USD'?'USD':'RD$'} en este banco —</option>`:'<option value="">— Seleccione banco —</option>');
 }
 
 const titleCase=s=>s?s.replace(/\b\w/g,l=>l.toUpperCase()):'';
