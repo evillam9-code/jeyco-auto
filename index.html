@@ -2754,6 +2754,8 @@ function guardarCajaMov(tipo){
   const banco=document.getElementById('cj-banco')?.value||'';
   const cuenta=document.getElementById('cj-cuenta')?.value||'';
   const moneda=document.getElementById('cj-moneda')?.value||'RD$';
+  if(!banco){toast('Selecciona el banco','error');return;}
+  if(!cuenta){toast('Selecciona la cuenta','error');return;}
   DB.caja.push({id:uid(),fecha:document.getElementById('cj-fecha').value,tipo,
     categoria:document.getElementById('cj-cat')?.value||'',
     descripcion:desc,monto,moneda,banco,cuenta,
@@ -3207,8 +3209,10 @@ function confirmarAbonarGasto(id){
   if(monto>parseFloat(g.montoPendiente||0)){toast('El monto no puede superar el pendiente','error');return;}
   const fecha=document.getElementById('abg-fecha')?.value||today();
   const banco=document.getElementById('abg-banco')?.value||'';
-  const cuenta=document.getElementById('abg-cuenta')?.value||'Caja General';
+  const cuenta=document.getElementById('abg-cuenta')?.value||'';
   const nota=document.getElementById('abg-nota')?.value||'';
+  if(!banco){toast('Selecciona el banco','error');return;}
+  if(!cuenta){toast('Selecciona la cuenta','error');return;}
   DB.gastos[i].montoAbonado=(parseFloat(g.montoAbonado||0)+monto);
   DB.gastos[i].montoPendiente=Math.max(0,(parseFloat(g.montoPendiente||0)-monto));
   const saldado=DB.gastos[i].montoPendiente<=0;
@@ -3528,13 +3532,17 @@ function guardarPagoNomina(i){
   const mes=fechaPago.slice(0,7); // Derivar mes de la fecha para filtros
   const tipo=document.getElementById('np-tipo').value;
   const cuenta=document.getElementById('np-cuenta').value;
+  const banco=document.getElementById('np-banco')?.value||'';
+  const moneda=document.getElementById('np-moneda')?.value||'RD$';
   const nota=document.getElementById('np-nota')?.value||'';
+  if(!banco){toast('Selecciona el banco','error');return;}
+  if(!cuenta){toast('Selecciona la cuenta','error');return;}
   const tipoLabel={MEN:'Mensual','1Q':'1ra Quincena','2Q':'2da Quincena',SEM:'Semanal',COM:'Comisión'}[tipo]||tipo;
   if(!DB.nominaPagos)DB.nominaPagos=[];
   DB.nominaPagos.push({id:uid(),empleadoId:e.id,empleadoNombre:e.nombre,mes,tipo,monto,cuenta,fecha:fechaPago,nota});
   DB.caja.push({id:uid(),fecha:today(),tipo:'SALIDA',categoria:'Nómina/Salario',
     descripcion:'Pago nómina: '+e.nombre+' ('+tipoLabel+')',
-    monto,referencia:cuenta,responsable:currentUser.nombre});
+    monto,moneda,banco,cuenta,referencia:banco?(banco+' / '+cuenta):cuenta,responsable:currentUser.nombre});
   logBit('nomina','Pagó nómina','');sDB('nominaPagos');sDB('caja');closeModal();toast('Pago registrado ✓','success');renderNomina();
 }
 function imprimirPagosNomina(){
@@ -4513,6 +4521,11 @@ function guardarPrestamo(){
   if(!banco){toast('Ingresa el banco','error');return;}
   const monto=parseFloat((document.getElementById('pr-monto')?.value||'0').replace(/,/g,''));
   if(!monto){toast('Ingresa el monto','error');return;}
+  const pMoneda=document.getElementById('pr-moneda')?.value||'RD$';
+  const pCuenta=document.getElementById('pr-cuenta')?.value||'';
+  const pBancoSel=document.getElementById('pr-banco-select')?.value||'';
+  if(!pBancoSel){toast('Selecciona el banco de pago','error');return;}
+  if(!pCuenta){toast('Selecciona la cuenta de pago','error');return;}
   const p={
     id:uid(),banco,
     descripcion:document.getElementById('pr-desc')?.value.trim()||'',
@@ -4521,9 +4534,9 @@ function guardarPrestamo(){
     tasaMensual:parseFloat(document.getElementById('pr-tasa')?.value||0)||0,
     plazo:parseInt(document.getElementById('pr-plazo')?.value||0)||0,
     fecha:document.getElementById('pr-fecha')?.value||today(),
-    moneda:document.getElementById('pr-moneda')?.value||'RD$',
-    banco_pago:document.getElementById('pr-banco-select')?.value||'',
-    cuenta:document.getElementById('pr-cuenta')?.value||'',
+    moneda:pMoneda,
+    banco_pago:pBancoSel,
+    cuenta:pCuenta,
     notas:document.getElementById('pr-notas')?.value||'',
     status:'ACTIVO',pagos:[]
   };
@@ -9819,6 +9832,8 @@ function guardarCXCManual(){
   const cuenta=document.getElementById('ncxc-cuenta').value;
   const banco=document.getElementById('ncxc-banco')?.value||'';
   const moneda=document.getElementById('ncxc-moneda').value;
+  if(!banco){toast('Selecciona el banco','error');return;}
+  if(!cuenta){toast('Selecciona la cuenta','error');return;}
   const tasaCXC=moneda==='USD'?parseFloat(document.getElementById('ncxc-tasa')?.value||DB.config.tasaCambio||60):parseFloat(DB.config.tasaCambio||60);
   const fecha=document.getElementById('ncxc-fecha').value;
   const vence=document.getElementById('ncxc-vence').value;
@@ -9839,7 +9854,7 @@ function guardarCXCManual(){
   });
   if(abono>0)DB.caja.push({id:uid(),fecha,tipo:'ENTRADA',categoria:'CxC Manual',
     descripcion:'Abono CxC: '+concepto+' — '+cli?.nombre,
-    monto:abono,referencia:cuenta,responsable:currentUser.nombre});
+    monto:abono,moneda,banco,cuenta,referencia:banco?(banco+' / '+cuenta):cuenta,responsable:currentUser.nombre});
   sDB('cxc');sDB('caja');closeModal();
   toast('Cuenta por cobrar creada ✓','success');renderCXC();
 }
@@ -11303,6 +11318,9 @@ function nuevaFacturaExterna(){
         <select id="fe-moneda"><option value="RD$">RD$ — Pesos</option><option value="USD">USD — Dólares</option></select>
       </div>
     </div>
+    <div class="form-row c2">
+      ${bancoCuentaHTML('fe-banco','fe-cuenta','','')}
+    </div>
     <div class="form-field"><label>Observaciones</label>
       <textarea id="fe-obs" rows="2" placeholder="Condiciones del vehículo, acuerdos, notas..."></textarea>
     </div>`,
@@ -11321,6 +11339,11 @@ function guardarFacturaExterna(nFact){
   if(!vehiculo){toast('Ingresa los datos del vehículo','error');return;}
   if(!monto){toast('Ingresa el monto','error');return;}
   const abono=parseFloat((document.getElementById('fe-abono').value||'0').replace(/,/g,''));
+  const feBanco=document.getElementById('fe-banco')?.value||'';
+  const feCuenta=document.getElementById('fe-cuenta')?.value||'';
+  if(!feBanco){toast('Selecciona el banco','error');return;}
+  if(!feCuenta){toast('Selecciona la cuenta','error');return;}
+  const feMoneda=document.getElementById('fe-moneda').value;
   const f={
     id:uid(),numero:nFact,
     vehiculo,
@@ -11330,7 +11353,7 @@ function guardarFacturaExterna(nFact){
     cliente:document.getElementById('fe-cliente').value.trim(),
     clienteDoc:document.getElementById('fe-cli-doc').value.trim(),
     monto,abono,pendiente:Math.max(0,monto-abono),
-    moneda:document.getElementById('fe-moneda').value,
+    moneda:feMoneda,banco:feBanco,cuenta:feCuenta,
     fecha:document.getElementById('fe-fecha').value,
     obs:document.getElementById('fe-obs').value
   };
