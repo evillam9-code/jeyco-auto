@@ -2436,6 +2436,7 @@ function renderCaja(){
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input type="month" id="caja-mes" value="${mes}" onchange="renderCaja()" style="padding:7px 12px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
         <button class="btn btn-secondary btn-sm" onclick="exportarCajaPDF()">PDF / Imprimir</button>
+        <button class="btn btn-secondary btn-sm" onclick="window._fixAsignarBancosCaja(true)" title="Asignar bancos automáticamente a movimientos sin banco">🔧 Asignar Bancos</button>
         <button class="btn btn-green btn-sm" onclick="nuevoCajaMov('ENTRADA')">📥 Nueva Entrada</button>
         <button class="btn btn-red btn-sm" onclick="nuevoCajaMov('SALIDA')">📤 Nueva Salida</button>
       </div>
@@ -12305,6 +12306,66 @@ window.forzarSincronizacion = async function(){
   }
 };
 
+
+// ══ FUNCIÓN GLOBAL: Asignar bancos a movimientos de caja por número de cuenta ══
+window._fixAsignarBancosCaja = function(mostrarToast=true){
+  const bcs=DB.config.bancoCuentas||[];
+  if(bcs.length===0){if(mostrarToast)toast('No hay bancos configurados en el módulo Cuentas','error');return 0;}
+  const mapaNum={};
+  const mapaTipo={};
+  const mapaRef={};
+  bcs.forEach(b=>{
+    (b.cuentas||[]).forEach(ct=>{
+      const num=(ct.numero||'').trim();
+      const tipo=(ct.tipo||'').trim();
+      // Registrar con guion largo (—) y guion normal (-) para cubrir ambos casos
+      ['—','-'].forEach(sep=>{
+        const clave=tipo+' '+sep+' '+num;
+        mapaTipo[clave]={banco:b.banco,clave:tipo+' — '+num};
+      });
+      const claveCanonica=tipo+' — '+num;
+      if(num){
+        mapaNum[num]={banco:b.banco,tipo,clave:claveCanonica};
+        mapaRef[(b.banco+' / '+claveCanonica).toLowerCase()]={banco:b.banco,clave:claveCanonica};
+        mapaRef[(b.banco+' / '+num).toLowerCase()]={banco:b.banco,clave:claveCanonica};
+      }
+    });
+  });
+  let fixed=0;
+  (DB.caja||[]).forEach(mov=>{
+    if(mov.banco&&mov.banco.trim()!=='')return;
+    const cv=(mov.cuenta||'').trim();
+    const rv=(mov.referencia||'').trim();
+    let bancoFnd='', cuentaFnd='';
+    // 1) Match exacto tipo+num (guion largo o normal)
+    if(mapaTipo[cv]){bancoFnd=mapaTipo[cv].banco;cuentaFnd=mapaTipo[cv].clave;}
+    // 2) Match número puro
+    if(!bancoFnd&&mapaNum[cv]){bancoFnd=mapaNum[cv].banco;cuentaFnd=mapaNum[cv].clave;}
+    // 3) El campo cuenta/referencia contiene el número
+    if(!bancoFnd){
+      const found=Object.keys(mapaNum).find(n=>cv.includes(n)||rv.includes(n));
+      if(found){bancoFnd=mapaNum[found].banco;cuentaFnd=mapaNum[found].clave;}
+    }
+    // 4) Match por referencia completa
+    if(!bancoFnd&&mapaRef[rv.toLowerCase()]){bancoFnd=mapaRef[rv.toLowerCase()].banco;cuentaFnd=mapaRef[rv.toLowerCase()].clave;}
+    if(bancoFnd){
+      mov.banco=bancoFnd;
+      if(cuentaFnd)mov.cuenta=cuentaFnd;
+      mov.referencia=bancoFnd+(cuentaFnd?' / '+cuentaFnd:'');
+      fixed++;
+    }
+  });
+  if(fixed>0){
+    sDB('caja');
+    console.log('✅ Fix banco-caja: '+fixed+' movimiento(s) corregidos');
+    if(mostrarToast)toast('✅ '+fixed+' movimiento(s) de caja corregidos con banco asignado','success');
+    if(typeof renderCaja==='function')renderCaja();
+  } else {
+    if(mostrarToast)toast('No se encontraron movimientos sin banco que coincidan con las cuentas registradas','warning');
+  }
+  return fixed;
+};
+
 window.fbIniciar = async function(){
   const dot=document.getElementById('fb-dot');
   const txt=document.getElementById('fb-text');
@@ -12361,64 +12422,7 @@ window.fbIniciar = async function(){
       // Sincronizar status de vehículos con ventas (corrige casos como J-00049, J-00061, J-00040, etc.)
       sincronizarStatusVehiculos();
       // ══ FIX PERMANENTE: asignar banco a registros de caja usando módulo Cuentas como fuente de verdad ══
-      (()=>{
-        const bcs=DB.config.bancoCuentas||[];
-        if(bcs.length===0)return;
-        // Construir mapa exhaustivo: cualquier forma del número → {banco, cuentaCanonica}
-        const mapaNum={};   // numero puro → {banco, tipo}
-        const mapaTipo={};  // "Tipo — Numero" → {banco}
-        const mapaRef={};   // "banco / Tipo — Numero" → {banco, cuenta}
-        bcs.forEach(b=>{
-          (b.cuentas||[]).forEach(ct=>{
-            const num=(ct.numero||'').trim();
-            const tipo=(ct.tipo||'').trim();
-            const clave=tipo+' — '+num;
-            if(num){
-              mapaNum[num]={banco:b.banco,tipo,clave};
-              mapaTipo[clave]={banco:b.banco,clave};
-              mapaRef[(b.banco+' / '+clave).toLowerCase()]={banco:b.banco,clave};
-            }
-          });
-        });
-        let _cajFixed=0;
-        (DB.caja||[]).forEach(mov=>{
-          if(mov.banco&&mov.banco.trim()!=='')return; // Ya tiene banco correcto → no tocar
-          const cuentaVal=(mov.cuenta||'').trim();
-          const refVal=(mov.referencia||'').trim();
-          let bancoFnd='', cuentaFnd='';
-          // 1) Match exacto por "Tipo — Numero"
-          if(mapaTipo[cuentaVal]){
-            bancoFnd=mapaTipo[cuentaVal].banco;
-            cuentaFnd=cuentaVal;
-          }
-          // 2) Match por número puro en campo cuenta
-          if(!bancoFnd&&mapaNum[cuentaVal]){
-            bancoFnd=mapaNum[cuentaVal].banco;
-            cuentaFnd=mapaNum[cuentaVal].clave;
-          }
-          // 3) Buscar si el campo cuenta contiene un número conocido (ej: "Corriente RD$ — 9604235409")
-          if(!bancoFnd){
-            const numKeys=Object.keys(mapaNum);
-            const found=numKeys.find(n=>cuentaVal.includes(n)||refVal.includes(n));
-            if(found){bancoFnd=mapaNum[found].banco;cuentaFnd=mapaNum[found].clave;}
-          }
-          // 4) Buscar por referencia completa
-          if(!bancoFnd&&mapaRef[refVal.toLowerCase()]){
-            bancoFnd=mapaRef[refVal.toLowerCase()].banco;
-            cuentaFnd=mapaRef[refVal.toLowerCase()].clave;
-          }
-          if(bancoFnd){
-            mov.banco=bancoFnd;
-            if(cuentaFnd)mov.cuenta=cuentaFnd;
-            mov.referencia=bancoFnd+(cuentaFnd?' / '+cuentaFnd:'');
-            _cajFixed++;
-          }
-        });
-        if(_cajFixed>0){
-          sDB('caja');
-          console.log('✅ Fix banco-caja: '+_cajFixed+' movimiento(s) corregidos usando módulo Cuentas');
-        }
-      })();
+      window._fixAsignarBancosCaja(false);
       // ══ CORRECCIÓN ÚNICA: re-vincular gastos huérfanos de J-00049 al ID correcto del vehículo ══
       (()=>{
         const vJ49=DB.vehiculos.find(v=>v.codigo==='J-00049');
