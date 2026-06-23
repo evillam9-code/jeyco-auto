@@ -2519,21 +2519,91 @@ function renderCaja(){
         <input class="search-input" placeholder="Buscar..." oninput="filterTable('caja-tbl',this.value)" style="flex:1;min-width:200px">
       </div>
       <div class="table-wrap"><table id="caja-tbl">
-        <thead><tr><th>Fecha</th><th>Tipo</th><th>Categoría</th><th>Descripción</th><th>Monto</th><th>Cuenta</th><th>Por</th><th></th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Categoría</th><th>Descripción</th><th>Monto</th><th>Banco</th><th>Cuenta</th><th>Por</th><th></th></tr></thead>
         <tbody>${filtrados.slice().reverse().map(c=>{const i=DB.caja.indexOf(c);return`<tr>
           <td>${fmtDate(c.fecha)}</td>
           <td><span class="badge ${c.tipo==='ENTRADA'?'badge-green':'badge-red'}">${c.tipo==='ENTRADA'?'📥 Entrada':'📤 Salida'}</span></td>
           <td><span class="badge badge-gray" style="font-size:11px">${escHtml(c.categoria||'—')}</span></td>
           <td>${escHtml(c.descripcion||'—')}</td>
           <td style="font-weight:700;color:${c.tipo==='ENTRADA'?'var(--green)':'var(--red)'}">${fmt(c.monto)}</td>
-          <td style="font-size:12px;color:var(--gray)">${escHtml(c.referencia||'—')}</td>
+          <td style="font-size:12px;color:var(--gray)">${escHtml(c.banco||'—')}</td>
+          <td style="font-size:12px;color:var(--gray)">${escHtml(c.cuenta||'—')}</td>
           <td style="font-size:12px">${escHtml(c.responsable||'—')}</td>
-          <td>${(currentUser?.role==='admin'||canDo('eliminar'))?`<button class="btn btn-red btn-sm" onclick="DB.caja.splice(${i},1);sDB('caja');renderCaja()">🗑</button>`:''}</td>
-        </tr>`;}).join('')||'<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--gray)">Sin registros</td></tr>'}
+          <td style="white-space:nowrap">
+            <button class="btn btn-secondary btn-sm" onclick="editarCajaMov(${i})" title="Editar">✏️</button>
+            ${(currentUser?.role==='admin'||canDo('eliminar'))?`<button class="btn btn-red btn-sm" onclick="DB.caja.splice(${i},1);sDB('caja');renderCaja()">🗑</button>`:''}
+          </td>
+        </tr>`;}).join('')||'<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--gray)">Sin registros</td></tr>'}
         </tbody></table></div>
     </div>`;
   document.getElementById('caja-mes').value=mes;
   document.getElementById('caja-tab').value=tab;
+}
+function editarCajaMov(i){
+  const c=DB.caja[i];
+  if(!c)return;
+  const bcs=DB.config.bancoCuentas||[];
+  const bancoOpts=bcs.map(b=>`<option value="${escHtml(b.banco)}" ${b.banco===c.banco?'selected':''}>${escHtml(b.banco)}</option>`).join('')||'<option value="">Sin bancos configurados</option>';
+  const bancoActual=bcs.find(b=>b.banco===c.banco)||bcs[0];
+  const cuentaOpts=bancoActual?(bancoActual.cuentas||[]).map(ct=>`<option value="${escHtml(ct.tipo+' — '+ct.numero)}" ${(ct.tipo+' — '+ct.numero)===c.cuenta?'selected':''}>${escHtml(ct.tipo)} — ${escHtml(ct.numero)}</option>`).join(''):'';
+  openModal('✏️ Editar Movimiento de Caja',`
+    <div class="form-row c2">
+      <div class="form-field"><label>Fecha</label><input type="date" id="ecm-fecha" value="${c.fecha||''}"></div>
+      <div class="form-field"><label>Tipo</label>
+        <select id="ecm-tipo">
+          <option value="ENTRADA" ${c.tipo==='ENTRADA'?'selected':''}>📥 Entrada</option>
+          <option value="SALIDA" ${c.tipo==='SALIDA'?'selected':''}>📤 Salida</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label>Monto</label><input type="number" id="ecm-monto" value="${c.monto||0}" min="0" step="0.01"></div>
+      <div class="form-field"><label>Moneda</label>
+        <select id="ecm-moneda">
+          <option value="RD$" ${(c.moneda||'RD$')==='RD$'?'selected':''}>RD$ Pesos</option>
+          <option value="USD" ${c.moneda==='USD'?'selected':''}>USD Dólares</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-field"><label>Descripción</label><input type="text" id="ecm-desc" value="${escHtml(c.descripcion||'')}"></div>
+    <div class="form-row c2">
+      <div class="form-field"><label>Banco</label>
+        <select id="ecm-banco" onchange="(()=>{const bcs=DB.config.bancoCuentas||[];const b=bcs.find(x=>x.banco===this.value);const sel=document.getElementById('ecm-cuenta');if(sel){sel.innerHTML=b?(b.cuentas||[]).map(ct=>'<option value=\"'+ct.tipo+' — '+ct.numero+'\">'+ct.tipo+' — '+ct.numero+'</option>').join(''):'<option value=\"\">Sin cuentas</option>';}})()">
+          <option value="">— Sin banco —</option>
+          ${bancoOpts}
+        </select>
+      </div>
+      <div class="form-field"><label>Cuenta</label>
+        <select id="ecm-cuenta">
+          <option value="">— Sin cuenta —</option>
+          ${cuentaOpts}
+        </select>
+      </div>
+    </div>
+    <div class="form-field"><label>Categoría</label><input type="text" id="ecm-cat" value="${escHtml(c.categoria||'')}"></div>
+  `,`
+    <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-primary" onclick="guardarEditCajaMov(${i})">💾 Guardar cambios</button>
+  `);
+}
+function guardarEditCajaMov(i){
+  const c=DB.caja[i];
+  if(!c)return;
+  const banco=document.getElementById('ecm-banco')?.value||'';
+  const cuenta=document.getElementById('ecm-cuenta')?.value||'';
+  c.fecha=document.getElementById('ecm-fecha')?.value||c.fecha;
+  c.tipo=document.getElementById('ecm-tipo')?.value||c.tipo;
+  c.monto=parseFloat(document.getElementById('ecm-monto')?.value||0);
+  c.moneda=document.getElementById('ecm-moneda')?.value||'RD$';
+  c.descripcion=document.getElementById('ecm-desc')?.value||c.descripcion;
+  c.categoria=document.getElementById('ecm-cat')?.value||c.categoria;
+  c.banco=banco;
+  c.cuenta=cuenta;
+  c.referencia=banco?(banco+(cuenta?' / '+cuenta:'')):(cuenta||c.referencia||'');
+  sDB('caja');
+  closeModal();
+  toast('Movimiento actualizado ✓','success');
+  renderCaja();
 }
 function exportarCajaPDF(){
   const mesEl=document.getElementById('caja-mes');
@@ -12228,6 +12298,65 @@ window.fbIniciar = async function(){
       }
       // Sincronizar status de vehículos con ventas (corrige casos como J-00049, J-00061, J-00040, etc.)
       sincronizarStatusVehiculos();
+      // ══ FIX PERMANENTE: asignar banco a registros de caja usando módulo Cuentas como fuente de verdad ══
+      (()=>{
+        const bcs=DB.config.bancoCuentas||[];
+        if(bcs.length===0)return;
+        // Construir mapa exhaustivo: cualquier forma del número → {banco, cuentaCanonica}
+        const mapaNum={};   // numero puro → {banco, tipo}
+        const mapaTipo={};  // "Tipo — Numero" → {banco}
+        const mapaRef={};   // "banco / Tipo — Numero" → {banco, cuenta}
+        bcs.forEach(b=>{
+          (b.cuentas||[]).forEach(ct=>{
+            const num=(ct.numero||'').trim();
+            const tipo=(ct.tipo||'').trim();
+            const clave=tipo+' — '+num;
+            if(num){
+              mapaNum[num]={banco:b.banco,tipo,clave};
+              mapaTipo[clave]={banco:b.banco,clave};
+              mapaRef[(b.banco+' / '+clave).toLowerCase()]={banco:b.banco,clave};
+            }
+          });
+        });
+        let _cajFixed=0;
+        (DB.caja||[]).forEach(mov=>{
+          if(mov.banco&&mov.banco.trim()!=='')return; // Ya tiene banco correcto → no tocar
+          const cuentaVal=(mov.cuenta||'').trim();
+          const refVal=(mov.referencia||'').trim();
+          let bancoFnd='', cuentaFnd='';
+          // 1) Match exacto por "Tipo — Numero"
+          if(mapaTipo[cuentaVal]){
+            bancoFnd=mapaTipo[cuentaVal].banco;
+            cuentaFnd=cuentaVal;
+          }
+          // 2) Match por número puro en campo cuenta
+          if(!bancoFnd&&mapaNum[cuentaVal]){
+            bancoFnd=mapaNum[cuentaVal].banco;
+            cuentaFnd=mapaNum[cuentaVal].clave;
+          }
+          // 3) Buscar si el campo cuenta contiene un número conocido (ej: "Corriente RD$ — 9604235409")
+          if(!bancoFnd){
+            const numKeys=Object.keys(mapaNum);
+            const found=numKeys.find(n=>cuentaVal.includes(n)||refVal.includes(n));
+            if(found){bancoFnd=mapaNum[found].banco;cuentaFnd=mapaNum[found].clave;}
+          }
+          // 4) Buscar por referencia completa
+          if(!bancoFnd&&mapaRef[refVal.toLowerCase()]){
+            bancoFnd=mapaRef[refVal.toLowerCase()].banco;
+            cuentaFnd=mapaRef[refVal.toLowerCase()].clave;
+          }
+          if(bancoFnd){
+            mov.banco=bancoFnd;
+            if(cuentaFnd)mov.cuenta=cuentaFnd;
+            mov.referencia=bancoFnd+(cuentaFnd?' / '+cuentaFnd:'');
+            _cajFixed++;
+          }
+        });
+        if(_cajFixed>0){
+          sDB('caja');
+          console.log('✅ Fix banco-caja: '+_cajFixed+' movimiento(s) corregidos usando módulo Cuentas');
+        }
+      })();
       // ══ CORRECCIÓN ÚNICA: re-vincular gastos huérfanos de J-00049 al ID correcto del vehículo ══
       (()=>{
         const vJ49=DB.vehiculos.find(v=>v.codigo==='J-00049');
