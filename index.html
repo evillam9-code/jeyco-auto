@@ -454,7 +454,9 @@ function getCuentasDeSelBanco(bancoSelId,selectedCuenta){
   if(!cuentaEl)return;
   const bcs=getBancoCuentas();
   const b=bcs.find(x=>x.banco===bancoEl.value);
-  const cuentas=b?b.cuentas:[];
+  const monedaEl=document.getElementById(bancoSelId.replace('banco','moneda'));
+  const monedaSel=monedaEl?.value||'';
+  const cuentas=(b?b.cuentas:[]).filter(c=>!monedaSel||(monedaSel==='USD'?(c.tipo||'').includes('USD'):(!(c.tipo||'').includes('USD'))));
   cuentaEl.innerHTML=cuentas.map(c=>`<option value="${escHtml(c.numero+' — '+c.tipo)}" ${(c.numero+' — '+c.tipo)===selectedCuenta?'selected':''}>${escHtml(c.banco||'')} ${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||'<option value="">Sin cuentas configuradas</option>';
 }
 /* ====== FUNCIÓN GLOBAL: Moneda → Banco → Cuenta ====== */
@@ -466,7 +468,7 @@ function htmlMonedaBancoCuenta(prefijo, monedaVal, bancoVal, cuentaVal){
   const bancoOpts=bcs.map(b2=>`<option value="${escHtml(b2.banco)}" ${b2.banco===bancoSel?'selected':''}>${escHtml(b2.banco)}</option>`).join('')||'<option value="Caja General">Caja General</option>';
   return `
     <div class="form-field"><label>Moneda</label>
-      <select id="${prefijo}-moneda">
+      <select id="${prefijo}-moneda" onchange="actualizarCuentasGenerico('${prefijo}')">
         <option value="RD$" ${(monedaVal||'RD$')==='RD$'?'selected':''}>RD$ — Pesos</option>
         <option value="USD" ${monedaVal==='USD'?'selected':''}>USD — Dólares</option>
       </select>
@@ -484,24 +486,40 @@ function actualizarCuentasGenerico(prefijo){
   if(!bancoEl||!cuentaEl)return;
   const bcs=DB.config.bancoCuentas||[];
   const b=bcs.find(x=>x.banco===bancoEl.value);
-  cuentaEl.innerHTML=(b?b.cuentas:[]).map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}">${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||'<option value="Caja General">Caja General</option>';
+  const monedaEl=document.getElementById(prefijo+'-moneda');
+  const monedaSel=monedaEl?.value||'';
+  const cuentas=(b?b.cuentas:[]).filter(c=>!monedaSel||(monedaSel==='USD'?(c.tipo||'').includes('USD'):(!(c.tipo||'').includes('USD'))));
+  cuentaEl.innerHTML=cuentas.map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}">${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||'<option value="Caja General">Caja General</option>';
 }
 /* ====== FIN FUNCIÓN GLOBAL ====== */
 
-function bancoCuentaHTML(bancoId,cuentaId,selectedBanco,selectedCuenta){
+function bancoCuentaHTML(bancoId,cuentaId,selectedBanco,selectedCuenta,monedaId){
   const bcs=getBancoCuentas();
   const bancoOpts=bcs.map(b=>`<option value="${escHtml(b.banco)}" ${b.banco===selectedBanco?'selected':''}>${escHtml(b.banco)}</option>`).join('')||'<option value="">Sin bancos configurados</option>';
   const b=bcs.find(x=>x.banco===selectedBanco);
   const cuentas=b?b.cuentas:[];
   const cuentaOpts=cuentas.map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}" ${(c.tipo+' — '+c.numero)===selectedCuenta?'selected':''}>${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||'<option value="">Seleccione banco primero</option>';
+  const onchg=monedaId?`getCuentasDeSelBancoConMoneda('${bancoId}','${monedaId}')`:`getCuentasDeSelBanco('${bancoId}','${cuentaId}')`;
   return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
     <div class="form-field" style="margin:0"><label style="font-size:10px">Banco</label>
-      <select id="${bancoId}" onchange="getCuentasDeSelBanco('${bancoId}','${cuentaId}')">${bancoOpts}</select>
+      <select id="${bancoId}" onchange="${onchg}">${bancoOpts}</select>
     </div>
     <div class="form-field" style="margin:0"><label style="font-size:10px">Cuenta</label>
       <select id="${cuentaId}">${cuentaOpts}</select>
     </div>
   </div>`;
+}
+function getCuentasDeSelBancoConMoneda(bancoId,monedaId){
+  const bancoEl=document.getElementById(bancoId);
+  const cuentaId=bancoId.replace('banco','cuenta');
+  const cuentaEl=document.getElementById(cuentaId);
+  if(!bancoEl||!cuentaEl)return;
+  const monedaEl=document.getElementById(monedaId);
+  const monedaSel=monedaEl?.value||'';
+  const bcs=getBancoCuentas();
+  const b=bcs.find(x=>x.banco===bancoEl.value);
+  const cuentas=(b?b.cuentas:[]).filter(c=>!monedaSel||(monedaSel==='USD'?(c.tipo||'').includes('USD'):(!(c.tipo||'').includes('USD'))));
+  cuentaEl.innerHTML=cuentas.map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}">${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||'<option value="">Sin cuentas para esta moneda</option>';
 }
 
 const titleCase=s=>s?s.replace(/\b\w/g,l=>l.toUpperCase()):'';
@@ -6239,7 +6257,7 @@ function editarGastoVeh(gid){
     </div>
     <div class="form-row c3">
       <div class="form-field"><label>Moneda</label>
-        <select id="egv-moneda" onchange="document.getElementById('egv-tasa-wrap').style.display=this.value==='USD'?'block':'none'">
+        <select id="egv-moneda" onchange="document.getElementById('egv-tasa-wrap').style.display=this.value==='USD'?'block':'none';actualizarCuentasGenerico('egv')">
           <option value="RD$" ${(g.moneda||'RD$')==='RD$'?'selected':''}>RD$ — Pesos</option>
           <option value="USD" ${g.moneda==='USD'?'selected':''}>USD — Dólares</option>
         </select>
@@ -7007,7 +7025,7 @@ function nuevaVenta(){
         </select>
       </div>
       <div class="form-field"><label>Moneda de Venta</label>
-        <select id="sv-moneda" onchange="toggleTasaVenta();calcPend()">
+        <select id="sv-moneda" onchange="toggleTasaVenta();calcPend();actualizarCuentasVenta()">
           <option value="RD$">RD$ — Pesos</option>
           <option value="USD">USD — Dólares</option>
         </select>
@@ -7754,7 +7772,7 @@ function editarVenta(vid){
     </div>
     <div class="form-row c3" style="margin-bottom:4px">
       <div class="form-field"><label>Moneda de Venta</label>
-        <select id="sv-moneda" onchange="toggleTasaVenta();calcPend()">
+        <select id="sv-moneda" onchange="toggleTasaVenta();calcPend();actualizarCuentasVenta()">
           <option value="RD$" ${(v.moneda||'RD$')==='RD$'?'selected':''}>RD$ — Pesos</option>
           <option value="USD" ${v.moneda==='USD'?'selected':''}>USD — Dólares</option>
         </select>
@@ -9757,7 +9775,7 @@ function nuevaCXCManual(){
     </div>
     <div class="form-row c3">
       <div class="form-field"><label>Moneda</label>
-        <select id="ncxc-moneda" onchange="toggleTasaCXC()">
+        <select id="ncxc-moneda" onchange="toggleTasaCXC();actualizarCuentasGenerico('ncxc')">
           <option value="RD$">RD$ — Pesos</option>
           <option value="USD">USD — Dólares</option>
         </select>
@@ -11315,7 +11333,7 @@ function nuevaFacturaExterna(){
     <div class="form-row c2">
       <div class="form-field"><label>Fecha</label><input type="date" id="fe-fecha" value="${today()}"></div>
       <div class="form-field"><label>Moneda</label>
-        <select id="fe-moneda"><option value="RD$">RD$ — Pesos</option><option value="USD">USD — Dólares</option></select>
+        <select id="fe-moneda" onchange="getCuentasDeSelBancoConMoneda('fe-banco','fe-moneda')"><option value="RD$">RD$ — Pesos</option><option value="USD">USD — Dólares</option></select>
       </div>
     </div>
     <div class="form-row c2">
