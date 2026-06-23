@@ -4859,6 +4859,8 @@ function agregarFilaCuentaNuevoBanco(){
         <option value="Corriente USD">Corriente USD</option>
         <option value="Ahorro RD$">Ahorro RD$</option>
         <option value="Ahorro USD">Ahorro USD</option>
+        <option value="Efectivo RD$">Efectivo RD$</option>
+        <option value="Efectivo USD">Efectivo USD</option>
       </select>
     </div>
     <button class="btn btn-red btn-sm" onclick="this.parentElement.remove()">✕</button>`;
@@ -4936,6 +4938,8 @@ function editarCuentaBanco(bi,ci){
           <option value="Corriente USD" ${c.tipo==='Corriente USD'?'selected':''}>Corriente USD</option>
           <option value="Ahorro RD$" ${c.tipo==='Ahorro RD$'?'selected':''}>Ahorro RD$</option>
           <option value="Ahorro USD" ${c.tipo==='Ahorro USD'?'selected':''}>Ahorro USD</option>
+          <option value="Efectivo RD$" ${c.tipo==='Efectivo RD$'?'selected':''}>Efectivo RD$</option>
+          <option value="Efectivo USD" ${c.tipo==='Efectivo USD'?'selected':''}>Efectivo USD</option>
         </select>
       </div>
     </div>
