@@ -2437,6 +2437,7 @@ function renderCaja(){
         <input type="month" id="caja-mes" value="${mes}" onchange="renderCaja()" style="padding:7px 12px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
         <button class="btn btn-secondary btn-sm" onclick="exportarCajaPDF()">PDF / Imprimir</button>
         <button class="btn btn-secondary btn-sm" onclick="window._fixAsignarBancosCaja(true)" title="Asignar bancos automáticamente a movimientos sin banco">🔧 Asignar Bancos</button>
+        <button class="btn btn-red btn-sm" onclick="eliminarMovSinBanco()" title="Eliminar todos los movimientos sin banco asignado">🗑 Eliminar Sin Banco</button>
         <button class="btn btn-green btn-sm" onclick="nuevoCajaMov('ENTRADA')">📥 Nueva Entrada</button>
         <button class="btn btn-red btn-sm" onclick="nuevoCajaMov('SALIDA')">📤 Nueva Salida</button>
       </div>
@@ -2613,6 +2614,35 @@ function guardarEditCajaMov(i){
   toast('Movimiento actualizado ✓','success');
   renderCaja();
 }
+
+// ══ ELIMINAR MOVIMIENTOS SIN BANCO ══
+function eliminarMovSinBanco(){
+  const sinBanco=(DB.caja||[]).filter(m=>!m.banco||m.banco.trim()==='');
+  if(sinBanco.length===0){toast('No hay movimientos sin banco','success');return;}
+  // Mostrar resumen antes de confirmar
+  const resumen=sinBanco.slice(0,5).map(m=>`• ${m.fecha||'—'} | ${m.descripcion||m.categoria||'Sin desc'} | ${fmt(m.monto)}`).join('\n');
+  const extra=sinBanco.length>5?`\n... y ${sinBanco.length-5} más`:'';
+  openModal('⚠️ Eliminar movimientos sin banco',`
+    <div style="background:var(--red2);border:1.5px solid var(--red);border-radius:8px;padding:12px 14px;margin-bottom:14px">
+      <div style="font-weight:700;color:var(--red);margin-bottom:6px">Se eliminarán ${sinBanco.length} movimiento(s) sin banco asignado:</div>
+      <pre style="font-size:12px;color:var(--navy);margin:0;white-space:pre-wrap">${resumen}${extra}</pre>
+    </div>
+    <div style="font-size:13px;color:var(--gray)">⚠️ Esta acción no se puede deshacer. Los saldos de caja se recalcularán.</div>
+  `,`
+    <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+    <button class="btn btn-red" onclick="confirmarEliminarSinBanco()">🗑 Sí, eliminar</button>
+  `);
+}
+function confirmarEliminarSinBanco(){
+  const antes=DB.caja.length;
+  DB.caja=(DB.caja||[]).filter(m=>m.banco&&m.banco.trim()!=='');
+  const eliminados=antes-DB.caja.length;
+  sDB('caja');
+  closeModal();
+  toast('✅ '+eliminados+' movimiento(s) eliminados','success');
+  renderCaja();
+}
+
 function exportarCajaPDF(){
   const mesEl=document.getElementById('caja-mes');
   const mes=mesEl?mesEl.value:(new Date().toISOString().slice(0,7));
