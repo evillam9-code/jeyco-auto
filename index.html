@@ -71,7 +71,7 @@ tr:hover td{background:#e8f0fe}
 .badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
 .badge-green{background:var(--green2);color:var(--green)}.badge-red{background:var(--red2);color:var(--red)}.badge-amber{background:var(--amber2);color:var(--amber)}.badge-blue{background:var(--blue3);color:var(--blue)}.badge-purple{background:var(--purple2);color:var(--purple)}.badge-gray{background:var(--gray2);color:var(--gray)}
 .form-row{display:grid;gap:14px;margin-bottom:14px}
-.form-row.c2{grid-template-columns:1fr 1fr}.form-row.c3{grid-template-columns:1fr 1fr 1fr}
+.form-row.c2{grid-template-columns:1fr 1fr}.form-row.c3{grid-template-columns:1fr 1fr 1fr}.form-row.c4{grid-template-columns:1fr 1fr 1fr 1fr}
 .form-field{margin-bottom:12px}
 .form-field label{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--gray);margin-bottom:6px}
 .required::after{content:" *";color:var(--red)}
@@ -320,6 +320,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
       <div class="page" id="page-usuarios"></div>
       <div class="page" id="page-alertas"></div>
       <div class="page" id="page-prestamos"></div>
+      <div class="page" id="page-consultaCuentas"></div>
       <div class="page" id="page-config"></div>
       <div class="page" id="page-gastosVeh"></div>
       <div class="page" id="page-cxp"></div>
@@ -368,6 +369,7 @@ const MENU_DEFS=[
   {id:'gastos',     label:'Gastos Empresa',       ico:'🏢', secDef:'FINANZAS'},
   {id:'nomina',     label:'Nómina',               ico:'👷', secDef:'FINANZAS'},
   {id:'caja',       label:'Caja',                 ico:'💳', secDef:'FINANZAS'},
+  {id:'consultaCuentas',label:'Consulta de Cuentas', ico:'🧾', secDef:'FINANZAS'},
   {id:'prestamos',  label:'Préstamos Bancos',     ico:'🏦', secDef:'FINANZAS'},
   {id:'cotizaciones',label:'Cotizaciones',         ico:'📋', secDef:'OTROS'},
   {id:'autorizaciones',label:'Autorización Compra',ico:'📝',secDef:'OTROS'},
@@ -435,6 +437,25 @@ function sDB(k){ss(k,DB[k]);}
 const _fmtN=(n,loc,opts)=>{try{return n.toLocaleString(loc,opts);}catch(e){return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');}};
 const fmt=n=>(DB.config.moneda||'RD$')+' '+_fmtN(parseFloat(n||0),'es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
 const fmtUSD=n=>'USD '+_fmtN(parseFloat(n||0),'en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+// ══ HELPER GLOBAL DE CONVERSIÓN DE MONEDA (RD$ ↔ USD) ══
+// Formatea un monto según SU PROPIA moneda real (no asume RD$ como fmt())
+const fmtMon=(n,moneda)=>(moneda==='USD'?fmtUSD(n):fmt(n));
+// Convierte un monto desde su moneda original a la otra moneda usando la tasa dada
+function convMoneda(n,monedaOrigen,tasa){
+  const t=parseFloat(tasa||DB.config.tasaCambio||60)||60;
+  const v=parseFloat(n||0);
+  return monedaOrigen==='USD'?v*t:v/t;
+}
+// Devuelve siempre el equivalente en RD$ de un monto, sin importar su moneda original
+function aRD(n,moneda,tasa){
+  return moneda==='USD'?convMoneda(n,'USD',tasa):parseFloat(n||0);
+}
+// Texto pequeño con el equivalente en la otra moneda, para mostrar junto al monto principal
+function fmtEquivalente(n,moneda,tasa){
+  const otra=moneda==='USD'?'RD$':'USD';
+  const conv=convMoneda(n,moneda,tasa);
+  return `≈ ${fmtMon(conv,otra)}`;
+}
 const today=()=>new Date().toISOString().split('T')[0];
 const fmtDate=d=>{if(!d)return '—';try{return new Date(d+'T12:00:00').toLocaleDateString('es-DO',{day:'2-digit',month:'short',year:'numeric'})}catch{return d}};
 const uid=()=>'id'+Date.now()+Math.random().toString(36).slice(2,6);
@@ -486,11 +507,14 @@ function htmlMonedaBancoCuenta(prefijo, monedaVal, bancoVal, cuentaVal){
 function actualizarCuentasGenerico(prefijo){
   const bancoEl=document.getElementById(prefijo+'-banco');
   const cuentaEl=document.getElementById(prefijo+'-cuenta');
+  const monedaEl=document.getElementById(prefijo+'-moneda');
+  const monedaSel=monedaEl?.value||'';
+  // Mostrar/ocultar campo de tasa de cambio si el módulo lo tiene (id: prefijo-tasa-wrap)
+  const tasaWrap=document.getElementById(prefijo+'-tasa-wrap');
+  if(tasaWrap)tasaWrap.style.display=monedaSel==='USD'?'block':'none';
   if(!bancoEl||!cuentaEl)return;
   const bcs=DB.config.bancoCuentas||[];
   const b=bcs.find(x=>x.banco===bancoEl.value);
-  const monedaEl=document.getElementById(prefijo+'-moneda');
-  const monedaSel=monedaEl?.value||'';
   const cuentas=(b?b.cuentas:[]).filter(c=>!monedaSel||(monedaSel==='USD'?(c.tipo||'').includes('USD'):(!(c.tipo||'').includes('USD'))));
   cuentaEl.innerHTML=cuentas.map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}">${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||(monedaSel?`<option value="">— Sin cuentas ${monedaSel==='USD'?'USD':'RD$'} en este banco —</option>`:'<option value="">— Seleccione banco —</option>');
 }
@@ -555,7 +579,7 @@ function confirmarResetDatos2(){
   }, 200);
 }
 function ejecutarResetDatos(){
-  const keys=['vehiculos','clientes','suplidores','ventas','cotizaciones','caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones'];
+  const keys=['vehiculos','clientes','suplidores','ventas','cotizaciones','caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos'];
   keys.forEach(k=>{DB[k]=[];localStorage.removeItem(k);});
   keys.forEach(k=>{if(window._fbActivo)fbGuardar(k);});
   closeModal();toast('Datos limpiados ✓','success');showPage('dashboard');
@@ -912,9 +936,9 @@ function _consultasDatos(){
     const cxcVenta=venta?(DB.cxc||[]).find(c=>c.ventaId===venta.id&&!c.esTraspaso):null;
     const cxcTrasp=venta?(DB.cxc||[]).find(c=>c.ventaId===venta.id&&c.esTraspaso):null;
     const gastosVeh=(DB.gastosVehiculos||[]).filter(g=>g.vehiculoId===v.id);
-    const totalCostos=gastosVeh.reduce((a,g)=>a+parseFloat(g.montoFactura||g.monto||0),0);
+    const totalCostos=gastosVeh.reduce((a,g)=>a+aRD(g.montoFactura||g.monto||0,g.moneda,g.tasaCambio),0);
     const seguro=(DB.seguros||[]).find(s=>s.vehiculoId===v.id);
-    const beneficio=venta?parseFloat(venta.precioVenta||0)-totalCostos:null;
+    const beneficio=venta?aRD(venta.precioVenta||0,venta.moneda,venta.tasaCambio)-totalCostos:null;
     let estadoDinamico=v.status||'—';
     if(venta){
       const pendVenta=cxcVenta?parseFloat(cxcVenta.saldo||0):0;
@@ -972,7 +996,7 @@ function _renderConsultasTabla(){
       <td style="font-size:12px">${escHtml(v.suplidor||'—')}</td>
       <td><span class="badge ${sc[estadoDinamico]||'badge-gray'}">${estadoDinamico==='TRÁNSITO'?'EN TRÁNSITO':estadoDinamico}</span></td>
       <td style="font-size:12px">${escHtml(venta?.cliente||'—')}</td>
-      <td style="font-weight:700;color:${cxcVenta&&parseFloat(cxcVenta.saldo||0)>0?'var(--red)':'var(--green)'}">${cxcVenta?fmt(cxcVenta.saldo||0):'—'}</td>
+      <td style="font-weight:700;color:${cxcVenta&&parseFloat(cxcVenta.saldo||0)>0?'var(--red)':'var(--green)'}">${cxcVenta?fmtMon(cxcVenta.saldo||0,cxcVenta.moneda||'RD$'):'—'}</td>
       <td style="font-weight:700;color:${cxcTrasp&&parseFloat(cxcTrasp.saldo||0)>0?'#c2410c':'var(--green)'}">${cxcTrasp?fmt(cxcTrasp.saldo||0):'—'}</td>
       <td style="font-weight:800;color:${beneficio===null?'var(--gray)':beneficio>=0?'var(--green)':'var(--red)'}">${beneficio===null?'—':fmt(beneficio)}</td>
       <td><button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();abrirFichaVehiculo('${v.id}')">📄 Ficha</button></td>
@@ -995,10 +1019,10 @@ function abrirFichaVehiculo(vehiculoId){
   const gastosVeh=(DB.gastosVehiculos||[]).filter(g=>g.vehiculoId===v.id);
   const cxpRel=(DB.cxp||[]).filter(g=>g.vehiculoId===v.id);
   const seguro=(DB.seguros||[]).find(s=>s.vehiculoId===v.id);
-  const totalCostos=gastosVeh.reduce((a,g)=>a+parseFloat(g.montoFactura||g.monto||0),0)+cxpRel.reduce((a,g)=>a+parseFloat(g.montoFactura||0),0);
+  const totalCostos=gastosVeh.reduce((a,g)=>a+aRD(g.montoFactura||g.monto||0,g.moneda,g.tasaCambio),0)+cxpRel.reduce((a,g)=>a+aRD(g.montoFactura||0,g.moneda,g.tasaCambio),0);
   const totalCostosPagado=gastosVeh.reduce((a,g)=>a+parseFloat(g.montoPagado||0),0)+cxpRel.reduce((a,g)=>a+parseFloat(g.montoPagado||0),0);
   const totalCostosPend=totalCostos-totalCostosPagado;
-  const beneficio=venta?parseFloat(venta.precioVenta||0)-totalCostos:null;
+  const beneficio=venta?aRD(venta.precioVenta||0,venta.moneda,venta.tasaCambio)-totalCostos:null;
   const empresa=DB.config.empresa||'JEYCO AUTO';
   const logo=DB.config.logoData||DB.config.logo||'';
   const sc={ACTIVO:'#16a34a',VENDIDO:'#2563eb',ADUANA:'#d97706','TRÁNSITO':'#7c3aed','EN EEUU':'#64748b'};
@@ -1012,15 +1036,17 @@ function abrirFichaVehiculo(vehiculoId){
   const tabPagos=(cxc,titulo,color)=>{
     if(!cxc)return'';
     const pagos=cxc.pagos||[];
+    const mnd=cxc.moneda||'RD$';
     return`<div class="sec">
       <div class="sec-titulo" style="background:${color}">${titulo}</div>
       <div class="resumen">
-        <div class="resumen-row"><span>Total</span><span style="font-weight:700">${fmt(cxc.total||0)}</span></div>
-        <div class="resumen-row"><span>Cobrado</span><span style="color:#16a34a;font-weight:700">${fmt(cxc.abonado||0)}</span></div>
-        <div class="resumen-row"><span>${parseFloat(cxc.saldo||0)>0?'⏳ Pendiente':'✅ Saldado'}</span><span style="font-weight:800;color:${parseFloat(cxc.saldo||0)>0?'#dc2626':'#16a34a'}">${fmt(cxc.saldo||0)}</span></div>
+        <div class="resumen-row"><span>Total</span><span style="font-weight:700">${fmtMon(cxc.total||0,mnd)}</span></div>
+        <div class="resumen-row"><span>Cobrado</span><span style="color:#16a34a;font-weight:700">${fmtMon(cxc.abonado||0,mnd)}</span></div>
+        <div class="resumen-row"><span>${parseFloat(cxc.saldo||0)>0?'⏳ Pendiente':'✅ Saldado'}</span><span style="font-weight:800;color:${parseFloat(cxc.saldo||0)>0?'#dc2626':'#16a34a'}">${fmtMon(cxc.saldo||0,mnd)}</span></div>
+        ${mnd==='USD'?`<div class="resumen-row" style="font-size:11px;color:#94a3b8"><span></span><span>${fmtEquivalente(cxc.saldo||0,mnd,cxc.tasaCambio)} pendiente</span></div>`:''}
       </div>
       ${pagos.length?`<table style="margin-top:6px"><thead><tr><th>Fecha</th><th>Monto</th><th>Cuenta</th><th>Nota</th></tr></thead><tbody>
-        ${pagos.map(p=>`<tr><td>${fmtDate(p.fecha)}</td><td style="font-weight:700;color:#16a34a">${fmt(p.monto)}</td><td>${escHtml(p.cuenta||'—')}</td><td>${escHtml(p.nota||'—')}</td></tr>`).join('')}
+        ${pagos.map(p=>`<tr><td>${fmtDate(p.fecha)}</td><td style="font-weight:700;color:#16a34a">${fmtMon(p.monto,p.moneda||mnd)}</td><td>${escHtml(p.cuenta||'—')}</td><td>${escHtml(p.nota||'—')}</td></tr>`).join('')}
       </tbody></table>`:'<div style="font-size:11px;color:#94a3b8;padding:6px">Sin pagos registrados</div>'}
     </div>`;
   };
@@ -1097,7 +1123,7 @@ function abrirFichaVehiculo(vehiculoId){
   ${venta?`
   <div class="grid3">
     <div class="stat" style="background:#fef3c7"><div style="font-size:9px;color:#92400e;font-weight:700">TOTAL GASTOS</div><div style="font-weight:800;font-size:13px;color:#92400e">${fmt(totalCostos)}</div></div>
-    <div class="stat" style="background:#eff6ff"><div style="font-size:9px;color:#1d4ed8;font-weight:700">PRECIO VENTA</div><div style="font-weight:800;font-size:13px">${fmt(venta.precioVenta||0)}</div></div>
+    <div class="stat" style="background:#eff6ff"><div style="font-size:9px;color:#1d4ed8;font-weight:700">PRECIO VENTA</div><div style="font-weight:900;font-size:17px">${fmtMon(venta.precioVenta||0,venta.moneda)}</div>${venta.moneda==='USD'?`<div style="font-size:10px;color:#64748b;margin-top:2px;font-weight:600">${fmtEquivalente(venta.precioVenta||0,venta.moneda,venta.tasaCambio)} <span style="color:#94a3b8">(tasa ${parseFloat(venta.tasaCambio||DB.config.tasaCambio||60).toFixed(2)})</span></div>`:''}</div>
     <div class="stat" style="background:${beneficio>=0?'#f0fdf4':'#fef2f2'}"><div style="font-size:9px;color:${beneficio>=0?'#16a34a':'#dc2626'};font-weight:700">BENEFICIO (Venta - Costos)</div><div style="font-weight:900;font-size:15px;color:${beneficio>=0?'#16a34a':'#dc2626'}">${fmt(beneficio)}</div></div>
   </div>
   <div class="veh-sub" style="margin-bottom:10px">Factura: <strong style="font-family:monospace">${escHtml(venta.factura||'—')}</strong> · Fecha de venta: <strong>${fmtDate(venta.fecha)}</strong></div>
@@ -1417,7 +1443,7 @@ function showPage(id){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   const sb=document.getElementById('sidebar');const ov=document.getElementById('sidebar-overlay');
   if(sb&&window.innerWidth<=768){sb.classList.remove('open');if(ov)ov.classList.remove('open');}
-  const r={dashboard:renderDashboard,inventario:renderInventario,ventas:renderVentas,cotizaciones:renderCotizaciones,clientes:renderClientes,suplidores:renderSuplidores,caja:renderCaja,gastos:renderGastos,nomina:renderNomina,informes:renderInformes,usuarios:renderUsuarios,config:renderConfig,gastosVeh:renderGastosVeh,cxp:renderCXP,cxc:renderCXC,autorizaciones:renderAutorizaciones,seguros:renderSeguros,facturaExterna:renderFacturaExterna,alertas:renderAlertas,chat:renderChat,cumpleanos:renderCumpleanos,cuentas:renderCuentas,backup:renderBackup,bitacora:renderBitacora,prestamos:renderPrestamos,consultas:renderConsultas};
+  const r={dashboard:renderDashboard,inventario:renderInventario,ventas:renderVentas,cotizaciones:renderCotizaciones,clientes:renderClientes,suplidores:renderSuplidores,caja:renderCaja,consultaCuentas:renderConsultaCuentas,gastos:renderGastos,nomina:renderNomina,informes:renderInformes,usuarios:renderUsuarios,config:renderConfig,gastosVeh:renderGastosVeh,cxp:renderCXP,cxc:renderCXC,autorizaciones:renderAutorizaciones,seguros:renderSeguros,facturaExterna:renderFacturaExterna,alertas:renderAlertas,chat:renderChat,cumpleanos:renderCumpleanos,cuentas:renderCuentas,backup:renderBackup,bitacora:renderBitacora,prestamos:renderPrestamos,consultas:renderConsultas};
   // Refresh Firebase si han pasado más de 60 segundos
   const ahora=Date.now();
   if(window._fbActivo&&window._fbCargado&&(!window._lastFbRefresh||ahora-window._lastFbRefresh>60000)){
@@ -1468,7 +1494,7 @@ function checkAlerts(){
     if(cxcPend.length>0){const t=cxcPend.reduce((a,x)=>a+parseFloat(x.saldo||0),0);showNotif(cxcPend.length+' cuenta(s) por cobrar pendientes','Total: '+fmt(t),'warning');}
   }
   if(puedeVer('CXC_VENCIDA')){
-    (DB.cxc||[]).filter(x=>(x.status==='PENDIENTE'||x.status==='PARCIAL')&&x.fechaVence&&x.fechaVence<=hoy).forEach(x=>{showNotif('⚠️ CxC VENCIDA: '+x.cliente,'Vence: '+fmtDate(x.fechaVence)+' — '+fmt(x.saldo),'danger');});
+    (DB.cxc||[]).filter(x=>(x.status==='PENDIENTE'||x.status==='PARCIAL')&&x.fechaVence&&x.fechaVence<=hoy).forEach(x=>{showNotif('⚠️ CxC VENCIDA: '+x.cliente,'Vence: '+fmtDate(x.fechaVence)+' — '+fmtMon(x.saldo,x.moneda||'RD$'),'danger');});
   }
   if(puedeVer('DOCS')){
     const docsPend=DB.ventas.filter(v=>v.docsPendientes&&v.fechaLimDocs);
@@ -2347,7 +2373,20 @@ function agregarGastoVeh(vid){
   DB.caja.push({id:uid(),fecha:g.fecha,tipo:'SALIDA',categoria:'Gasto de Vehículo',descripcion:`Gasto [${DB.vehiculos.find(v=>v.id===vid)?.codigo||vid}]: ${g.tipo} — ${g.descripcion}`,monto,referencia:g.cuenta,responsable:currentUser?.nombre||''});
   sDB('gastosVehiculos');sDB('caja');toast('Gasto agregado ✓','success');gastosVehiculo(vid);
 }
-function eliminarGastoVeh(gid,vid){if(currentUser?.role!=='admin'&&!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}DB.gastosVehiculos=(DB.gastosVehiculos||[]).filter(g=>g.id!==gid);sDB('gastosVehiculos');toast('Eliminado','success');gastosVehiculo(vid);}
+function eliminarGastoVeh(gid,vid){
+  if(currentUser?.role!=='admin'&&!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}
+  DB.gastosVehiculos=(DB.gastosVehiculos||[]).filter(g=>g.id!==gid);
+  const antesCaja=DB.caja.length;
+  DB.caja=(DB.caja||[]).filter(c=>!(c.origenModulo==='gastosVehiculos'&&c.origenId===gid));
+  if(DB.caja.length!==antesCaja)sDB('caja');
+  const iv=DB.vehiculos.findIndex(v=>v.id===vid);
+  if(iv>=0){
+    const totalGastos=DB.gastosVehiculos.filter(x=>x.vehiculoId===vid).reduce((a,x)=>a+aRD(x.montoFactura||0,x.moneda,x.tasaCambio),0);
+    DB.vehiculos[iv].costo=totalGastos;
+    sDB('vehiculos');
+  }
+  sDB('gastosVehiculos');toast('Eliminado','success');gastosVehiculo(vid);
+}
 
 function imprimirGastosVehiculo(vid){
   const v=DB.vehiculos.find(x=>x.id===vid);if(!v)return;
@@ -2376,10 +2415,41 @@ function renderCaja(){
   const balUSD=entradasUSD-salidasUSD;
   const ventasMes=DB.ventas.filter(v=>v.fecha?.startsWith(mes)).reduce((a,v)=>a+parseFloat(v.precioVenta||0),0);
 
+  // Normalizar nombre de banco para evitar duplicados por mayúsculas/espacios/formato distinto.
+  // Usa como referencia el nombre EXACTO configurado en el módulo Bancos (las cuentas reales);
+  // si el movimiento de Caja tiene el banco escrito distinto (mayúsculas, espacios, etc.) pero
+  // coincide sin esas diferencias, se usa el nombre canónico configurado.
+  const _bancosCanonicos={};
+  (DB.config.bancoCuentas||[]).forEach(b=>{if(b.banco)_bancosCanonicos[b.banco.trim().toLowerCase()]=b.banco.trim();});
+  function normalizarBanco(b){
+    if(!b)return b;
+    const key=b.trim().toLowerCase();
+    if(_bancosCanonicos[key])return _bancosCanonicos[key];
+    return b.trim();
+  }
+
+  // Todas las cuentas configuradas en el módulo Bancos — se muestran SIEMPRE, aunque tengan RD$0 en movimientos
+  const ALL_ACCOUNTS=[];
+  (DB.config.bancoCuentas||[]).forEach(b=>{
+    const bancoNorm=normalizarBanco(b.banco);
+    (b.cuentas||[]).forEach(c=>{
+      const tipo=c.tipo||'';
+      const isEfectivo=tipo.toLowerCase().includes('efectivo');
+      const isUSD=tipo.includes('USD')||tipo.includes('Dólares');
+      const moneda=isUSD?'USD':'RD$';
+      const cuentaLabel=tipo+' — '+c.numero;
+      ALL_ACCOUNTS.push({banco:isEfectivo?'💵 Efectivo':bancoNorm,cuenta:cuentaLabel,moneda});
+    });
+  });
+
   // Saldo ACUMULADO por cuenta (todos los movimientos históricos)
   const cuentasAcum={};
+  ALL_ACCOUNTS.forEach(a=>{
+    const key=`${a.banco}||${a.cuenta}||${a.moneda}`;
+    cuentasAcum[key]={banco:a.banco,cuenta:a.cuenta,moneda:a.moneda,entradas:0,salidas:0};
+  });
   DB.caja.forEach(c=>{
-    const banco=c.banco||'Sin banco';
+    const banco=normalizarBanco(c.banco)||'Sin banco';
     const cuenta=c.cuenta||'Sin cuenta';
     const moneda=c.moneda||'RD$';
     const key=`${banco}||${cuenta}||${moneda}`;
@@ -2388,10 +2458,14 @@ function renderCaja(){
     else cuentasAcum[key].salidas+=parseFloat(c.monto||0);
   });
 
-  // Saldo del MES por cuenta
+  // Saldo del MES por cuenta (también parte de todas las cuentas configuradas)
   const cuentasMes={};
+  ALL_ACCOUNTS.forEach(a=>{
+    const key=`${a.banco}||${a.cuenta}||${a.moneda}`;
+    cuentasMes[key]={banco:a.banco,cuenta:a.cuenta,moneda:a.moneda,entradas:0,salidas:0};
+  });
   cajaFilt.forEach(c=>{
-    const banco=c.banco||'Sin banco';
+    const banco=normalizarBanco(c.banco)||'Sin banco';
     const cuenta=c.cuenta||'Sin cuenta';
     const moneda=c.moneda||'RD$';
     const key=`${banco}||${cuenta}||${moneda}`;
@@ -2562,6 +2636,168 @@ function renderCaja(){
     </div>`;
   document.getElementById('caja-mes').value=mes;
   document.getElementById('caja-tab').value=tab;
+}
+// ══ MÓDULO CONSULTA DE CUENTAS (igual que Fayre) ══
+// Quita el sufijo "(banco)" que algunas cuentas antiguas pudieran tener al final
+function limpiarCuenta(c){
+  if(!c)return c;
+  return c.replace(/\s*\([^)]+\)$/,'').trim();
+}
+// Normaliza el nombre del banco para que coincida sin importar mayúsculas/espacios,
+// usando como referencia el nombre EXACTO configurado en el módulo Bancos (las cuentas reales)
+function normalizarBancoGlobal(b){
+  if(!b)return b;
+  const key=b.trim().toLowerCase();
+  const canon=(DB.config.bancoCuentas||[]).find(x=>(x.banco||'').trim().toLowerCase()===key);
+  return canon?canon.banco.trim():b.trim();
+}
+// Traduce la categoría de un movimiento de Caja al módulo de origen (para mostrar de dónde vino el pago)
+function moduloOrigenCaja(categoria){
+  const c=(categoria||'').toLowerCase();
+  const mapa={
+    'cobro cxc':'Cuentas por Cobrar','cxc manual':'Cuentas por Cobrar','cobro de venta':'Cuentas por Cobrar',
+    'cxp manual':'Cuentas por Pagar','cxp usd':'Cuentas por Pagar','pago a suplidor':'Cuentas por Pagar',
+    'gasto de empresa':'Gastos Empresa','gasto de vehículo':'Gastos de Vehículo',
+    'nómina/salario':'Nómina','venta de vehículo':'Ventas','factura externa':'Facturas Externas',
+    'seguro vehículo':'Seguros','préstamo':'Préstamos Bancos'
+  };
+  if(mapa[c])return mapa[c];
+  if(c.includes('cxc'))return 'Cuentas por Cobrar';
+  if(c.includes('cxp')||c.includes('suplidor'))return 'Cuentas por Pagar';
+  if(c.includes('préstamo')||c.includes('prestamo')||c.includes('línea')||c.includes('linea')||c.includes('capital')||c.includes('interés')||c.includes('interes'))return 'Préstamos Bancos';
+  if(c.includes('seguro'))return 'Seguros';
+  if(c.includes('gasto')&&(c.includes('vehíc')||c.includes('vehic')))return 'Gastos de Vehículo';
+  if(c.includes('gasto'))return 'Gastos Empresa';
+  if(c.includes('nómina')||c.includes('nomina'))return 'Nómina';
+  if(c.includes('venta'))return 'Ventas';
+  if(c.includes('factura'))return 'Facturas Externas';
+  if(c.includes('cuadre')||c.includes('ajuste')||c.includes('mov. cta'))return 'Ajuste / Cuadre de Caja';
+  return 'Caja (Manual)';
+}
+function renderConsultaCuentas(){
+  const bcs=DB.config.bancoCuentas||[];
+  const bancoSel=document.getElementById('cc-banco')?.value||(bcs[0]?bcs[0].banco:'');
+  const bancoObj=bcs.find(b=>b.banco===bancoSel)||bcs[0];
+  const primeraCuenta=bancoObj&&bancoObj.cuentas&&bancoObj.cuentas[0]?(bancoObj.cuentas[0].tipo+' — '+bancoObj.cuentas[0].numero):'';
+  const cuentaSel=document.getElementById('cc-cuenta')?.value||primeraCuenta;
+  const desde=document.getElementById('cc-desde')?.value||'';
+  const hasta=document.getElementById('cc-hasta')?.value||'';
+
+  const bancoOpts=bcs.map(b=>`<option value="${escHtml(b.banco)}" ${b.banco===bancoSel?'selected':''}>${escHtml(b.banco)}</option>`).join('')||'<option value="">Sin bancos configurados</option>';
+  const cuentaOpts=(bancoObj?.cuentas||[]).map(c=>{const v=c.tipo+' — '+c.numero;return`<option value="${escHtml(v)}" ${v===cuentaSel?'selected':''}>${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`;}).join('')||'<option value="">Sin cuentas</option>';
+
+  let movs=DB.caja.filter(c=>normalizarBancoGlobal(c.banco)===normalizarBancoGlobal(bancoSel)&&limpiarCuenta(c.cuenta||'')===limpiarCuenta(cuentaSel));
+  if(desde)movs=movs.filter(c=>c.fecha&&c.fecha>=desde);
+  if(hasta)movs=movs.filter(c=>c.fecha&&c.fecha<=hasta);
+  movs=movs.slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+
+  const cuentaInfo=(bancoObj?.cuentas||[]).find(c=>(c.tipo+' — '+c.numero)===cuentaSel);
+  const esUSD=cuentaInfo?(cuentaInfo.tipo.includes('USD')||cuentaInfo.tipo.includes('Dólares')):false;
+  const fV=n=>esUSD?fmtUSD(n):fmt(n);
+
+  const entradas=movs.filter(m=>m.tipo==='ENTRADA').reduce((a,m)=>a+parseFloat(m.monto||0),0);
+  const salidas=movs.filter(m=>m.tipo==='SALIDA').reduce((a,m)=>a+parseFloat(m.monto||0),0);
+  const saldo=entradas-salidas;
+
+  document.getElementById('page-consultaCuentas').innerHTML=`
+    <div class="page-header">
+      <div><h1>🧾 Consulta de Cuentas</h1><p>Estado de cuenta consolidado — incluye movimientos de todos los módulos del sistema</p></div>
+      <button class="btn btn-primary" ${movs.length?'':'disabled'} onclick="exportarConsultaCuentasPDF()">🖨️ Imprimir / Exportar PDF</button>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="form-row c4">
+        <div class="form-field"><label>Banco</label><select id="cc-banco" onchange="renderConsultaCuentas()">${bancoOpts}</select></div>
+        <div class="form-field"><label>Cuenta</label><select id="cc-cuenta" onchange="renderConsultaCuentas()">${cuentaOpts}</select></div>
+        <div class="form-field"><label>Desde</label><input type="date" id="cc-desde" value="${desde}" onchange="renderConsultaCuentas()"></div>
+        <div class="form-field"><label>Hasta</label><input type="date" id="cc-hasta" value="${hasta}" onchange="renderConsultaCuentas()"></div>
+      </div>
+      <div style="font-size:11px;color:var(--gray);margin-top:2px">${desde||hasta?`Mostrando movimientos ${desde?'desde '+fmtDate(desde)+' ':''}${hasta?'hasta '+fmtDate(hasta):''}`:'Mostrando todo el historial disponible para esta cuenta.'}</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
+      <div class="card" style="text-align:center;background:var(--green2);margin-bottom:0"><div style="font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.5px">Total Entradas</div><div style="font-size:20px;font-weight:900;color:var(--green)">${fV(entradas)}</div></div>
+      <div class="card" style="text-align:center;background:var(--red2);margin-bottom:0"><div style="font-size:10px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.5px">Total Salidas</div><div style="font-size:20px;font-weight:900;color:var(--red)">${fV(salidas)}</div></div>
+      <div class="card" style="text-align:center;background:${saldo>=0?'var(--green2)':'var(--red2)'};margin-bottom:0"><div style="font-size:10px;font-weight:700;color:${saldo>=0?'var(--green)':'var(--red)'};text-transform:uppercase;letter-spacing:.5px">Saldo del Período</div><div style="font-size:20px;font-weight:900;color:${saldo>=0?'var(--green)':'var(--red)'}">${fV(saldo)}</div></div>
+    </div>
+    <div class="card">
+      <div class="table-wrap"><table id="cc-tbl">
+        <thead><tr><th>Fecha</th><th>Módulo de Origen</th><th>Descripción</th><th>Tipo</th><th>Monto</th></tr></thead>
+        <tbody>${movs.length?movs.map(m=>`<tr>
+          <td>${fmtDate(m.fecha)}</td>
+          <td><span class="badge badge-gray">${escHtml(moduloOrigenCaja(m.categoria))}</span></td>
+          <td>${escHtml(m.descripcion||'—')}</td>
+          <td><span class="badge ${m.tipo==='ENTRADA'?'badge-green':'badge-red'}">${m.tipo==='ENTRADA'?'📥 Entrada':'📤 Salida'}</span></td>
+          <td style="font-weight:700;color:${m.tipo==='ENTRADA'?'var(--green)':'var(--red)'}">${fV(m.monto)}</td>
+        </tr>`).join(''):'<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--gray)">Sin movimientos para esta cuenta en el período seleccionado</td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+}
+function exportarConsultaCuentasPDF(){
+  const bcs=DB.config.bancoCuentas||[];
+  const bancoSel=document.getElementById('cc-banco')?.value||'';
+  const cuentaSel=document.getElementById('cc-cuenta')?.value||'';
+  const desde=document.getElementById('cc-desde')?.value||'';
+  const hasta=document.getElementById('cc-hasta')?.value||'';
+  const bancoObj=bcs.find(b=>b.banco===bancoSel);
+  const cuentaInfo=(bancoObj?.cuentas||[]).find(c=>(c.tipo+' — '+c.numero)===cuentaSel);
+  const moneda=cuentaInfo?(cuentaInfo.tipo.includes('USD')||cuentaInfo.tipo.includes('Dólares')?'USD':'RD$'):'RD$';
+  const esUSD=moneda==='USD';
+  const fV=n=>esUSD?fmtUSD(n):fmt(n);
+
+  let movs=DB.caja.filter(c=>normalizarBancoGlobal(c.banco)===normalizarBancoGlobal(bancoSel)&&limpiarCuenta(c.cuenta||'')===limpiarCuenta(cuentaSel));
+  if(desde)movs=movs.filter(c=>c.fecha&&c.fecha>=desde);
+  if(hasta)movs=movs.filter(c=>c.fecha&&c.fecha<=hasta);
+  movs=movs.slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+  const entradas=movs.filter(m=>m.tipo==='ENTRADA').reduce((a,m)=>a+parseFloat(m.monto||0),0);
+  const salidas=movs.filter(m=>m.tipo==='SALIDA').reduce((a,m)=>a+parseFloat(m.monto||0),0);
+  const saldo=entradas-salidas;
+  const periodoLabel=desde||hasta?`${desde?fmtDate(desde):'Inicio'} al ${hasta?fmtDate(hasta):'Hoy'}`:'Todo el historial';
+  const empresa=DB.config.empresa||'JEYCO AUTO';
+
+  const win=window.open('','_blank','width=900,height=650');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Consulta de Cuentas</title>
+  <style>body{font-family:Arial,sans-serif;padding:24px;font-size:12px;color:#0f172a}
+  @page{size:letter portrait;margin:12mm}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #2563eb;padding-bottom:12px;margin-bottom:16px}
+  h2{font-size:17px;margin:0}p{margin:4px 0;color:#6b7280;font-size:11px}
+  .cuenta-box{background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:14px 18px;margin-bottom:16px;display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .cuenta-item-label{font-size:9px;text-transform:uppercase;color:#6b7280;font-weight:700;margin-bottom:3px}
+  .cuenta-item-val{font-size:13px;font-weight:800}
+  .resumen{display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap}
+  .res-box{flex:1;min-width:140px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;text-align:center}
+  .res-label{font-size:10px;text-transform:uppercase;color:#6b7280;font-weight:700;margin-bottom:4px}
+  .res-val{font-size:18px;font-weight:800}
+  table{width:100%;border-collapse:collapse}
+  th{background:#0f172a;color:#fff;padding:8px 10px;font-size:10px;text-align:left;text-transform:uppercase}
+  td{padding:7px 10px;border-bottom:1px solid #e2e8f0;font-size:11px}
+  tr:nth-child(even) td{background:#f8fafc}
+  .ent{color:#16a34a;font-weight:700}.sal{color:#dc2626;font-weight:700}
+  @media print{button{display:none}}</style></head><body>
+  <div class="hdr">
+    <div>${DB.config.logoData?`<img src="${DB.config.logoData}" style="max-height:46px;margin-bottom:6px;display:block">`:''}<h2>${escHtml(empresa)}</h2><p>Estado de cuenta — Período: ${periodoLabel}</p></div>
+    <div style="text-align:right;font-size:11px;color:#6b7280">Fecha de impresión: ${fmtDate(today())}<br>Total movimientos: ${movs.length}</div>
+  </div>
+  <div class="cuenta-box">
+    <div><div class="cuenta-item-label">Banco</div><div class="cuenta-item-val">${escHtml(bancoSel||'—')}</div></div>
+    <div><div class="cuenta-item-label">Moneda</div><div class="cuenta-item-val">${moneda}</div></div>
+    <div><div class="cuenta-item-label">Cuenta</div><div class="cuenta-item-val">${escHtml(cuentaSel||'—')}</div></div>
+    <div><div class="cuenta-item-label">Saldo del Período</div><div class="cuenta-item-val" style="color:${saldo>=0?'#16a34a':'#dc2626'}">${fV(saldo)}</div></div>
+  </div>
+  <div class="resumen">
+    <div class="res-box"><div class="res-label">Total Entradas</div><div class="res-val" style="color:#16a34a">${fV(entradas)}</div></div>
+    <div class="res-box"><div class="res-label">Total Salidas</div><div class="res-val" style="color:#dc2626">${fV(salidas)}</div></div>
+    <div class="res-box"><div class="res-label">Saldo</div><div class="res-val" style="color:${saldo>=0?'#16a34a':'#dc2626'}">${fV(saldo)}</div></div>
+  </div>
+  <table><thead><tr><th>Fecha</th><th>Módulo de Origen</th><th>Descripción</th><th>Tipo</th><th>Monto</th></tr></thead>
+  <tbody>${movs.map(m=>`<tr>
+    <td>${fmtDate(m.fecha)}</td>
+    <td>${escHtml(moduloOrigenCaja(m.categoria))}</td>
+    <td>${escHtml(m.descripcion||'—')}</td>
+    <td class="${m.tipo==='ENTRADA'?'ent':'sal'}">${m.tipo}</td>
+    <td class="${m.tipo==='ENTRADA'?'ent':'sal'}">${fV(m.monto)}</td>
+  </tr>`).join('')||'<tr><td colspan="5" style="text-align:center;padding:16px;color:#6b7280">Sin movimientos en este período</td></tr>'}</tbody></table>
+  <div style="margin-top:20px;text-align:center"><button onclick="window.print()" style="padding:10px 24px;background:#0f172a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">🖨️ Imprimir / Guardar PDF</button></div>
+  </body></html>`);
+  win.document.close();
 }
 function editarCajaMov(i){
   const c=DB.caja[i];
@@ -2914,27 +3150,67 @@ function gasAccion(accion){
   const i=DB.gastos.findIndex(g=>g.id===gasSelectedId);if(i<0)return;
   if(accion==='editar'&&!canDo('editar')){toast('No tienes permiso para editar','error');return;}else if(accion==='editar')editarGasto(i);
   else if(accion==='pagar'){if(!canDo('editar')){toast('No tienes permiso para registrar pagos','error');return;}abonarGasto(gasSelectedId);}
-  else if(accion==='historial')verHistorialGasto(gasSelectedId);
-  else if(accion==='eliminar'&&!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}else if(accion==='eliminar'){if(currentUser?.role!=='admin'&&!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}DB.gastos.splice(i,1);sDB('gastos');toast('Eliminado','success');gasSelectedId=null;renderGastos();}
+  else if(accion==='historial')verHistorialGenerico('gastos',gasSelectedId);
+  else if(accion==='eliminar'&&!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}else if(accion==='eliminar'){if(currentUser?.role!=='admin'&&!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}const _gidDel=DB.gastos[i]?.id;DB.gastos.splice(i,1);if(_gidDel){const _antes=DB.caja.length;DB.caja=(DB.caja||[]).filter(c=>!(c.origenModulo==='gastos'&&c.origenId===_gidDel));if(DB.caja.length!==_antes)sDB('caja');}sDB('gastos');toast('Eliminado','success');gasSelectedId=null;renderGastos();}
 }
 function editarGasto(i){
   const g=DB.gastos[i];
-  const catList=['Mantenimiento','Publicidad','Oficina','Transporte','Servicios','Seguro','Legal','Salarios','Otro'];
+  const catList=DB.config.categoriasGastos&&DB.config.categoriasGastos.length?DB.config.categoriasGastos:['Mantenimiento','Publicidad','Oficina','Transporte','Servicios','Seguro','Legal','Salarios','Otro'];
   openModal('Editar Gasto',`
-    <div class="form-row c2"><div class="form-field"><label>Fecha</label><input type="date" id="g-fecha" value="${g.fecha||today()}"></div><div class="form-field"><label>Categoría</label><select id="g-cat">${catList.map(c=>`<option ${c===g.categoria?'selected':''}>${c}</option>`).join('')}</select></div></div>
-    <div class="form-row c2"><div class="form-field"><label>Suplidor</label><select id="g-sup"><option value="">Sin suplidor</option>${DB.suplidores.map(s=>`<option ${s.nombre===g.suplidor?'selected':''}>${escHtml(s.nombre)}</option>`).join('')}</select></div><div class="form-field"><label>Monto</label><input type="text" id="g-monto" value="${fmtMoneyDisplay(g.monto||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)"></div></div>
-    <div class="form-row c2"><div class="form-field"><label>Forma de Pago</label><select id="g-forma"><option value="CONTADO" ${(g.formaPago||'CONTADO')==='CONTADO'?'selected':''}>Contado</option><option value="CREDITO" ${g.formaPago==='CREDITO'?'selected':''}>Crédito</option></select></div><div class="form-field"><label>Estado</label><select id="g-status"><option value="SALDADO" ${(g.statusGasto||'SALDADO')==='SALDADO'?'selected':''}>Saldado</option><option value="ABONADO" ${g.statusGasto==='ABONADO'?'selected':''}>Abonado</option><option value="PENDIENTE" ${g.statusGasto==='PENDIENTE'?'selected':''}>Pendiente</option></select></div></div>
-    <div class="form-field"><label>Descripción</label><input type="text" id="g-desc" value="${escHtml(g.descripcion||'')}"></div>`,
+    <div class="form-row c2"><div class="form-field"><label>Fecha</label><input type="date" id="g-fecha" value="${g.fecha||today()}"></div><div class="form-field"><label>Categoría</label><select id="g-cat">${catList.map(c=>`<option ${c===g.categoria?'selected':''}>${escHtml(c)}</option>`).join('')}</select></div></div>
+    <div class="form-row c2"><div class="form-field"><label>Suplidor</label><select id="g-sup"><option value="">Sin suplidor</option>${DB.suplidores.map(s=>`<option ${((s.empresa||s.nombre)===g.suplidor)?'selected':''}>${escHtml(s.empresa||s.nombre)}</option>`).join('')}</select></div><div class="form-field"><label>Descripción</label><input type="text" id="g-desc" value="${escHtml(g.descripcion||'')}"></div></div>
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('g',g.moneda||'RD$',g.banco||undefined,g.cuenta||undefined)}
+    </div>
+    <div class="form-row c3">
+      <div class="form-field"><label>Monto Factura</label><input type="text" id="g-monto-factura" value="${fmtMoneyDisplay(g.montoFactura||g.monto||0)}" oninput="fmtMoneyInput(this);calcPendienteGasto()"></div>
+      <div class="form-field"><label>Monto Pagado</label><input type="text" id="g-monto-abonado" value="${fmtMoneyDisplay(g.montoAbonado||0)}" oninput="fmtMoneyInput(this);calcPendienteGasto()"></div>
+      <div class="form-field"><label>Pendiente</label><input type="text" id="g-monto-pendiente" value="${fmtMoneyDisplay(Math.max(0,(g.montoFactura||g.monto||0)-(g.montoAbonado||0)))}" readonly style="background:#f8fafc;font-weight:700;color:var(--red)"></div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label>Forma de Pago</label><select id="g-forma">
+        <option value="CONTADO" ${(g.formaPago||'CONTADO')==='CONTADO'?'selected':''}>Contado</option>
+        <option value="CREDITO" ${g.formaPago==='CREDITO'?'selected':''}>Crédito</option>
+        <option value="TRANSFERENCIA" ${g.formaPago==='TRANSFERENCIA'?'selected':''}>Transferencia</option>
+        <option value="CHEQUE" ${g.formaPago==='CHEQUE'?'selected':''}>Cheque</option>
+      </select></div>
+      <div class="form-field"><label>Estado</label><select id="g-status"><option value="SALDADO" ${(g.statusGasto||'')==='SALDADO'?'selected':''}>Saldado</option><option value="ABONADO" ${g.statusGasto==='ABONADO'?'selected':''}>Abonado</option><option value="PENDIENTE" ${g.statusGasto==='PENDIENTE'?'selected':''}>Pendiente</option></select></div>
+    </div>
+    <div style="font-size:11px;color:var(--gray);margin-top:-4px">⚠️ Si cambias el Monto Pagado, se registrará un ajuste en Caja por la diferencia.</div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button><button class="btn btn-primary" onclick="guardarEditGasto(${i})">💾 Guardar</button>`);
 }
 function guardarEditGasto(i){
-  DB.gastos[i].fecha=document.getElementById('g-fecha').value;
+  const g=DB.gastos[i];
+  const montoFactura=parseFloat((document.getElementById('g-monto-factura').value||'0').replace(/,/g,''));
+  const montoAbonado=parseFloat((document.getElementById('g-monto-abonado').value||'0').replace(/,/g,''));
+  const montoPendiente=Math.max(0,montoFactura-montoAbonado);
+  const moneda=document.getElementById('g-moneda')?.value||g.moneda||'RD$';
+  const banco=document.getElementById('g-banco')?.value||'';
+  const cuenta=document.getElementById('g-cuenta')?.value||'';
+  const fecha=document.getElementById('g-fecha').value;
+  const pagadoAnterior=parseFloat(g.montoAbonado||0);
+  DB.gastos[i].fecha=fecha;
   DB.gastos[i].categoria=document.getElementById('g-cat').value;
   DB.gastos[i].suplidor=document.getElementById('g-sup').value;
-  DB.gastos[i].monto=parseFloat((document.getElementById('g-monto').value||'0').replace(/,/g,''));
-  DB.gastos[i].formaPago=document.getElementById('g-forma').value;
-  DB.gastos[i].statusGasto=document.getElementById('g-status').value;
   DB.gastos[i].descripcion=document.getElementById('g-desc').value;
+  DB.gastos[i].moneda=moneda;
+  DB.gastos[i].banco=banco;
+  DB.gastos[i].cuenta=cuenta;
+  DB.gastos[i].montoFactura=montoFactura;
+  DB.gastos[i].monto=montoFactura;
+  DB.gastos[i].montoAbonado=montoAbonado;
+  DB.gastos[i].montoPendiente=montoPendiente;
+  DB.gastos[i].formaPago=document.getElementById('g-forma').value;
+  DB.gastos[i].statusGasto=document.getElementById('g-status').value||(montoPendiente<=0?'SALDADO':montoAbonado>0?'ABONADO':'PENDIENTE');
+  // Si el Monto Pagado cambió al editar, postear un AJUSTE en Caja por la diferencia (auditable, no reescribe historial)
+  const deltaPago=montoAbonado-pagadoAnterior;
+  if(Math.abs(deltaPago)>0.009){
+    const pagoId=uid();
+    if(!DB.gastos[i].pagos)DB.gastos[i].pagos=[];
+    DB.gastos[i].pagos.push({id:pagoId,fecha,monto:Math.abs(deltaPago),moneda,banco,cuenta,nota:'Ajuste por edición ('+(deltaPago>0?'+':'')+fmtMoneyDisplay(deltaPago)+')'});
+    DB.caja.push({id:uid(),fecha,tipo:deltaPago>0?'SALIDA':'ENTRADA',categoria:'Gasto de Empresa',descripcion:'Ajuste por edición — Gasto: '+DB.gastos[i].descripcion,monto:Math.abs(deltaPago),moneda,banco,cuenta,referencia:'',responsable:currentUser?.nombre||'',origenModulo:'gastos',origenId:DB.gastos[i].id,pagoId});
+    sDB('caja');
+  }
   logBit('gastos','Editó gasto empresa','');sDB('gastos');closeModal();toast('Gasto actualizado ✓','success');renderGastos();
 }
 function imprimirGastos(){
@@ -3165,9 +3441,14 @@ function guardarGasto(idx){
   if(!montoFactura||!desc){toast('Monto y descripción son requeridos','error');return;}
   const montoAbonado=parseFloat((document.getElementById('g-monto-abonado')?.value||'0').replace(/,/g,''));
   const montoPendiente=Math.max(0,montoFactura-montoAbonado);
+  const moneda=document.getElementById('g-moneda')?.value||'RD$';
+  const banco=document.getElementById('g-banco')?.value||'';
+  const cuenta=document.getElementById('g-cuenta')?.value||'';
+  const fecha=document.getElementById('g-fecha').value;
+  const anterior=idx!==undefined?DB.gastos[idx]:null;
   const g={
     id:idx!==undefined?DB.gastos[idx].id:uid(),
-    fecha:document.getElementById('g-fecha').value,
+    fecha,
     categoria:document.getElementById('g-cat')?.value||'Otros',
     suplidor:document.getElementById('g-sup')?.value||'',
     formaPago:document.getElementById('g-forma')?.value||'CONTADO',
@@ -3175,14 +3456,25 @@ function guardarGasto(idx){
     descripcion:desc,
     monto:montoFactura,
     montoFactura,montoAbonado,montoPendiente,
+    moneda,banco,cuenta,
     fechaLimite:document.getElementById('g-fecha-limite')?.value||'',
-    responsable:currentUser?.nombre||''
+    responsable:currentUser?.nombre||'',
+    pagos:anterior?.pagos||[]
   };
   if(idx!==undefined)DB.gastos[idx]=g;
   else DB.gastos.push(g);
-  if(g.formaPago==='CONTADO'&&montoAbonado>0)
-    DB.caja.push({id:uid(),fecha:g.fecha,tipo:'SALIDA',categoria:'Gasto de Empresa',descripcion:'Gasto: '+desc,monto:montoAbonado,responsable:g.responsable});
-  logBit('gastos','Guardó gasto empresa','');sDB('gastos');sDB('caja');closeModal();toast('Gasto guardado ✓','success');renderGastos();
+  // Registrar el abono inicial en Caja, vinculado por pagoId (sin importar la forma de pago)
+  if(montoAbonado>0&&!(anterior&&parseFloat(anterior.montoAbonado||0)>=montoAbonado)){
+    const yaAbonado=parseFloat(anterior?.montoAbonado||0);
+    const nuevoAbono=montoAbonado-yaAbonado;
+    if(nuevoAbono>0.009){
+      const pagoId=uid();
+      g.pagos.push({id:pagoId,fecha,monto:nuevoAbono,moneda,banco,cuenta,nota:anterior?'Ajuste':'Abono inicial'});
+      DB.caja.push({id:uid(),fecha,tipo:'SALIDA',categoria:'Gasto de Empresa',descripcion:'Gasto: '+desc,monto:nuevoAbono,moneda,banco,cuenta,referencia:'',responsable:g.responsable,origenModulo:'gastos',origenId:g.id,pagoId});
+      sDB('caja');
+    }
+  }
+  logBit('gastos','Guardó gasto empresa','');sDB('gastos');closeModal();toast('Gasto guardado ✓','success');renderGastos();
 }
 
 function abonarGasto(id){
@@ -3192,9 +3484,9 @@ function abonarGasto(id){
   openModal('💵 Registrar Pago — '+escHtml(g.descripcion||g.categoria||''),`
     <div style="background:var(--blue3);border-radius:8px;padding:10px;margin-bottom:14px;font-size:13px">
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Factura</div><div style="font-weight:700">${fmt(g.montoFactura||g.monto||0)}</div></div>
-        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Pagado</div><div style="font-weight:700;color:var(--green)">${fmt(g.montoAbonado||0)}</div></div>
-        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Pendiente</div><div style="font-weight:700;color:var(--red)">${fmt(g.montoPendiente||0)}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Factura</div><div style="font-weight:700">${fmtMon(g.montoFactura||g.monto||0,g.moneda||'RD$')}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Pagado</div><div style="font-weight:700;color:var(--green)">${fmtMon(g.montoAbonado||0,g.moneda||'RD$')}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Pendiente</div><div style="font-weight:700;color:var(--red)">${fmtMon(g.montoPendiente||0,g.moneda||'RD$')}</div></div>
       </div>
     </div>
     <div class="form-row c2">
@@ -3221,7 +3513,7 @@ function calcTipoPagoABG(id){
   const pend=parseFloat(g.montoPendiente||0);
   if(!monto){el.innerHTML='';return;}
   if(monto>=pend){el.innerHTML='<span style="color:#16a34a">✅ Esto SALDARÁ el gasto — Recibo de PAGO</span>';}
-  else{el.innerHTML='<span style="color:#d97706">💵 Quedará pendiente '+fmt(pend-monto)+' — Recibo de ABONO</span>';}
+  else{el.innerHTML='<span style="color:#d97706">💵 Quedará pendiente '+fmtMon(pend-monto,g.moneda||'RD$')+' — Recibo de ABONO</span>';}
 }
 function confirmarAbonarGasto(id){
   const i=DB.gastos.findIndex(x=>x.id===id);if(i<0)return;
@@ -3240,9 +3532,10 @@ function confirmarAbonarGasto(id){
   const saldado=DB.gastos[i].montoPendiente<=0;
   DB.gastos[i].statusGasto=saldado?'SALDADO':'ABONADO';
   if(!DB.gastos[i].pagos)DB.gastos[i].pagos=[];
-  const pagoObj={id:uid(),fecha,monto,banco,cuenta,nota,saldado};
+  const pagoId=uid();
+  const pagoObj={id:pagoId,fecha,monto,moneda:g.moneda||'RD$',banco,cuenta,nota,saldado};
   DB.gastos[i].pagos.push(pagoObj);
-  DB.caja.push({id:uid(),fecha,tipo:'SALIDA',categoria:'Gasto de Empresa',descripcion:'Pago gasto: '+(g.descripcion||g.categoria||''),monto,moneda:g.moneda||'RD$',banco,cuenta,referencia:banco?(banco+' / '+cuenta):cuenta,responsable:currentUser?.nombre||''});
+  DB.caja.push({id:uid(),fecha,tipo:'SALIDA',categoria:'Gasto de Empresa',descripcion:'Pago gasto: '+(g.descripcion||g.categoria||''),monto,moneda:g.moneda||'RD$',banco,cuenta,referencia:'',responsable:currentUser?.nombre||'',origenModulo:'gastos',origenId:g.id,pagoId});
   sDB('gastos');sDB('caja');
   closeModal();
   imprimirReciboPagoGasto(DB.gastos[i],pagoObj);
@@ -3471,7 +3764,9 @@ function nomAccion(accion){
         <div class="form-field"><label>Tipo de Pago</label><select id="ep-tipo">
           ${[['MEN','Mensual'],['1Q','1ra Quincena'],['2Q','2da Quincena'],['SEM','Semanal'],['COM','Comisión']].map(([v,l])=>`<option value="${v}" ${p.tipo===v?'selected':''}>${l}</option>`).join('')}
         </select></div>
-        <div class="form-field"><label>Cuenta</label><select id="ep-cuenta">${(DB.config.cuentas||['Caja General']).map(c=>`<option ${c===(p.cuenta||'')?'selected':''}>${escHtml(c)}</option>`).join('')}</select></div>
+      </div>
+      <div class="form-row c3">
+        ${htmlMonedaBancoCuenta('ep',p.moneda||'RD$',p.banco||undefined,p.cuenta||undefined)}
       </div>
       <div class="form-row c2">
         <div class="form-field"><label class="required">Monto</label><input type="text" id="ep-monto" value="${fmtMoneyDisplay(p.monto||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" style="font-size:16px;font-weight:700"></div>
@@ -3485,6 +3780,8 @@ function nomAccion(accion){
     if(!nomPagoSelectedId){toast('Selecciona un pago','error');return;}
     if(currentUser?.role!=='admin'&&!canDo('eliminar')){toast('No tienes permiso para eliminar pagos','error');return;}
     DB.nominaPagos=(DB.nominaPagos||[]).filter(p=>p.id!==nomPagoSelectedId);
+    const ci=DB.caja.findIndex(c=>c.pagoId===nomPagoSelectedId);
+    if(ci>=0){DB.caja.splice(ci,1);sDB('caja');}
     sDB('nominaPagos');nomPagoSelectedId=null;toast('Pago eliminado','success');renderNomina();return;
   }
   if(!nomSelectedId)return;
@@ -3505,9 +3802,21 @@ function guardarEditPagoNomina(pid){
   if(!monto||monto<=0){toast('El monto debe ser mayor a 0','error');return;}
   const idx=(DB.nominaPagos||[]).findIndex(p=>p.id===pid);
   if(idx<0){toast('Pago no encontrado','error');return;}
+  const moneda=document.getElementById('ep-moneda')?.value||DB.nominaPagos[idx].moneda||'RD$';
+  const banco=document.getElementById('ep-banco')?.value||DB.nominaPagos[idx].banco||'';
   const cuenta=document.getElementById('ep-cuenta')?.value||DB.nominaPagos[idx].cuenta||'';
   const mes=document.getElementById('ep-mes')?.value||DB.nominaPagos[idx].mes||fecha?.slice(0,7)||'';
-  DB.nominaPagos[idx]={...DB.nominaPagos[idx],fecha,mes,monto,tipo,nota,cuenta};
+  DB.nominaPagos[idx]={...DB.nominaPagos[idx],fecha,mes,monto,tipo,nota,moneda,banco,cuenta};
+  // Sincronizar el movimiento de Caja vinculado a este pago (online, por pagoId)
+  const ci=DB.caja.findIndex(c=>c.pagoId===pid);
+  if(ci>=0){
+    DB.caja[ci].fecha=fecha;
+    DB.caja[ci].monto=monto;
+    DB.caja[ci].moneda=moneda;
+    DB.caja[ci].banco=banco;
+    DB.caja[ci].cuenta=cuenta;
+    sDB('caja');
+  }
   sDB('nominaPagos');closeModal();toast('Pago actualizado ✓','success');renderNomina();
 }
 function registrarPagoNomina(i){
@@ -3561,10 +3870,11 @@ function guardarPagoNomina(i){
   if(!cuenta){toast('Selecciona la cuenta','error');return;}
   const tipoLabel={MEN:'Mensual','1Q':'1ra Quincena','2Q':'2da Quincena',SEM:'Semanal',COM:'Comisión'}[tipo]||tipo;
   if(!DB.nominaPagos)DB.nominaPagos=[];
-  DB.nominaPagos.push({id:uid(),empleadoId:e.id,empleadoNombre:e.nombre,mes,tipo,monto,cuenta,fecha:fechaPago,nota});
-  DB.caja.push({id:uid(),fecha:today(),tipo:'SALIDA',categoria:'Nómina/Salario',
+  const pagoId=uid();
+  DB.nominaPagos.push({id:pagoId,empleadoId:e.id,empleadoNombre:e.nombre,mes,tipo,monto,moneda,banco,cuenta,fecha:fechaPago,nota});
+  DB.caja.push({id:uid(),fecha:fechaPago,tipo:'SALIDA',categoria:'Nómina/Salario',
     descripcion:'Pago nómina: '+e.nombre+' ('+tipoLabel+')',
-    monto,moneda,banco,cuenta,referencia:banco?(banco+' / '+cuenta):cuenta,responsable:currentUser.nombre});
+    monto,moneda,banco,cuenta,referencia:'',responsable:currentUser.nombre,origenModulo:'nominaPagos',origenId:pagoId,pagoId});
   logBit('nomina','Pagó nómina','');sDB('nominaPagos');sDB('caja');closeModal();toast('Pago registrado ✓','success');renderNomina();
 }
 function imprimirPagosNomina(){
@@ -3696,7 +4006,7 @@ function guardarPermisosUsuarioConfig(i){
   if(currentUser?.role!=='admin'){toast('Solo el administrador puede editar usuarios','error');return;}
   const u=DB.users[i];
   if(!u)return;
-  const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','prestamos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
+  const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','consultaCuentas','prestamos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
   const ALERT_IDS=['SIN_VIN','SIN_COSTO','CXP','CXC_VENCIDA','CXC','SIN_VENDER_6M','SIN_VENDER_1A','DOCS','PLACA_60','PLACA_EXHIB_VENC','PLACA_EXHIB_PROX'];
   const alertas=ALERT_IDS.filter(id=>document.getElementById(`cfg-alerta-${i}-${id}`)?.checked);
   if(u.role!=='admin'){
@@ -3741,7 +4051,7 @@ function renderUsuarios(){
     {id:'cxp',label:'Cuentas por Pagar'},{id:'clientes',label:'Clientes'},
     {id:'ventas',label:'Ventas'},{id:'cxc',label:'Cuentas por Cobrar'},
     {id:'suplidores',label:'Suplidores'},{id:'gastos',label:'Gastos Empresa'},
-    {id:'nomina',label:'Nómina'},{id:'caja',label:'Caja'},{id:'prestamos',label:'💰 Préstamos'},
+    {id:'nomina',label:'Nómina'},{id:'caja',label:'Caja'},{id:'consultaCuentas',label:'🧾 Consulta de Cuentas'},{id:'prestamos',label:'💰 Préstamos'},
     {id:'cotizaciones',label:'Cotizaciones'},{id:'autorizaciones',label:'Autorización Compra'},{id:'seguros',label:'Seguros'},{id:'facturaExterna',label:'Facturas Externas'},{id:'alertas',label:'Alertas'},{id:'verSaldoCaja',label:'💰 Saldo Caja'},{id:'chat',label:'💬 Chat'},
     {id:'usuarios',label:'Usuarios'},{id:'config',label:'Configuración'},
     {id:'cuentas',label:'🏦 Cuentas'},{id:'cumpleanos',label:'🎂 Cumpleaños'},{id:'backup',label:'💾 Backup'},
@@ -3866,7 +4176,7 @@ function crearUsuarioNuevo(){
   const role=document.getElementById('nu-role')?.value;
   if(!nombre||!user||!pass){toast('Complete nombre, usuario y contraseña','error');return;}
   if(DB.users.find(u=>u.username===user)){toast('El usuario ya existe','error');return;}
-  const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','prestamos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
+  const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','consultaCuentas','prestamos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
   const DEL_IDS=['ventas','clientes','suplidores','gastos','nomina','gastosVeh','cxc','inventario'];
   const modulos=role==='admin'?MODS_IDS:MODS_IDS.filter(id=>document.getElementById('nu-mod-'+id)?.checked);
   const puedeEliminar=role==='admin'||DEL_IDS.some(id=>document.getElementById('nu-del-'+id)?.checked);
@@ -3956,7 +4266,7 @@ function editarUsuario(i){
     {id:'gastosVeh',label:'💸 Gastos Vehículo'},{id:'cxp',label:'📑 Cuentas por Pagar'},
     {id:'clientes',label:'👤 Clientes'},{id:'ventas',label:'💰 Ventas'},
     {id:'cxc',label:'📬 Cuentas por Cobrar'},{id:'gastos',label:'🏢 Gastos Empresa'},
-    {id:'nomina',label:'👷 Nómina'},{id:'caja',label:'💳 Caja'},{id:'prestamos',label:'🏦 Préstamos Bancos'},
+    {id:'nomina',label:'👷 Nómina'},{id:'caja',label:'💳 Caja'},{id:'consultaCuentas',label:'🧾 Consulta de Cuentas'},{id:'prestamos',label:'🏦 Préstamos Bancos'},
     {id:'cotizaciones',label:'📋 Cotizaciones'},{id:'autorizaciones',label:'📝 Autorización Compra'},
     {id:'seguros',label:'🛡️ Seguros'},{id:'facturaExterna',label:'🧾 Facturas Externas'},{id:'alertas',label:'🔔 Alertas'},{id:'verSaldoCaja',label:'💰 Ver Saldo Caja'},{id:'chat',label:'💬 Chat Interno'},
     {id:'cuentas',label:'🏦 Cuentas'},{id:'cumpleanos',label:'🎂 Cumpleaños'},
@@ -4049,7 +4359,7 @@ function guardarUsuario(idx){
   const pass=document.getElementById('u-pass').value;
   if(!nombre||!user||(!pass&&idx===undefined)){toast('Complete todos los campos','error');return;}
   if(idx===undefined&&DB.users.find(u=>u.username===user)){toast('El usuario ya existe','error');return;}
-  const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','prestamos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
+  const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','consultaCuentas','prestamos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
   const nuevosMods=MODS_IDS.filter(m=>{const el=document.getElementById('u-mod-'+m);return el&&el.checked;});
   const permKeys=['editar','eliminar','imprimir','pdf','editarVentas','editarClientes','editarSuplidores','editarGastos','editarNomina','editarGastosVeh','editarCobros','editarVehiculos','borrarVentas','borrarClientes','borrarSuplidores','borrarGastos','borrarNomina','borrarGastosVeh','borrarCobros','borrarVehiculos','editarCxp','editarCaja','editarCotizaciones','editarAutorizaciones','editarSeguros','editarFacturas','editarCuentas','editarCumpleanos','borrarCxp','borrarCaja','borrarCotizaciones','borrarAutorizaciones','borrarSeguros','borrarFacturas','borrarCuentas','borrarCumpleanos'];
   const nuevosPerms={};permKeys.forEach(k=>{const el=document.getElementById('u-perm-'+k);if(el)nuevosPerms[k]=el.checked;});
@@ -4516,7 +4826,7 @@ ${htmlTipoAmortOpts('')}
       </div>
     </div>
     <div class="form-row c3">
-      ${htmlMonedaBancoCuenta('pr','RD$',undefined,undefined)}
+      ${htmlMonedaBancoCuenta('prb','RD$',undefined,undefined)}
     </div>
     <div class="form-field"><label>Notas</label>
       <textarea id="pr-notas" rows="2" placeholder="Observaciones..."></textarea>
@@ -4543,9 +4853,9 @@ function guardarPrestamo(){
   if(!banco){toast('Ingresa el banco','error');return;}
   const monto=parseFloat((document.getElementById('pr-monto')?.value||'0').replace(/,/g,''));
   if(!monto){toast('Ingresa el monto','error');return;}
-  const pMoneda=document.getElementById('pr-moneda')?.value||'RD$';
-  const pCuenta=document.getElementById('pr-cuenta')?.value||'';
-  const pBancoSel=document.getElementById('pr-banco-select')?.value||'';
+  const pMoneda=document.getElementById('prb-moneda')?.value||'RD$';
+  const pCuenta=document.getElementById('prb-cuenta')?.value||'';
+  const pBancoSel=document.getElementById('prb-banco')?.value||'';
   if(!pBancoSel){toast('Selecciona el banco de pago','error');return;}
   if(!pCuenta){toast('Selecciona la cuenta de pago','error');return;}
   const p={
@@ -4637,12 +4947,13 @@ function guardarPagoCuota(pid){
   const interes=DB.prestamos[i].saldo*tasa;
   const capital=Math.max(0,monto-interes);
   if(!DB.prestamos[i].pagos)DB.prestamos[i].pagos=[];
-  DB.prestamos[i].pagos.push({id:uid(),fecha,monto,capital,interes,banco,cuenta,nota});
+  const pagoId=uid();
+  DB.prestamos[i].pagos.push({id:pagoId,fecha,monto,capital,interes,banco,cuenta,nota});
   DB.prestamos[i].saldo=Math.max(0,DB.prestamos[i].saldo-capital);
   if(DB.prestamos[i].saldo<=0)DB.prestamos[i].status='PAGADO';
-  // Registrar en caja como salida
+  // Registrar en caja como salida, vinculado por pagoId
   if(!DB.caja)DB.caja=[];
-  DB.caja.push({id:uid(),tipo:'SALIDA',fecha,monto,moneda:DB.prestamos[i].moneda||'RD$',banco,cuenta,descripcion:`Cuota préstamo — ${DB.prestamos[i].banco}`,categoria:'Préstamo',responsable:currentUser?.nombre||''});
+  DB.caja.push({id:uid(),tipo:'SALIDA',fecha,monto,moneda:DB.prestamos[i].moneda||'RD$',banco,cuenta,descripcion:`Cuota préstamo — ${DB.prestamos[i].banco}`,categoria:'Préstamo',responsable:currentUser?.nombre||'',origenModulo:'prestamos',origenId:pid,pagoId});
   sDB('prestamos');sDB('caja');
   if(typeof fbGuardar==='function'&&window._fbActivo){fbGuardar('prestamos').catch(()=>{});fbGuardar('caja').catch(()=>{});}
   closeModal();toast('Pago registrado ✓','success');renderPrestamos();
@@ -4687,7 +4998,6 @@ function _findPagoPrestamo(pid,pagoId){
 }
 function editarPagoPrestamoModal(pid,pagoId){
   const{p,pago}=_findPagoPrestamo(pid,pagoId);if(!pago)return;
-  const cuentas=DB.config.cuentas&&DB.config.cuentas.length?DB.config.cuentas:['Caja General'];
   openModal('✏️ Editar Pago de Cuota',`
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto Total</label>
@@ -4703,11 +5013,11 @@ function editarPagoPrestamoModal(pid,pagoId){
         <input type="text" id="epp-interes" value="${fmtMoneyDisplay(pago.interes||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
     </div>
-    <div class="form-row c2">
-      <div class="form-field"><label>Cuenta</label><select id="epp-cuenta">${cuentas.map(c=>`<option ${c===(pago.cuenta||pago.banco)?'selected':''}>${escHtml(c)}</option>`).join('')}</select></div>
-      <div class="form-field"><label>Nota</label><input type="text" id="epp-nota" value="${escHtml(pago.nota||'')}"></div>
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('epp',pago.moneda||p.moneda||'RD$',pago.banco||undefined,pago.cuenta||undefined)}
     </div>
-    <div style="font-size:11px;color:var(--gray)">⚠️ El saldo del préstamo se ajustará según la diferencia de capital.</div>`,
+    <div class="form-field"><label>Nota</label><input type="text" id="epp-nota" value="${escHtml(pago.nota||'')}"></div>
+    <div style="font-size:11px;color:var(--gray)">⚠️ El saldo del préstamo se ajustará según la diferencia de capital, y el movimiento de Caja se sincroniza automáticamente.</div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
      <button class="btn btn-primary" onclick="guardarEditarPagoPrestamo('${pid}','${pagoId}')">💾 Guardar</button>`);
 }
@@ -4721,24 +5031,41 @@ function guardarEditarPagoPrestamo(pid,pagoId){
   const diferenciaCapital=nuevoCapital-capitalAnterior;
   pago.monto=nuevoMonto;pago.capital=nuevoCapital;pago.interes=nuevoInteres;
   pago.fecha=document.getElementById('epp-fecha').value||pago.fecha;
+  pago.moneda=document.getElementById('epp-moneda')?.value||pago.moneda||p.moneda||'RD$';
+  pago.banco=document.getElementById('epp-banco')?.value||pago.banco||'';
   pago.cuenta=document.getElementById('epp-cuenta').value;
   pago.nota=document.getElementById('epp-nota').value||'';
   // Ajustar saldo del préstamo según la diferencia de capital
   p.saldo=Math.max(0,parseFloat(p.saldo||0)-diferenciaCapital);
   p.status=p.saldo<=0?'PAGADO':'ACTIVO';
+  // Sincronizar el movimiento de Caja vinculado a este pago (online, por pagoId)
+  const realPagoId=pago.id||pagoId;
+  const ci=DB.caja.findIndex(c=>c.pagoId===realPagoId);
+  if(ci>=0){
+    DB.caja[ci].fecha=pago.fecha;
+    DB.caja[ci].monto=pago.monto;
+    DB.caja[ci].moneda=pago.moneda;
+    DB.caja[ci].banco=pago.banco;
+    DB.caja[ci].cuenta=pago.cuenta;
+    sDB('caja');
+  }
   sDB('prestamos');
   closeModal();toast('Pago actualizado ✓','success');renderPrestamos();
   verHistorialPrestamo(pid);
 }
 function revertirPagoPrestamo(pid,pagoId){
   const{p,pago,idx}=_findPagoPrestamo(pid,pagoId);if(!pago)return;
-  if(!confirm(`¿Revertir/eliminar este pago de ${fmt(pago.monto)} del ${fmtDate(pago.fecha)}?\n\nEsto restaurará el saldo del préstamo (se suma el capital de vuelta). Revisa el movimiento de Caja si es necesario eliminarlo manualmente.`))return;
+  if(!confirm(`¿Revertir/eliminar este pago de ${fmtMon(pago.monto,pago.moneda||p.moneda)} del ${fmtDate(pago.fecha)}?\n\nEsto restaurará el saldo del préstamo (se suma el capital de vuelta) y eliminará el movimiento de Caja vinculado.`))return;
   // Restaurar saldo: sumar el capital que se había pagado
   p.saldo=parseFloat(p.saldo||0)+parseFloat(pago.capital||0);
   p.status='ACTIVO';
-  // Eliminar movimiento de caja correspondiente
-  const cuentaRef=pago.cuenta||pago.banco||'';
-  const ci=(DB.caja||[]).findIndex(c=>c.tipo==='SALIDA'&&c.categoria==='Préstamo'&&c.fecha===pago.fecha&&parseFloat(c.monto||0)===parseFloat(pago.monto||0)&&(c.cuenta===cuentaRef));
+  // Eliminar movimiento de caja correspondiente (por pagoId; con fallback para registros antiguos sin pagoId)
+  const realPagoId=pago.id||pagoId;
+  let ci=DB.caja.findIndex(c=>c.pagoId===realPagoId);
+  if(ci<0){
+    const cuentaRef=pago.cuenta||pago.banco||'';
+    ci=(DB.caja||[]).findIndex(c=>c.tipo==='SALIDA'&&c.categoria==='Préstamo'&&c.fecha===pago.fecha&&parseFloat(c.monto||0)===parseFloat(pago.monto||0)&&(c.cuenta===cuentaRef));
+  }
   if(ci>=0){DB.caja.splice(ci,1);sDB('caja');}
   p.pagos.splice(idx,1);
   sDB('prestamos');
@@ -4780,11 +5107,12 @@ function guardarAbonoCapital(pid){
   const banco=document.getElementById('ak-banco')?.value||'';
   const cuenta=document.getElementById('ak-cuenta')?.value||'';
   if(!DB.prestamos[i].abonos)DB.prestamos[i].abonos=[];
-  DB.prestamos[i].abonos.push({id:uid(),fecha,monto,banco,cuenta,nota});
+  const pagoId=uid();
+  DB.prestamos[i].abonos.push({id:pagoId,fecha,monto,banco,cuenta,nota});
   DB.prestamos[i].saldo=Math.max(0,DB.prestamos[i].saldo-monto);
   if(DB.prestamos[i].saldo<=0)DB.prestamos[i].status='PAGADO';
   if(!DB.caja)DB.caja=[];
-  DB.caja.push({id:uid(),tipo:'SALIDA',fecha,monto,moneda:DB.prestamos[i].moneda||'RD$',banco,cuenta,descripcion:`Abono capital — ${DB.prestamos[i].banco}`,categoria:'Préstamo',responsable:currentUser?.nombre||''});
+  DB.caja.push({id:uid(),tipo:'SALIDA',fecha,monto,moneda:DB.prestamos[i].moneda||'RD$',banco,cuenta,descripcion:`Abono capital — ${DB.prestamos[i].banco}`,categoria:'Préstamo',responsable:currentUser?.nombre||'',origenModulo:'prestamos',origenId:pid,pagoId});
   sDB('prestamos');sDB('caja');
   if(typeof fbGuardar==='function'&&window._fbActivo){fbGuardar('prestamos').catch(()=>{});fbGuardar('caja').catch(()=>{});}
   closeModal();toast('Abono a capital registrado ✓','success');renderPrestamos();
@@ -5010,7 +5338,7 @@ function generarAlertasSistema(){
   });
   // 5. CXC pendientes
   (DB.cxc||[]).filter(x=>(x.status==='PENDIENTE'||x.status==='PARCIAL')&&(!x.fechaVence||x.fechaVence>hoy)).forEach(x=>{
-    alertas.push({tipo:'CXC',nivel:'warning',titulo:'Cuenta por cobrar pendiente',msg:`${x.cliente} — ${fmt(x.saldo)}`,modulo:'cxc',id:'cxc_'+x.id});
+    alertas.push({tipo:'CXC',nivel:'warning',titulo:'Cuenta por cobrar pendiente',msg:`${x.cliente} — ${fmtMon(x.saldo,x.moneda||'RD$')}`,modulo:'cxc',id:'cxc_'+x.id});
   });
   // 6. Vehículos sin vender 6+ meses
   DB.vehiculos.filter(v=>v.status!=='VENDIDO'&&v.fecha).forEach(v=>{
@@ -5408,7 +5736,7 @@ function renderConfig(){
       <p style="font-size:13px;color:var(--gray);margin-bottom:12px">El administrador puede editar módulos, permisos y alertas de cada usuario. Los cambios se guardan de inmediato.</p>
       <div style="display:flex;flex-direction:column;gap:12px">
         ${DB.users.map((u,ui)=>{
-          const MODS_LIST=[{id:'dashboard',label:'Inicio'},{id:'informes',label:'Informe'},{id:'suplidores',label:'Suplidores'},{id:'inventario',label:'Reg. Vehículo'},{id:'gastosVeh',label:'Gastos Veh.'},{id:'cxp',label:'CxP'},{id:'clientes',label:'Clientes'},{id:'ventas',label:'Ventas'},{id:'cxc',label:'CxC'},{id:'gastos',label:'Gastos Emp.'},{id:'nomina',label:'Nómina'},{id:'caja',label:'Caja'},{id:'prestamos',label:'Préstamos'},{id:'cotizaciones',label:'Cotizaciones'},{id:'autorizaciones',label:'Autorizaciones'},{id:'cuentas',label:'Cuentas'},{id:'cumpleanos',label:'Cumpleaños'}];
+          const MODS_LIST=[{id:'dashboard',label:'Inicio'},{id:'informes',label:'Informe'},{id:'suplidores',label:'Suplidores'},{id:'inventario',label:'Reg. Vehículo'},{id:'gastosVeh',label:'Gastos Veh.'},{id:'cxp',label:'CxP'},{id:'clientes',label:'Clientes'},{id:'ventas',label:'Ventas'},{id:'cxc',label:'CxC'},{id:'gastos',label:'Gastos Emp.'},{id:'nomina',label:'Nómina'},{id:'caja',label:'Caja'},{id:'consultaCuentas',label:'🧾 Consulta Cuentas'},{id:'prestamos',label:'Préstamos'},{id:'cotizaciones',label:'Cotizaciones'},{id:'autorizaciones',label:'Autorizaciones'},{id:'cuentas',label:'Cuentas'},{id:'cumpleanos',label:'Cumpleaños'}];
           const ALERT_TYPES=[{id:'SIN_VIN',label:'Sin VIN'},{id:'SIN_COSTO',label:'Sin costos'},{id:'CXP',label:'CxP pendientes'},{id:'CXC_VENCIDA',label:'CxC vencidas'},{id:'CXC',label:'CxC pendientes'},{id:'SIN_VENDER_6M',label:'6m sin vender'},{id:'SIN_VENDER_1A',label:'1 año sin vender'},{id:'DOCS',label:'Docs pendientes'},{id:'PLACA_60',label:'Placa +60 días'},{id:'PLACA_EXHIB_VENC',label:'Placa exhibición vencida'},{id:'PLACA_EXHIB_PROX',label:'Placa exhibición prox. vencer'}];
           const mods=u.modulos||[];
           const alertas=u.alertasPermitidas||ALERT_TYPES.map(a=>a.id);
@@ -6152,18 +6480,25 @@ function guardarNuevoGastoVeh(){
     fechaPago:document.getElementById('ngv-fechapago').value,
     noFactura:(document.getElementById('ngv-nofactura')?.value||'').trim(),
     observacion:(document.getElementById('ngv-observacion')?.value||'').trim(),
-    statusGasto:pendiente<=0?'PAGADO':abono>0?'ABONADO':'PENDIENTE'
+    statusGasto:pendiente<=0?'PAGADO':abono>0?'ABONADO':'PENDIENTE',
+    pagos:[]
   };
   if(!DB.gastosVehiculos)DB.gastosVehiculos=[];
+  // Si hay abono inicial, registrar el pago y su movimiento de Caja (SALIDA) vinculados por pagoId
+  if(abono>0){
+    const pagoId=uid();
+    g.pagos.push({id:pagoId,fecha:g.fechaPago||g.fecha,monto:abono,moneda,banco:bancoVal,cuenta:cuentaVal,nota:'Abono inicial'});
+    DB.caja.push({id:uid(),fecha:g.fechaPago||g.fecha,tipo:'SALIDA',categoria:'Gasto de Vehículo',descripcion:`${tipo} — ${g.vehiculo||g.codigo}`,monto:abono,moneda,banco:bancoVal,cuenta:cuentaVal,referencia:g.noFactura||'',responsable:currentUser.nombre,origenModulo:'gastosVehiculos',origenId:g.id,pagoId});
+  }
   DB.gastosVehiculos.push(g);
-  // Actualizar costo acumulado del vehículo
+  // Actualizar costo acumulado del vehículo (normalizado a RD$ según la moneda de cada gasto)
   const iv=DB.vehiculos.findIndex(v=>v.id===vid);
   if(iv>=0){
-    const totalGastos=DB.gastosVehiculos.filter(x=>x.vehiculoId===vid).reduce((a,x)=>a+parseFloat(x.montoFactura||0),0);
+    const totalGastos=DB.gastosVehiculos.filter(x=>x.vehiculoId===vid).reduce((a,x)=>a+aRD(x.montoFactura||0,x.moneda,x.tasaCambio),0);
     DB.vehiculos[iv].costo=totalGastos;
     sDB('vehiculos');
   }
-  sDB('gastosVehiculos');
+  sDB('gastosVehiculos');sDB('caja');
   logBit('gastosVeh','Registró gasto',tipo+' — '+sup+' '+fmtMoneyDisplay(factura));
   toast('Gasto registrado ✓','success');
   renderGastosVeh();
@@ -6179,9 +6514,9 @@ function abonarGastoVeh(gid){
   openModal('💵 Registrar Abono/Pago — '+escHtml(g.tipo),`
     <div style="background:var(--blue3);border-radius:8px;padding:10px;margin-bottom:14px;font-size:13px">
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Factura</div><div style="font-weight:700">${fmt(g.montoFactura||0)}</div></div>
-        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Pagado</div><div style="font-weight:700;color:var(--green)">${fmt(g.montoPagado||0)}</div></div>
-        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Pendiente</div><div style="font-weight:700;color:var(--red)">${fmt(g.montoPendiente||0)}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Factura</div><div style="font-weight:700">${fmtMon(g.montoFactura||0,g.moneda)}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Pagado</div><div style="font-weight:700;color:var(--green)">${fmtMon(g.montoPagado||0,g.moneda)}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Pendiente</div><div style="font-weight:700;color:var(--red)">${fmtMon(g.montoPendiente||0,g.moneda)}</div></div>
       </div>
     </div>
     <div class="form-row c2">
@@ -6206,17 +6541,26 @@ function confirmarAbonoGastoVeh(i){
   if(!monto||monto<=0){toast('Ingresa un monto válido','error');return;}
   const g=DB.gastosVehiculos[i];
   if(monto>parseFloat(g.montoPendiente||0)){toast('El monto no puede superar el pendiente','error');return;}
+  const moneda=document.getElementById('abgv-moneda')?.value||g.moneda||'RD$';
+  const banco=document.getElementById('abgv-banco')?.value||g.banco||'';
+  const cuenta=document.getElementById('abgv-cuenta').value;
+  const fecha=document.getElementById('abgv-fecha').value;
   DB.gastosVehiculos[i].montoPagado=(parseFloat(g.montoPagado||0)+monto);
   DB.gastosVehiculos[i].montoPendiente=(parseFloat(g.montoPendiente||0)-monto);
-  DB.gastosVehiculos[i].fechaPago=document.getElementById('abgv-fecha').value;
-  DB.gastosVehiculos[i].cuenta=document.getElementById('abgv-cuenta').value;
+  DB.gastosVehiculos[i].fechaPago=fecha;
+  DB.gastosVehiculos[i].banco=banco;
+  DB.gastosVehiculos[i].cuenta=cuenta;
   if(DB.gastosVehiculos[i].montoPendiente<=0){
     DB.gastosVehiculos[i].montoPendiente=0;
     DB.gastosVehiculos[i].statusGasto='PAGADO';
   } else {
     DB.gastosVehiculos[i].statusGasto='ABONADO';
   }
-  sDB('gastosVehiculos');
+  if(!DB.gastosVehiculos[i].pagos)DB.gastosVehiculos[i].pagos=[];
+  const pagoId=uid();
+  DB.gastosVehiculos[i].pagos.push({id:pagoId,fecha,monto,moneda,banco,cuenta,nota:'Abono/Pago'});
+  DB.caja.push({id:uid(),fecha,tipo:'SALIDA',categoria:'Gasto de Vehículo',descripcion:`${g.tipo} — ${g.vehiculo||g.codigo}`,monto,moneda,banco,cuenta,referencia:g.noFactura||'',responsable:currentUser.nombre,origenModulo:'gastosVehiculos',origenId:g.id,pagoId});
+  sDB('gastosVehiculos');sDB('caja');
   logBit('gastosVeh','Registró pago/abono','');
   closeModal();
   toast('Pago registrado ✓','success');
@@ -6259,23 +6603,17 @@ function editarGastoVeh(gid){
       <div class="form-field"><label>Tipo de Gasto</label>
         <select id="egv-tipo">${tiposGasto.map(t=>`<option ${t===g.tipo?'selected':''}>${t}</option>`).join('')}</select>
       </div>
-      <div class="form-field"><label>Cuenta de Salida</label>
-        <select id="egv-cuenta">${opcionesCuenta.join('')}</select>
+      <div class="form-field"><label>Fecha</label>
+        <input type="date" id="egv-fecha" value="${g.fecha||today()}">
       </div>
     </div>
     <div class="form-row c3">
-      <div class="form-field"><label>Moneda</label>
-        <select id="egv-moneda" onchange="document.getElementById('egv-tasa-wrap').style.display=this.value==='USD'?'block':'none';actualizarCuentasGenerico('egv')">
-          <option value="RD$" ${(g.moneda||'RD$')==='RD$'?'selected':''}>RD$ — Pesos</option>
-          <option value="USD" ${g.moneda==='USD'?'selected':''}>USD — Dólares</option>
-        </select>
-      </div>
+      ${htmlMonedaBancoCuenta('egv',g.moneda||'RD$',g.banco||undefined,g.cuenta||undefined)}
+    </div>
+    <div class="form-row c3">
       <div class="form-field" id="egv-tasa-wrap" style="display:${g.moneda==='USD'?'block':'none'}">
         <label>Tasa de Cambio (RD$ x USD)</label>
         <input type="number" id="egv-tasa" value="${g.tasaCambio||DB.config.tasaCambio||60}" step="0.01">
-      </div>
-      <div class="form-field"><label>Fecha</label>
-        <input type="date" id="egv-fecha" value="${g.fecha||today()}">
       </div>
     </div>
     <div class="form-row c3">
@@ -6289,6 +6627,7 @@ function editarGastoVeh(gid){
         <input type="text" id="egv-pendiente" value="${fmtMoneyDisplay(Math.max(0,(g.montoFactura||0)-(g.montoPagado||0)))}" readonly style="background:#f8fafc;font-weight:700;color:var(--red)">
       </div>
     </div>
+    <div style="font-size:11px;color:var(--gray);margin:-4px 0 8px">⚠️ Si cambias el Monto Pagado, se registrará un ajuste en Caja por la diferencia (no se reescribe el historial).</div>
     <div class="form-row c2">
       <div class="form-field"><label>Fecha de Pago</label>
         <input type="date" id="egv-fechapago" value="${g.fechaPago||''}">
@@ -6337,20 +6676,33 @@ function guardarEditGastoVeh(i){
   DB.gastosVehiculos[i].tipo=document.getElementById('egv-tipo').value;
   DB.gastosVehiculos[i].moneda=moneda;
   DB.gastosVehiculos[i].tasaCambio=tasaUsada;
-  DB.gastosVehiculos[i].cuenta=document.getElementById('egv-cuenta').value;
+  const bancoNuevo=document.getElementById('egv-banco')?.value||'';
+  const cuentaNueva=document.getElementById('egv-cuenta').value;
+  DB.gastosVehiculos[i].banco=bancoNuevo;
+  DB.gastosVehiculos[i].cuenta=cuentaNueva;
   DB.gastosVehiculos[i].fecha=document.getElementById('egv-fecha').value;
   DB.gastosVehiculos[i].fechaPago=document.getElementById('egv-fechapago').value;
+  const pagadoAnterior=parseFloat(DB.gastosVehiculos[i].montoPagado||0);
   DB.gastosVehiculos[i].montoFactura=factura;
   DB.gastosVehiculos[i].montoPagado=pagado;
   DB.gastosVehiculos[i].montoPendiente=pendiente<=0?0:pendiente;
   DB.gastosVehiculos[i].statusGasto=pendiente<=0?'PAGADO':pagado>0?'ABONADO':'PENDIENTE';
   DB.gastosVehiculos[i].noFactura=(document.getElementById('egv-nofactura')?.value||'').trim();
   DB.gastosVehiculos[i].observacion=(document.getElementById('egv-observacion')?.value||'').trim();
-  // Recalcular costo del vehículo
+  // Si el Monto Pagado cambió al editar, postear un AJUSTE en Caja por la diferencia (no se reescribe el historial de pagos)
+  const deltaPago=pagado-pagadoAnterior;
+  if(Math.abs(deltaPago)>0.009){
+    const pagoId=uid();
+    if(!DB.gastosVehiculos[i].pagos)DB.gastosVehiculos[i].pagos=[];
+    DB.gastosVehiculos[i].pagos.push({id:pagoId,fecha:DB.gastosVehiculos[i].fechaPago||today(),monto:Math.abs(deltaPago),moneda,banco:bancoNuevo,cuenta:cuentaNueva,nota:'Ajuste por edición ('+(deltaPago>0?'+':'')+fmtMoneyDisplay(deltaPago)+')'});
+    DB.caja.push({id:uid(),fecha:DB.gastosVehiculos[i].fechaPago||today(),tipo:deltaPago>0?'SALIDA':'ENTRADA',categoria:'Gasto de Vehículo',descripcion:`Ajuste por edición — ${DB.gastosVehiculos[i].tipo} — ${DB.gastosVehiculos[i].vehiculo||DB.gastosVehiculos[i].codigo}`,monto:Math.abs(deltaPago),moneda,banco:bancoNuevo,cuenta:cuentaNueva,referencia:DB.gastosVehiculos[i].noFactura||'',responsable:currentUser.nombre,origenModulo:'gastosVehiculos',origenId:DB.gastosVehiculos[i].id,pagoId});
+    sDB('caja');
+  }
+  // Recalcular costo del vehículo (normalizado a RD$ según la moneda de cada gasto)
   const vid=DB.gastosVehiculos[i].vehiculoId;
   const iv=DB.vehiculos.findIndex(v=>v.id===vid);
   if(iv>=0){
-    const totalGastos=DB.gastosVehiculos.filter(x=>x.vehiculoId===vid).reduce((a,x)=>a+parseFloat(x.montoFactura||0),0);
+    const totalGastos=DB.gastosVehiculos.filter(x=>x.vehiculoId===vid).reduce((a,x)=>a+aRD(x.montoFactura||0,x.moneda,x.tasaCambio),0);
     DB.vehiculos[iv].costo=totalGastos;
     sDB('vehiculos');
   }
@@ -7210,7 +7562,7 @@ function verHistorialVenta(ventaId){
   const seccion=(cxc)=>{
     const pagos=cxc.pagos||[];
     const m=cxc.moneda||'RD$';
-    const rows=pagos.map(p=>`<tr>
+    const rows=pagos.map((p,pi)=>{const pid=p.id||('idx_'+pi);return`<tr>
       <td>${fmtDate(p.fecha)}</td>
       <td style="font-weight:700;color:var(--green)">${fV(p.monto,m)}</td>
       <td>${escHtml(p.cuenta||'—')}</td>
@@ -7218,10 +7570,10 @@ function verHistorialVenta(ventaId){
       <td><span class="badge ${p.saldado?'badge-green':'badge-amber'}">${p.saldado?'SALDADO':'ABONO'}</span></td>
       <td style="white-space:nowrap">
         <button class="btn btn-secondary btn-sm" onclick="imprimirReciboCobro(DB.cxc.find(c=>c.id==='${cxc.id}'),{fecha:'${p.fecha}',monto:${p.monto},cuenta:'${escHtml(p.cuenta||'')}',nota:'${escHtml(p.nota||'')}',saldado:${p.saldado||false}})" title="Reimprimir">🖨️</button>
-        ${(currentUser?.role==='admin'||canDo('editar'))?`<button class="btn btn-sm" style="background:var(--blue3);color:var(--blue)" onclick="_pagoEditOrigen={type:'venta',id:'${ventaId}'};editarPagoCXCModal('${cxc.id}','${p.id}')" title="Editar pago">✏️</button>
-        <button class="btn btn-sm" style="background:var(--red2);color:var(--red)" onclick="_pagoEditOrigen={type:'venta',id:'${ventaId}'};revertirPagoCXC('${cxc.id}','${p.id}')" title="Revertir/Eliminar pago">↩️</button>`:''}
+        ${(currentUser?.role==='admin'||canDo('editar'))?`<button class="btn btn-sm" style="background:var(--blue3);color:var(--blue)" onclick="_pagoEditOrigen={type:'venta',id:'${ventaId}'};editarPagoCXCModal('${cxc.id}','${pid}')" title="Editar pago">✏️</button>
+        <button class="btn btn-sm" style="background:var(--red2);color:var(--red)" onclick="_pagoEditOrigen={type:'venta',id:'${ventaId}'};revertirPagoCXC('${cxc.id}','${pid}')" title="Revertir/Eliminar pago">↩️</button>`:''}
       </td>
-    </tr>`).join('');
+    </tr>`;}).join('');
     return`
     <div style="margin-bottom:18px">
       <div style="font-weight:800;font-size:13px;margin-bottom:6px;color:${cxc.esTraspaso?'#c2410c':'var(--navy)'}">${cxc.esTraspaso?'🔄 Traspaso/Matrícula':'💰 Venta'} — ${escHtml(cxc.concepto||cxc.factura||'')}</div>
@@ -7261,33 +7613,48 @@ function recalcCXCDesdePagos(cxcId){
 }
 function editarPagoCXCModal(cxcId,pagoId){
   const cxc=DB.cxc.find(c=>c.id===cxcId);if(!cxc)return;
-  const p=(cxc.pagos||[]).find(x=>x.id===pagoId);if(!p)return;
-  const cuentas=DB.config.cuentas&&DB.config.cuentas.length?DB.config.cuentas:['Caja General'];
+  const pagos=cxc.pagos||[];
+  const p=pagoId.startsWith('idx_')?pagos[parseInt(pagoId.slice(4))]:pagos.find(x=>x.id===pagoId);if(!p)return;
+  const moneda=p.moneda||cxc.moneda||'RD$';
   openModal('✏️ Editar Pago',`
     <div class="form-row c2">
-      <div class="form-field"><label class="required">Monto</label>
+      <div class="form-field"><label class="required">Monto (${moneda})</label>
         <input type="text" id="epc-monto" value="${fmtMoneyDisplay(p.monto||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
       <div class="form-field"><label>Fecha</label><input type="date" id="epc-fecha" value="${p.fecha||today()}"></div>
     </div>
-    <div class="form-row c2">
-      <div class="form-field"><label>Cuenta</label><select id="epc-cuenta">${cuentas.map(c=>`<option ${c===p.cuenta?'selected':''}>${escHtml(c)}</option>`).join('')}</select></div>
-      <div class="form-field"><label>Nota</label><input type="text" id="epc-nota" value="${escHtml(p.nota||'')}"></div>
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('epc',moneda,p.banco,p.cuenta)}
     </div>
-    <div style="font-size:11px;color:var(--gray)">⚠️ El saldo de la cuenta se recalculará automáticamente con el nuevo monto.</div>`,
+    <div class="form-field"><label>Nota</label><input type="text" id="epc-nota" value="${escHtml(p.nota||'')}"></div>
+    <div style="font-size:11px;color:var(--gray)">⚠️ El saldo y el movimiento de Caja se actualizarán automáticamente con los nuevos datos.</div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
      <button class="btn btn-primary" onclick="guardarEditarPagoCXC('${cxcId}','${pagoId}')">💾 Guardar</button>`);
 }
 function guardarEditarPagoCXC(cxcId,pagoId){
   const cxc=DB.cxc.find(c=>c.id===cxcId);if(!cxc)return;
-  const p=(cxc.pagos||[]).find(x=>x.id===pagoId);if(!p)return;
+  const pagos=cxc.pagos||[];
+  const p=pagoId.startsWith('idx_')?pagos[parseInt(pagoId.slice(4))]:pagos.find(x=>x.id===pagoId);if(!p)return;
   const nuevoMonto=parseFloat((document.getElementById('epc-monto').value||'0').replace(/,/g,''));
   if(!nuevoMonto||nuevoMonto<=0){toast('Monto inválido','error');return;}
   p.monto=nuevoMonto;
   p.fecha=document.getElementById('epc-fecha').value||p.fecha;
+  p.moneda=document.getElementById('epc-moneda')?.value||p.moneda||cxc.moneda||'RD$';
+  p.banco=document.getElementById('epc-banco')?.value||p.banco||'';
   p.cuenta=document.getElementById('epc-cuenta').value||p.cuenta;
   p.nota=document.getElementById('epc-nota').value||'';
   recalcCXCDesdePagos(cxcId);
+  // Sincronizar el movimiento de Caja vinculado a este pago específico (online, por pagoId)
+  const realPagoId=p.id||pagoId;
+  const ci=DB.caja.findIndex(c=>c.pagoId===realPagoId);
+  if(ci>=0){
+    DB.caja[ci].monto=p.monto;
+    DB.caja[ci].fecha=p.fecha;
+    DB.caja[ci].moneda=p.moneda;
+    DB.caja[ci].banco=p.banco;
+    DB.caja[ci].cuenta=p.cuenta;
+    sDB('caja');
+  }
   closeModal();
   toast('Pago actualizado ✓','success');
   if(typeof renderCXC==='function')renderCXC();
@@ -7297,11 +7664,15 @@ function guardarEditarPagoCXC(cxcId,pagoId){
 }
 function revertirPagoCXC(cxcId,pagoId){
   const cxc=DB.cxc.find(c=>c.id===cxcId);if(!cxc)return;
-  const p=(cxc.pagos||[]).find(x=>x.id===pagoId);if(!p)return;
-  if(!confirm(`¿Revertir/eliminar este pago de ${fmt(p.monto)} del ${fmtDate(p.fecha)}?\n\nEsto restaurará el saldo pendiente. Recuerda revisar el movimiento de Caja si es necesario eliminarlo manualmente.`))return;
-  const ci=(DB.caja||[]).findIndex(c=>c.tipo==='ENTRADA'&&c.fecha===p.fecha&&parseFloat(c.monto||0)===parseFloat(p.monto||0)&&(c.cuenta===p.cuenta));
+  const pagos=cxc.pagos||[];
+  const idx=pagoId.startsWith('idx_')?parseInt(pagoId.slice(4)):pagos.findIndex(x=>x.id===pagoId);
+  const p=pagos[idx];if(!p)return;
+  if(!confirm(`¿Revertir/eliminar este pago de ${fmtMon(p.monto,p.moneda||cxc.moneda)} del ${fmtDate(p.fecha)}?\n\nEsto restaurará el saldo pendiente y eliminará el movimiento de Caja vinculado.`))return;
+  const realPagoId=p.id||pagoId;
+  let ci=DB.caja.findIndex(c=>c.pagoId===realPagoId);
+  if(ci<0)ci=(DB.caja||[]).findIndex(c=>c.tipo==='ENTRADA'&&c.fecha===p.fecha&&parseFloat(c.monto||0)===parseFloat(p.monto||0)&&(c.cuenta===p.cuenta)); // fallback registros antiguos sin pagoId
   if(ci>=0){DB.caja.splice(ci,1);sDB('caja');}
-  cxc.pagos=(cxc.pagos||[]).filter(x=>x.id!==pagoId);
+  cxc.pagos.splice(idx,1);
   recalcCXCDesdePagos(cxcId);
   toast('Pago revertido ✓','success');
   if(typeof renderCXC==='function')renderCXC();
@@ -7593,7 +7964,7 @@ function confirmarVenta(nf){
     sDB('vehiculos');
   }
   // Registrar en caja
-  DB.caja.push({id:uid(),fecha:venta.fecha,tipo:'ENTRADA',categoria:'Venta de Vehículo',descripcion:`Venta: ${v.codigo} ${v.marca} ${v.modelo}`,monto:inicial||precio,referencia:nf,cuenta,responsable:currentUser.nombre});
+  DB.caja.push({id:uid(),fecha:venta.fecha,tipo:'ENTRADA',categoria:'Venta de Vehículo',descripcion:`Venta: ${v.codigo} ${v.marca} ${v.modelo}`,monto:inicial||precio,moneda:monedaVenta,banco,cuenta,referencia:nf,responsable:currentUser.nombre,origenModulo:'ventas',origenId:venta.id});
   // Si hay pendiente → CxC automática
   if(pendiente>0){
     const abonadoInicial=inicial+montoRecibido;
@@ -7677,27 +8048,25 @@ function addDays(dateStr,days){
 
 function abonarVenta(vid){
   const v=DB.ventas.find(x=>x.id===vid);if(!v)return;
-  const cuentas=DB.config.cuentas&&DB.config.cuentas.length?DB.config.cuentas:['Caja General'];
+  const moneda=v.moneda||'RD$';
   openModal('💵 Registrar Cobro — '+escHtml(v.factura),`
     <div style="background:var(--blue3);border-radius:8px;padding:10px;margin-bottom:14px">
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px">
         <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Vehículo</div><div style="font-weight:700">${escHtml(v.vehiculo||'—')}</div></div>
-        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Precio Total</div><div style="font-weight:700">${fmt(v.precioVenta)}</div></div>
-        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Pendiente</div><div style="font-weight:800;color:var(--red)">${fmt(v.pendiente)}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Precio Total</div><div style="font-weight:700">${fmtMon(v.precioVenta,moneda)}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Pendiente</div><div style="font-weight:800;color:var(--red)">${fmtMon(v.pendiente,moneda)}</div></div>
       </div>
     </div>
     <div class="form-row c2">
-      <div class="form-field"><label class="required">Monto a Cobrar</label>
+      <div class="form-field"><label class="required">Monto a Cobrar (${moneda})</label>
         <input type="text" id="ab-monto" value="${fmtMoneyDisplay(v.pendiente||0)}" placeholder="0.00" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
-      <div class="form-field"><label>Cuenta</label>
-        <select id="ab-cuenta">${cuentas.map(c=>`<option>${escHtml(c)}</option>`).join('')}</select>
-      </div>
-    </div>
-    <div class="form-row c2">
       <div class="form-field"><label>Fecha</label><input type="date" id="ab-fecha" value="${today()}"></div>
-      <div class="form-field"><label>Nota</label><input type="text" id="ab-nota" placeholder="Descripción del cobro"></div>
-    </div>`,
+    </div>
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('ab',moneda,v.banco,v.cuenta)}
+    </div>
+    <div class="form-field"><label>Nota</label><input type="text" id="ab-nota" placeholder="Descripción del cobro"></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
      <button class="btn btn-green" onclick="confirmarAbVenta('${vid}')">✅ Confirmar Cobro</button>`);
 }
@@ -7707,6 +8076,11 @@ function confirmarAbVenta(vid){
   if(!monto||monto<=0){toast('Ingresa un monto válido','error');return;}
   const i=DB.ventas.findIndex(x=>x.id===vid);if(i<0)return;
   if(monto>DB.ventas[i].pendiente){toast('El monto no puede superar el pendiente','error');return;}
+  const moneda=document.getElementById('ab-moneda')?.value||DB.ventas[i].moneda||'RD$';
+  const banco=document.getElementById('ab-banco')?.value||'';
+  const cuenta=document.getElementById('ab-cuenta')?.value||'Caja General';
+  const fecha=document.getElementById('ab-fecha').value;
+  const nota=document.getElementById('ab-nota')?.value||'';
   DB.ventas[i].inicial=(DB.ventas[i].inicial||0)+monto;
   DB.ventas[i].pendiente=Math.max(0,(DB.ventas[i].pendiente||0)-monto);
   if(DB.ventas[i].pendiente<=0){
@@ -7719,15 +8093,16 @@ function confirmarAbVenta(vid){
     toast('✅ Pago completado — Vehículo queda pendiente de entrega de documentos (plazo: 1 mes)','warning');
   }
   const ci=DB.cxc.findIndex(x=>x.ventaId===vid);
+  const pagoId=uid();
   if(ci>=0){
     DB.cxc[ci].abonado=(DB.cxc[ci].abonado||0)+monto;
     DB.cxc[ci].saldo=Math.max(0,(DB.cxc[ci].saldo||0)-monto);
     DB.cxc[ci].status=DB.cxc[ci].saldo<=0?'SALDADO':'PARCIAL';
     if(!DB.cxc[ci].pagos)DB.cxc[ci].pagos=[];
-    DB.cxc[ci].pagos.push({fecha:document.getElementById('ab-fecha').value,monto,cuenta:document.getElementById('ab-cuenta')?.value||'',nota:document.getElementById('ab-nota')?.value||''});
+    DB.cxc[ci].pagos.push({id:pagoId,fecha,monto,moneda,banco,cuenta,nota});
     sDB('cxc');
   }
-  DB.caja.push({id:uid(),fecha:document.getElementById('ab-fecha').value,tipo:'ENTRADA',categoria:'Cobro de Venta',descripcion:`Cobro ${DB.ventas[i].factura}: ${DB.ventas[i].cliente}`,monto,referencia:document.getElementById('ab-cuenta')?.value||'',responsable:currentUser.nombre});
+  DB.caja.push({id:uid(),fecha,tipo:'ENTRADA',categoria:'Cobro de Venta',descripcion:`Cobro ${DB.ventas[i].factura}: ${DB.ventas[i].cliente}`,monto,moneda,banco,cuenta,referencia:DB.ventas[i].factura,responsable:currentUser.nombre,origenModulo:'cxc',origenId:ci>=0?DB.cxc[ci].id:'',pagoId});
   sDB('ventas');sDB('caja');
   closeModal();
   logBit('ventas','Registró cobro','');toast('Cobro registrado ✓','success');
@@ -7742,7 +8117,7 @@ function editarVenta(vid){
   // Banco y cuentas actuales
   const bancosOpts=(DB.config.bancoCuentas||[]).map(b=>`<option value="${escHtml(b.banco)}" ${b.banco===v.banco?'selected':''}>${escHtml(b.banco)}</option>`).join('')||`<option value="Caja General" selected>Caja General</option>`;
   const bancoActual=DB.config.bancoCuentas?.find(b=>b.banco===v.banco)||DB.config.bancoCuentas?.[0];
-  const cuentasOpts=bancoActual?(bancoActual.cuentas||[]).map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}" ${(c.tipo+' — '+c.numero)===v.cuentaCobro?'selected':''}>${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join(''):`<option value="Caja General" ${v.cuentaCobro==='Caja General'?'selected':''}>Caja General</option>`;
+  const cuentasOpts=bancoActual?(bancoActual.cuentas||[]).map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}" ${(c.tipo+' — '+c.numero)===v.cuenta?'selected':''}>${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join(''):`<option value="Caja General" ${v.cuenta==='Caja General'?'selected':''}>Caja General</option>`;
   // Vehículo recibido
   const tieneRec=!!(v.vehiculoRecibido?.vehiculo);
   const rec=v.vehiculoRecibido||{};
@@ -7771,19 +8146,19 @@ function editarVenta(vid){
       <div class="form-field"><label>Método de Pago</label>
         <select id="sv-pago">${['Contado','Financiamiento','Transferencia','Cheque','Mixto'].map(p=>`<option ${p===v.metodoPago?'selected':''}>${p}</option>`).join('')}</select>
       </div>
-      <div class="form-field"><label>Banco</label>
-        <select id="sv-banco" onchange="actualizarCuentasVenta()">${bancosOpts}</select>
-      </div>
-      <div class="form-field"><label class="required">Cuenta de Cobro</label>
-        <select id="sv-cuenta">${cuentasOpts}</select>
-      </div>
-    </div>
-    <div class="form-row c3" style="margin-bottom:4px">
       <div class="form-field"><label>Moneda de Venta</label>
         <select id="sv-moneda" onchange="toggleTasaVenta();calcPend();actualizarCuentasVenta()">
           <option value="RD$" ${(v.moneda||'RD$')==='RD$'?'selected':''}>RD$ — Pesos</option>
           <option value="USD" ${v.moneda==='USD'?'selected':''}>USD — Dólares</option>
         </select>
+      </div>
+    </div>
+    <div class="form-row c3" style="margin-bottom:4px">
+      <div class="form-field"><label>Banco</label>
+        <select id="sv-banco" onchange="actualizarCuentasVenta()">${bancosOpts}</select>
+      </div>
+      <div class="form-field"><label class="required">Cuenta de Cobro</label>
+        <select id="sv-cuenta">${cuentasOpts}</select>
       </div>
       <div id="sv-tasa-wrap" style="display:${v.moneda==='USD'?'block':'none'}" class="form-field"><label>💱 Tasa del Día (RD$ x USD)</label>
         <input type="number" id="sv-tasa" step="0.01" value="${v.tasaCambio||DB.config.tasaCambio||60}" placeholder="Ej: 60.50" oninput="calcPend()">
@@ -7936,7 +8311,7 @@ function guardarEditarVenta(vid){
   DB.ventas[i].fecha=document.getElementById('sv-fecha')?.value||'';
   DB.ventas[i].metodoPago=document.getElementById('sv-pago')?.value||'Contado';
   DB.ventas[i].banco=banco;
-  DB.ventas[i].cuentaCobro=cuenta;
+  DB.ventas[i].cuenta=cuenta;
   DB.ventas[i].moneda=moneda;
   DB.ventas[i].tasaCambio=tasa;
   DB.ventas[i].precioVenta=precio;
@@ -7959,7 +8334,7 @@ function guardarEditarVenta(vid){
   }
   // Actualizar CXC de venta
   const ci=DB.cxc.findIndex(x=>x.ventaId===vid&&!x.esTraspaso);
-  if(ci>=0){DB.cxc[ci].saldo=pendiente;DB.cxc[ci].abonado=inicial;DB.cxc[ci].status=pendiente<=0?'SALDADO':inicial>0?'PARCIAL':'PENDIENTE';DB.cxc[ci].cliente=cli?.nombre||DB.cxc[ci].cliente;sDB('cxc');}
+  if(ci>=0){DB.cxc[ci].total=precio;DB.cxc[ci].moneda=moneda;DB.cxc[ci].tasaCambio=tasa;DB.cxc[ci].saldo=pendiente;DB.cxc[ci].abonado=inicial;DB.cxc[ci].status=pendiente<=0?'SALDADO':inicial>0?'PARCIAL':'PENDIENTE';DB.cxc[ci].cliente=cli?.nombre||DB.cxc[ci].cliente;sDB('cxc');}
   // Actualizar CXC de traspaso si existe y el monto cambió
   const ciTrasp=DB.cxc.findIndex(x=>x.ventaId===vid&&x.esTraspaso);
   if(ciTrasp>=0&&traspasoMonto>0){
@@ -7976,6 +8351,20 @@ function guardarEditarVenta(vid){
   // Si cambió el vehículo, liberar el anterior
   const vehAnteriorId=DB.ventas[i].vehiculoId!==vehId?DB.ventas[i].vehiculoId:null;
   if(vehAnteriorId){const vai=DB.vehiculos.findIndex(x=>x.id===vehAnteriorId);if(vai>=0){DB.vehiculos[vai].status='ACTIVO';sDB('vehiculos');}}
+  // Sincronizar movimiento de Caja original generado al confirmar la venta (online: banco/cuenta/moneda/monto)
+  let cajaIdx=DB.caja.findIndex(c=>c.origenModulo==='ventas'&&c.origenId===vid);
+  if(cajaIdx<0)cajaIdx=DB.caja.findIndex(c=>c.categoria==='Venta de Vehículo'&&c.referencia===DB.ventas[i].factura); // fallback registros antiguos
+  if(cajaIdx>=0){
+    DB.caja[cajaIdx].fecha=DB.ventas[i].fecha;
+    DB.caja[cajaIdx].monto=inicial||precio;
+    DB.caja[cajaIdx].moneda=moneda;
+    DB.caja[cajaIdx].banco=banco;
+    DB.caja[cajaIdx].cuenta=cuenta;
+    DB.caja[cajaIdx].descripcion=`Venta: ${veh?.codigo||''} ${veh?.marca||''} ${veh?.modelo||''}`;
+    DB.caja[cajaIdx].origenModulo='ventas';
+    DB.caja[cajaIdx].origenId=vid;
+    sDB('caja');
+  }
   sDB('ventas');closeModal();toast('Venta actualizada ✓','success');renderVentas();
 }
 
@@ -9123,12 +9512,12 @@ function editarCXP(gid, origen){
       <div class="form-field"><label>Tipo de Gasto / Descripción</label>
         <input type="text" id="ecxp-tipo" value="${escHtml(g.descripcion||g.tipo||'')}">
       </div>
-      <div class="form-field"><label>Moneda</label>
-        <select id="ecxp-moneda">
-          <option value="RD$" ${(g.moneda||'RD$')==='RD$'?'selected':''}>RD$ — Pesos</option>
-          <option value="USD" ${g.moneda==='USD'?'selected':''}>USD — Dólares</option>
-        </select>
+      <div class="form-field"><label>Fecha</label>
+        <input type="date" id="ecxp-fecha" value="${g.fecha||today()}">
       </div>
+    </div>
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('ecxp',g.moneda||'RD$',g.banco||undefined,g.cuenta||undefined)}
     </div>
     <div class="form-row c3">
       <div class="form-field"><label>Monto Factura</label>
@@ -9137,10 +9526,8 @@ function editarCXP(gid, origen){
       <div class="form-field"><label>Monto Pagado</label>
         <input type="text" id="ecxp-pagado" value="${fmtMoneyDisplay(g.montoPagado||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
-      <div class="form-field"><label>Fecha</label>
-        <input type="date" id="ecxp-fecha" value="${g.fecha||today()}">
-      </div>
-    </div>`,
+    </div>
+    <div style="font-size:11px;color:var(--gray);margin:-4px 0 8px">⚠️ Si cambias el Monto Pagado, se registrará un ajuste en Caja por la diferencia.</div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
      <button class="btn btn-primary" onclick="guardarEditCXP('${gid}','${origen}')">💾 Actualizar</button>`);
 }
@@ -9171,12 +9558,27 @@ function guardarEditCXP(gid, origen){
   const tipoVal = document.getElementById('ecxp-tipo').value.trim();
   if(origen==='manual') arr[i].descripcion = tipoVal;
   else arr[i].tipo = tipoVal;
-  arr[i].moneda = document.getElementById('ecxp-moneda').value;
+  const moneda = document.getElementById('ecxp-moneda')?.value||arr[i].moneda||'RD$';
+  const banco = document.getElementById('ecxp-banco')?.value||'';
+  const cuenta = document.getElementById('ecxp-cuenta')?.value||'';
+  const pagadoAnterior = parseFloat(arr[i].montoPagado||0);
+  arr[i].moneda = moneda;
+  arr[i].banco = banco;
+  arr[i].cuenta = cuenta;
   arr[i].montoFactura = factura;
   arr[i].montoPagado = pagado;
   arr[i].montoPendiente = pendiente;
   arr[i].fecha = document.getElementById('ecxp-fecha').value;
   arr[i].statusGasto = pendiente<=0?'PAGADO':pagado>0?'ABONADO':'PENDIENTE';
+  // Si el Monto Pagado cambió al editar, postear un AJUSTE en Caja por la diferencia (auditable, no reescribe historial)
+  const deltaPago=pagado-pagadoAnterior;
+  if(Math.abs(deltaPago)>0.009){
+    const pagoId=uid();
+    if(!arr[i].pagos)arr[i].pagos=[];
+    arr[i].pagos.push({id:pagoId,fecha:arr[i].fecha||today(),monto:Math.abs(deltaPago),moneda,banco,cuenta,nota:'Ajuste por edición ('+(deltaPago>0?'+':'')+fmtMoneyDisplay(deltaPago)+')'});
+    DB.caja.push({id:uid(),fecha:arr[i].fecha||today(),tipo:deltaPago>0?'SALIDA':'ENTRADA',categoria:origen==='manual'?'CXP Manual':'Gasto de Vehículo',descripcion:`Ajuste por edición — ${arr[i].descripcion||arr[i].tipo||''} — ${arr[i].suplidor||''}`,monto:Math.abs(deltaPago),moneda,banco,cuenta,referencia:'',responsable:currentUser.nombre,origenModulo:origen==='manual'?'cxp':'gastosVehiculos',origenId:arr[i].id,pagoId});
+    sDB('caja');
+  }
   if(origen==='manual') sDB('cxp'); else sDB('gastosVehiculos');
   closeModal();
   toast('CxP actualizada ✓','success');
@@ -9212,13 +9614,11 @@ function nuevaCXPManual(){
         <input type="text" id="cxpm-pend" readonly value="0" style="background:#f8fafc;font-weight:700;color:var(--red)">
       </div>
     </div>
-    <div class="form-row c2">
     <div class="form-row c3">
       ${htmlMonedaBancoCuenta('cxpm','',undefined,undefined)}
     </div>
     <div class="form-row c2">
       <div class="form-field"><label>Fecha</label><input type="date" id="cxpm-fecha" value="${today()}"></div>
-    <div class="form-row c2">
       <div class="form-field"><label>Fecha Límite Pago</label><input type="date" id="cxpm-flim"></div>
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
@@ -9241,17 +9641,24 @@ function guardarCXPManual(){
   const banco=document.getElementById('cxpm-banco')?.value||'';
   const cuenta=document.getElementById('cxpm-cuenta')?.value||'';
   const moneda=document.getElementById('cxpm-moneda')?.value||'RD$';
+  const fecha=document.getElementById('cxpm-fecha')?.value||today();
   if(!DB.cxp)DB.cxp=[];
-  DB.cxp.push({
+  const nuevaCxp={
     id:uid(),tipo:'MANUAL',suplidor:sup||'',descripcion:desc,
     moneda,montoFactura:monto,montoPagado:abono,montoPendiente:pendiente,
-    banco,cuenta,fecha:document.getElementById('cxpm-fecha')?.value||today(),
+    banco,cuenta,fecha,
     fechaLimite:document.getElementById('cxpm-flim')?.value||'',
     statusGasto:pendiente<=0?'PAGADO':abono>0?'ABONADO':'PENDIENTE',
     pagos:[]
-  });
+  };
+  if(abono>0){
+    const pagoId=uid();
+    nuevaCxp.pagos.push({id:pagoId,fecha,monto:abono,moneda,banco,cuenta,nota:'Abono inicial'});
+    DB.caja.push({id:uid(),fecha,tipo:'SALIDA',categoria:'CXP Manual',descripcion:`Pago CXP: ${desc}${sup?' — '+sup:''}`,monto:abono,moneda,banco,cuenta,referencia:'',responsable:currentUser.nombre,origenModulo:'cxp',origenId:nuevaCxp.id,pagoId});
+  }
+  DB.cxp.push(nuevaCxp);
   logBit('cxp','Nueva CXP manual','');
-  sDB('cxp');
+  sDB('cxp');sDB('caja');
   closeModal();toast('CXP manual guardada ✓','success');renderCXP();
 }
 function abonarCXPManual(gid){
@@ -9279,13 +9686,8 @@ function abonarCXPManual(gid){
         <input type="date" id="cxpm-pay-fecha" value="${today()}">
       </div>
     </div>
-    <div class="form-row c2">
-      <div class="form-field"><label>Banco</label>
-        <select id="cxpm-pay-banco" onchange="actualizarCuentasPagoManual()">${bancoOpts}</select>
-      </div>
-      <div class="form-field"><label>Cuenta de Salida</label>
-        <select id="cxpm-pay-cuenta">${bcs[0]?(bcs[0].cuentas||[]).map(c=>`<option value="${escHtml(c.tipo+' \u2014 '+c.numero)}">${escHtml(c.tipo)} \u2014 ${escHtml(c.numero)}</option>`).join(''):'<option value="Caja General">Caja General</option>'}</select>
-      </div>
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('cxpm-pay',g.moneda||'RD$',g.banco||undefined,g.cuenta||undefined)}
     </div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
      <button class="btn btn-green" onclick="confirmarPagoCXPManual(${i})">\u2705 Confirmar Pago</button>`);
@@ -9306,17 +9708,19 @@ function confirmarPagoCXPManual(i){
   const fecha=document.getElementById('cxpm-pay-fecha')?.value||today();
   const cuenta=document.getElementById('cxpm-pay-cuenta')?.value||'';
   const banco=document.getElementById('cxpm-pay-banco')?.value||'';
+  const moneda=g.moneda||'RD$';
   DB.cxp[i].montoPagado=(parseFloat(g.montoPagado||0)+monto);
   DB.cxp[i].montoPendiente=Math.max(0,parseFloat(g.montoPendiente||0)-monto);
   DB.cxp[i].fechaPago=fecha;
   DB.cxp[i].banco=banco;
   DB.cxp[i].cuenta=cuenta;
   if(!DB.cxp[i].pagos)DB.cxp[i].pagos=[];
-  DB.cxp[i].pagos.push({id:uid(),fecha,monto,banco,cuenta,responsable:currentUser?.nombre||''});
+  const pagoId=uid();
+  DB.cxp[i].pagos.push({id:pagoId,fecha,monto,moneda,banco,cuenta,responsable:currentUser?.nombre||''});
   DB.cxp[i].statusGasto=DB.cxp[i].montoPendiente<=0?'PAGADO':'ABONADO';
   DB.caja.push({id:uid(),fecha,tipo:'SALIDA',categoria:'CXP Manual',
     descripcion:'Pago CXP: '+g.descripcion+(g.suplidor?' \u2014 '+g.suplidor:''),
-    monto,referencia:cuenta,banco,responsable:currentUser?.nombre||''});
+    monto,moneda,banco,cuenta,referencia:'',responsable:currentUser?.nombre||'',origenModulo:'cxp',origenId:g.id,pagoId});
   sDB('cxp');sDB('caja');
   closeModal();toast('Pago registrado \u2713','success');renderCXP();
 }
@@ -9385,30 +9789,33 @@ function confirmarPagoCXP(i){
   if(!monto||monto<=0){toast('Ingresa un monto válido','error');return;}
   const g=DB.gastosVehiculos[i];
   if(monto>parseFloat(g.montoPendiente||0)){toast('El monto no puede superar el pendiente','error');return;}
-  const esUSD=g.moneda==='USD';
+  const moneda=document.getElementById('cxpp-moneda')?.value||g.moneda||'RD$';
+  const esUSD=moneda==='USD';
   const tasa=esUSD?parseFloat(document.getElementById('cxpp-tasa')?.value||0):null;
   if(esUSD&&(!tasa||tasa<=0)){toast('La tasa del día es obligatoria para pagos en USD','error');document.getElementById('cxpp-tasa')?.focus();return;}
   const equivRD=esUSD?monto*tasa:null;
   const fechaPago=document.getElementById('cxpp-fecha').value;
+  const bancoPago=document.getElementById('cxpp-banco')?.value||'';
   const cuentaPago=document.getElementById('cxpp-cuenta').value;
   const notaPago=document.getElementById('cxpp-nota')?.value||'';
   DB.gastosVehiculos[i].montoPagado=(parseFloat(g.montoPagado||0)+monto);
   DB.gastosVehiculos[i].montoPendiente=(parseFloat(g.montoPendiente||0)-monto);
   DB.gastosVehiculos[i].fechaPago=fechaPago;
+  DB.gastosVehiculos[i].banco=bancoPago;
   DB.gastosVehiculos[i].cuenta=cuentaPago;
   const saldado=DB.gastosVehiculos[i].montoPendiente<=0;
   if(saldado){DB.gastosVehiculos[i].montoPendiente=0;DB.gastosVehiculos[i].statusGasto='PAGADO';}
   else DB.gastosVehiculos[i].statusGasto='ABONADO';
   if(!DB.gastosVehiculos[i].pagos)DB.gastosVehiculos[i].pagos=[];
-  DB.gastosVehiculos[i].pagos.push({id:uid(),fecha:fechaPago,monto,cuenta:cuentaPago,nota:notaPago,saldado,
-    ...(esUSD&&tasa?{tasa,equivRD,moneda:'USD'}:{})
+  const pagoId=uid();
+  DB.gastosVehiculos[i].pagos.push({id:pagoId,fecha:fechaPago,monto,moneda,banco:bancoPago,cuenta:cuentaPago,nota:notaPago,saldado,
+    ...(esUSD&&tasa?{tasa,equivRD}:{})
   });
-  if(esUSD&&tasa){
-    DB.caja.push({id:uid(),fecha:fechaPago,tipo:'SALIDA',categoria:'CXP USD',
-      descripcion:'Pago CXP USD: '+g.descripcion+(g.suplidor?' — '+g.suplidor:'')+' (Tasa: '+tasa.toFixed(2)+')',
-      monto:equivRD,moneda:'RD$',referencia:cuentaPago,banco:document.getElementById('cxpp-banco')?.value||'',responsable:currentUser?.nombre||''});
-    sDB('caja');
-  }
+  // Movimiento de Caja: SIEMPRE se registra (antes solo ocurría si era USD), en la moneda propia del pago
+  DB.caja.push({id:uid(),fecha:fechaPago,tipo:'SALIDA',categoria:esUSD?'CXP USD':'Gasto de Vehículo',
+    descripcion:'Pago CXP: '+g.descripcion+(g.suplidor?' — '+g.suplidor:'')+(esUSD?' (Tasa: '+tasa.toFixed(2)+')':''),
+    monto,moneda,banco:bancoPago,cuenta:cuentaPago,referencia:'',responsable:currentUser?.nombre||'',origenModulo:'gastosVehiculos',origenId:g.id,pagoId});
+  sDB('caja');
   sDB('gastosVehiculos');
   closeModal();
   imprimirReciboPagoCXP(DB.gastosVehiculos[i],{fecha:fechaPago,monto,cuenta:cuentaPago,nota:notaPago,saldado,tasa,equivRD});
@@ -9865,8 +10272,7 @@ function guardarCXCManual(){
   const vence=document.getElementById('ncxc-vence').value;
   const freq=document.getElementById('ncxc-freq')?.value||'';
   const proxPago=document.getElementById('ncxc-proxpago')?.value||'';
-  if(!DB.cxc)DB.cxc=[];
-  DB.cxc.push({
+  const nuevaCxc={
     id:uid(),ventaId:'',factura:'CXC-'+uid().slice(0,6).toUpperCase(),
     cliente:cli?.nombre||'',clienteId:cliId,
     vehiculo:'',concepto,moneda,
@@ -9877,10 +10283,16 @@ function guardarCXCManual(){
     status:saldo<=0?'SALDADO':abono>0?'PARCIAL':'PENDIENTE',
     cuenta,banco,tasaCambio:tasaCXC,pagos:[],
     esManual:true
-  });
-  if(abono>0)DB.caja.push({id:uid(),fecha,tipo:'ENTRADA',categoria:'CxC Manual',
-    descripcion:'Abono CxC: '+concepto+' — '+cli?.nombre,
-    monto:abono,moneda,banco,cuenta,referencia:banco?(banco+' / '+cuenta):cuenta,responsable:currentUser.nombre});
+  };
+  if(abono>0){
+    const pagoId=uid();
+    nuevaCxc.pagos.push({id:pagoId,fecha,monto:abono,moneda,banco,cuenta,nota:'Abono inicial'});
+    DB.caja.push({id:uid(),fecha,tipo:'ENTRADA',categoria:'CxC Manual',
+      descripcion:'Abono CxC: '+concepto+' — '+cli?.nombre,
+      monto:abono,moneda,banco,cuenta,referencia:nuevaCxc.factura,responsable:currentUser.nombre,origenModulo:'cxc',origenId:nuevaCxc.id,pagoId});
+  }
+  if(!DB.cxc)DB.cxc=[];
+  DB.cxc.push(nuevaCxc);
   sDB('cxc');sDB('caja');closeModal();
   toast('Cuenta por cobrar creada ✓','success');renderCXC();
 }
@@ -10090,8 +10502,9 @@ function confirmarAbonarCXC(id){
   const saldado=DB.cxc[i].saldo<=0;
   DB.cxc[i].status=saldado?'SALDADO':DB.cxc[i].abonado>0?'PARCIAL':'PENDIENTE';
   if(!DB.cxc[i].pagos)DB.cxc[i].pagos=[];
-  const pagoObj={id:uid(),fecha:fechaCobro,monto,cuenta:cuentaCobro,nota:notaCobro,saldado,
-    ...(esUSD&&tasa?{tasa,equivRD,moneda:'USD'}:{})
+  const pagoId=uid();
+  const pagoObj={id:pagoId,fecha:fechaCobro,monto,moneda:DB.cxc[i].moneda||'RD$',banco:bancoCobro,cuenta:cuentaCobro,nota:notaCobro,saldado,
+    ...(esUSD&&tasa?{tasa,equivRD}:{})
   };
   DB.cxc[i].pagos.push(pagoObj);
   if(DB.cxc[i].ventaId){
@@ -10103,11 +10516,11 @@ function confirmarAbonarCXC(id){
       sDB('ventas');
     }
   }
-  const montoCaja=esUSD?equivRD:monto;
+  // Movimiento de Caja en la moneda real del cobro (ya no se fuerza la conversión a RD$)
   DB.caja.push({id:uid(),fecha:fechaCobro,tipo:'ENTRADA',categoria:'Cobro CxC',
     descripcion:`Cobro CxC: ${DB.cxc[i].cliente} — ${DB.cxc[i].factura}`+(esUSD?` (Tasa: ${tasa.toFixed(2)})`:''),
-    monto:montoCaja,moneda:'RD$',banco:bancoCobro,cuenta:cuentaCobro,
-    referencia:bancoCobro?(bancoCobro+' / '+cuentaCobro):cuentaCobro,responsable:currentUser.nombre});
+    monto,moneda:DB.cxc[i].moneda||'RD$',banco:bancoCobro,cuenta:cuentaCobro,
+    referencia:DB.cxc[i].factura||'',responsable:currentUser.nombre,origenModulo:'cxc',origenId:DB.cxc[i].id,pagoId});
   sDB('cxc');sDB('caja');
   closeModal();
   imprimirReciboCobro(DB.cxc[i],pagoObj);
@@ -10298,7 +10711,7 @@ function verAbonosCXC(id){
 
   const esUSD=(x.moneda||ventaRel?.moneda||'RD$')==='USD';
   const fV=(n)=>esUSD?'$'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(n);
-  const rows=(x.pagos||[]).map((p,pi)=>`<tr>
+  const rows=(x.pagos||[]).map((p,pi)=>{const pid=p.id||('idx_'+pi);return`<tr>
     <td>${fmtDate(p.fecha)}</td>
     <td style="font-weight:700;color:var(--green)">${fV(p.monto)}</td>
     <td>${p.tasa?`<span style="font-size:11px;color:var(--blue)">RD$ ${parseFloat(p.tasa||0).toFixed(2)}</span>`:'—'}</td>
@@ -10308,10 +10721,10 @@ function verAbonosCXC(id){
     <td><span class="badge ${x.status==='SALDADO'&&pi===(x.pagos||[]).length-1?'badge-green':'badge-amber'}">${x.status==='SALDADO'&&pi===(x.pagos||[]).length-1?'SALDADO':'ABONO'}</span></td>
     <td style="white-space:nowrap">
       <button class="btn btn-secondary btn-sm" onclick="imprimirReciboCobro(DB.cxc.find(c=>c.id==='${x.id}'),{fecha:'${p.fecha}',monto:${p.monto},cuenta:'${escHtml(p.cuenta||'')}',nota:'${escHtml(p.nota||'')}',saldado:${x.status==='SALDADO'&&pi===(x.pagos||[]).length-1},tasa:${p.tasa||0},equivRD:${p.equivRD||0}})">🖨️</button>
-      ${(currentUser?.role==='admin'||canDo('editar'))?`<button class="btn btn-sm" style="background:var(--blue3);color:var(--blue)" onclick="_pagoEditOrigen={type:'cxc',id:'${x.id}'};editarPagoCXCModal('${x.id}','${p.id}')" title="Editar pago">✏️</button>
-      <button class="btn btn-sm" style="background:var(--red2);color:var(--red)" onclick="_pagoEditOrigen={type:'cxc',id:'${x.id}'};revertirPagoCXC('${x.id}','${p.id}')" title="Revertir/Eliminar pago">↩️</button>`:''}
+      ${(currentUser?.role==='admin'||canDo('editar'))?`<button class="btn btn-sm" style="background:var(--blue3);color:var(--blue)" onclick="_pagoEditOrigen={type:'cxc',id:'${x.id}'};editarPagoCXCModal('${x.id}','${pid}')" title="Editar pago">✏️</button>
+      <button class="btn btn-sm" style="background:var(--red2);color:var(--red)" onclick="_pagoEditOrigen={type:'cxc',id:'${x.id}'};revertirPagoCXC('${x.id}','${pid}')" title="Revertir/Eliminar pago">↩️</button>`:''}
     </td>
-  </tr>`).join('');
+  </tr>`;}).join('');
   const freqLabel={semanal:'Semanal',quincenal:'Quincenal',mensual:'Mensual'};
   openModal('📋 Historial de Cobros — '+escHtml(x.cliente),`
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px">
@@ -10806,7 +11219,7 @@ function exportarInformePDF(){
 
   <!-- CXC PENDIENTES -->
   <h2>📬 CUENTAS POR COBRAR PENDIENTES</h2>
-  ${cxcPend.length?'<table><thead><tr><th>Factura</th><th>Cliente</th><th>Vehículo</th><th>Total</th><th>Saldo Pendiente</th><th>Estado</th></tr></thead><tbody>'+cxcPend.map(x=>'<tr><td style="font-family:monospace">'+escHtml(x.factura||'')+'</td><td style="font-weight:700">'+escHtml(x.cliente||'')+'</td><td>'+escHtml(x.vehiculo||'—')+'</td><td>'+fmt(x.total)+'</td><td style="font-weight:700;color:#dc2626">'+fmt(x.saldo)+'</td><td><span class="badge '+(x.status==='PARCIAL'?'amber-bg':'red-bg')+'">'+escHtml(x.status||'')+'</span></td></tr>').join('')+'</tbody></table>':'<p style="color:#64748b;margin:8px 0">Sin cuentas por cobrar pendientes</p>'}
+  ${cxcPend.length?'<table><thead><tr><th>Factura</th><th>Cliente</th><th>Vehículo</th><th>Total</th><th>Saldo Pendiente</th><th>Estado</th></tr></thead><tbody>'+cxcPend.map(x=>'<tr><td style="font-family:monospace">'+escHtml(x.factura||'')+'</td><td style="font-weight:700">'+escHtml(x.cliente||'')+'</td><td>'+escHtml(x.vehiculo||'—')+'</td><td>'+fmtMon(x.total,x.moneda||'RD$')+'</td><td style="font-weight:700;color:#dc2626">'+fmtMon(x.saldo,x.moneda||'RD$')+'</td><td><span class="badge '+(x.status==='PARCIAL'?'amber-bg':'red-bg')+'">'+escHtml(x.status||'')+'</span></td></tr>').join('')+'</tbody></table>':'<p style="color:#64748b;margin:8px 0">Sin cuentas por cobrar pendientes</p>'}
 
   <!-- CXP PENDIENTES (SUPLIDORES) -->
   <h2>📑 PENDIENTES POR PAGAR A SUPLIDORES</h2>
@@ -10867,7 +11280,7 @@ function renderSeguros(){
           const venc=s.hasta&&s.hasta<today();
           const pend=parseFloat(s.pendiente||0);
           return`<tr>
-            <td style="font-weight:700;font-size:12px">${v?escHtml(v.codigo+' '+v.marca+' '+v.modelo):'—'}</td>
+            <td style="font-weight:700;font-size:12px">${v?escHtml(v.codigo+' '+v.marca+' '+v.modelo):(s.vehiculoTexto?'<span title="Vehículo externo">👤 '+escHtml(s.vehiculoTexto)+'</span>':'—')}</td>
             <td style="font-weight:600">${escHtml(s.cliente||'—')}</td>
             <td style="font-weight:600;color:var(--blue)">${escHtml(s.compania||'—')}</td>
             <td style="font-family:monospace;font-size:11px">${escHtml(s.poliza||'—')}</td>
@@ -10894,17 +11307,41 @@ function renderSeguros(){
 
 function _formSeguro(s){
   const companias=(DB.config.companiasSeguro||['Universal','Mapfre BHD','Reservas','Patria','Atlantica','HUMANO','Otra']);
-  const cuentas=DB.config.cuentas&&DB.config.cuentas.length?DB.config.cuentas:['Caja General'];
   const abon=parseFloat(s?.abonado||0);
   const prim=parseFloat(s?.prima||0);
+  const tipoVeh=s?.tipoVeh||'interno';
+  // Vehículos internos: solo los que están en Tránsito o Vendidos (igual que Fayre)
+  const vehs=DB.vehiculos.filter(v=>v.status==='VENDIDO'||v.status==='TRÁNSITO'||v.status==='TRANSITO');
   return`
-    <div class="form-row c2">
+    <div class="form-field" style="margin-bottom:10px">
+      <label style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gray);margin-bottom:6px;display:block">Tipo de Vehículo</label>
+      <div style="display:flex;gap:8px">
+        <button type="button" id="btn-tipo-interno" onclick="toggleTipoVehSeguro('interno')"
+          class="btn ${tipoVeh==='interno'?'btn-primary':'btn-secondary'}" style="flex:1">
+          🏢 Interno (Tránsito / Vendido)
+        </button>
+        <button type="button" id="btn-tipo-externo" onclick="toggleTipoVehSeguro('externo')"
+          class="btn ${tipoVeh==='externo'?'btn-primary':'btn-secondary'}" style="flex:1">
+          👤 Externo (Cliente)
+        </button>
+      </div>
+    </div>
+    <input type="hidden" id="sg-tipo-veh" value="${tipoVeh}">
+    <div id="sg-veh-interno-wrap" style="display:${tipoVeh==='interno'?'block':'none'}">
       <div class="form-field"><label class="required">Vehículo</label>
         <select id="sg-veh">
           <option value="">Seleccionar...</option>
-          ${DB.vehiculos.map(v=>`<option value="${v.id}" ${v.id===s?.vehiculoId?'selected':''}>${escHtml(v.codigo+' — '+v.marca+' '+v.modelo+' '+v.anio)}</option>`).join('')}
+          ${vehs.map(v=>`<option value="${v.id}" ${v.id===s?.vehiculoId?'selected':''}>${escHtml(v.codigo+' — '+v.marca+' '+v.modelo+' '+v.anio)} [${v.status}]</option>`).join('')}
         </select>
+        ${vehs.length===0?'<div style="font-size:10px;color:var(--amber);margin-top:2px">No hay vehículos en Tránsito o Vendidos actualmente</div>':''}
       </div>
+    </div>
+    <div id="sg-veh-externo-wrap" style="display:${tipoVeh==='externo'?'block':'none'}">
+      <div class="form-field"><label class="required">Descripción del Vehículo</label>
+        <input type="text" id="sg-veh-texto" value="${escHtml(s?.vehiculoTexto||'')}" placeholder="Ej: Toyota Corolla 2022 Plateado — Placa ABC123">
+      </div>
+    </div>
+    <div class="form-row c2">
       <div class="form-field"><label class="required">Compañía Aseguradora</label>
         <div style="display:flex;gap:6px">
           <select id="sg-comp" style="flex:1">
@@ -10913,11 +11350,11 @@ function _formSeguro(s){
           <button type="button" class="btn btn-secondary btn-sm" onclick="agregarCompaniaSeguro()" title="Agregar compañía">➕</button>
         </div>
       </div>
-    </div>
-    <div class="form-row c2">
       <div class="form-field"><label class="required">Cliente / Asegurado (Nombre)</label>
         <input type="text" id="sg-cliente" value="${escHtml(s?.cliente||'')}" placeholder="Nombre del asegurado o cliente">
       </div>
+    </div>
+    <div class="form-row c2">
       <div class="form-field"><label>N° de Póliza</label>
         <input type="text" id="sg-poliza" value="${escHtml(s?.poliza||'')}" placeholder="Ej: POL-2024-001">
       </div>
@@ -10943,6 +11380,13 @@ function _formSeguro(s){
     <div class="form-field"><label>Observaciones</label>
       <input type="text" id="sg-obs" value="${escHtml(s?.obs||'')}" placeholder="Cobertura, condiciones especiales...">
     </div>`;
+}
+function toggleTipoVehSeguro(tipo){
+  document.getElementById('sg-tipo-veh').value=tipo;
+  document.getElementById('sg-veh-interno-wrap').style.display=tipo==='interno'?'block':'none';
+  document.getElementById('sg-veh-externo-wrap').style.display=tipo==='externo'?'block':'none';
+  document.getElementById('btn-tipo-interno').className='btn '+(tipo==='interno'?'btn-primary':'btn-secondary');
+  document.getElementById('btn-tipo-externo').className='btn '+(tipo==='externo'?'btn-primary':'btn-secondary');
 }
 function calcPendSeguro(){
   const p=parseFloat((document.getElementById('sg-prima')?.value||'0').replace(/,/g,''));
@@ -10977,20 +11421,28 @@ function nuevoSeguro(){
      <button class="btn btn-primary" onclick="guardarSeguro()">💾 Guardar Seguro</button>`);
 }
 function guardarSeguro(id){
-  const vid=document.getElementById('sg-veh').value;
+  const tipoVeh=document.getElementById('sg-tipo-veh')?.value||'interno';
+  const vid=tipoVeh==='interno'?document.getElementById('sg-veh').value:'';
+  const vehTexto=tipoVeh==='externo'?document.getElementById('sg-veh-texto').value.trim():'';
   const comp=document.getElementById('sg-comp').value;
   const cliente=document.getElementById('sg-cliente').value.trim();
   const prima=parseFloat((document.getElementById('sg-prima').value||'0').replace(/,/g,''));
   const abonado=parseFloat((document.getElementById('sg-abonado').value||'0').replace(/,/g,''));
-  if(!vid){toast('Selecciona un vehículo','error');return;}
+  if(tipoVeh==='interno'&&!vid){toast('Selecciona un vehículo','error');return;}
+  if(tipoVeh==='externo'&&!vehTexto){toast('Ingresa la descripción del vehículo','error');return;}
   if(!cliente){toast('Ingresa el nombre del asegurado','error');return;}
   if(!prima){toast('Ingresa la prima del seguro','error');return;}
   const pendiente=Math.max(0,prima-abonado);
+  const moneda=document.getElementById('sg-moneda')?.value||'RD$';
+  const banco=document.getElementById('sg-banco')?.value||'';
+  const cuenta=document.getElementById('sg-cuenta').value;
   if(!DB.seguros)DB.seguros=[];
   const prev=id?DB.seguros.find(x=>x.id===id):null;
   const s={
     id:id||uid(),
+    tipoVeh,
     vehiculoId:vid,
+    vehiculoTexto:vehTexto,
     compania:comp,
     cliente,
     poliza:document.getElementById('sg-poliza').value.trim(),
@@ -10998,15 +11450,19 @@ function guardarSeguro(id){
     status:pendiente<=0?'PAGADO':abonado>0?'ABONADO':'PENDIENTE',
     desde:document.getElementById('sg-desde').value,
     hasta:document.getElementById('sg-hasta').value,
-    cuenta:document.getElementById('sg-cuenta').value,
+    moneda,banco,cuenta,
     obs:document.getElementById('sg-obs').value,
     fecha:prev?.fecha||today(),
     pagos:prev?.pagos||[]
   };
-  if(abonado>0&&(!prev||prev.abonado<abonado)){
-    DB.caja.push({id:uid(),fecha:today(),tipo:'SALIDA',categoria:'Seguro Vehículo',
-      descripcion:'Abono seguro: '+comp+' — '+cliente+' — Póliza: '+(s.poliza||''),
-      monto:abonado-(prev?.abonado||0),referencia:s.cuenta,responsable:currentUser.nombre});
+  const deltaAbono=abonado-(prev?.abonado||0);
+  if(Math.abs(deltaAbono)>0.009){
+    const pagoId=uid();
+    const fechaMov=today();
+    s.pagos.push({id:pagoId,fecha:fechaMov,monto:Math.abs(deltaAbono),moneda,banco,cuenta,nota:prev?'Ajuste por edición':'Abono inicial'});
+    DB.caja.push({id:uid(),fecha:fechaMov,tipo:deltaAbono>0?'SALIDA':'ENTRADA',categoria:'Seguro Vehículo',
+      descripcion:(deltaAbono>0?'Abono seguro: ':'Ajuste seguro: ')+comp+' — '+cliente+' — Póliza: '+(s.poliza||''),
+      monto:Math.abs(deltaAbono),moneda,banco,cuenta,referencia:s.poliza||'',responsable:currentUser.nombre,origenModulo:'seguros',origenId:s.id,pagoId});
     sDB('caja');
   }
   if(id){const i=DB.seguros.findIndex(x=>x.id===id);if(i>=0)DB.seguros[i]=s;}
@@ -11054,19 +11510,24 @@ function confirmarAbonoSeguro(id){
   const i=DB.seguros.findIndex(x=>x.id===id);if(i<0)return;
   const monto=parseFloat((document.getElementById('sgp-monto').value||'0').replace(/,/g,''));
   if(!monto||monto<=0){toast('Ingresa un monto válido','error');return;}
+  const moneda=document.getElementById('sgp-moneda')?.value||DB.seguros[i].moneda||'RD$';
+  const banco=document.getElementById('sgp-banco')?.value||'';
   const cuenta=document.getElementById('sgp-cuenta').value;
   const fecha=document.getElementById('sgp-fecha').value;
   const pendienteActual=parseFloat(DB.seguros[i].pendiente||0);
-  if(monto>pendienteActual){toast('El monto no puede superar el pendiente ('+fmt(pendienteActual)+')','error');return;}
+  if(monto>pendienteActual){toast('El monto no puede superar el pendiente ('+fmtMon(pendienteActual,moneda)+')','error');return;}
   DB.seguros[i].abonado=(parseFloat(DB.seguros[i].abonado||0)+monto);
   DB.seguros[i].pendiente=Math.max(0,pendienteActual-monto);
   DB.seguros[i].status=DB.seguros[i].pendiente<=0?'PAGADO':'ABONADO';
+  DB.seguros[i].moneda=moneda;
+  DB.seguros[i].banco=banco;
   DB.seguros[i].cuenta=cuenta;
   if(!DB.seguros[i].pagos)DB.seguros[i].pagos=[];
-  DB.seguros[i].pagos.push({fecha,monto,cuenta,responsable:currentUser.nombre});
+  const pagoId=uid();
+  DB.seguros[i].pagos.push({id:pagoId,fecha,monto,moneda,banco,cuenta,responsable:currentUser.nombre});
   DB.caja.push({id:uid(),fecha,tipo:'SALIDA',categoria:'Seguro Vehículo',
     descripcion:'Pago seguro: '+DB.seguros[i].compania+' — '+escHtml(DB.seguros[i].cliente||'')+(DB.seguros[i].poliza?' — Póliza: '+DB.seguros[i].poliza:''),
-    monto,referencia:cuenta,responsable:currentUser.nombre});
+    monto,moneda,banco,cuenta,referencia:DB.seguros[i].poliza||'',responsable:currentUser.nombre,origenModulo:'seguros',origenId:id,pagoId});
   sDB('seguros');sDB('caja');
   closeModal();
   toast(DB.seguros[i].pendiente<=0?'✅ Seguro pagado completamente':'💵 Abono registrado ✓','success');
@@ -11085,7 +11546,15 @@ const _CFG_HIST_PAGOS={
   gastosVehiculos:{total:'montoFactura',pagado:'montoPagado',pendiente:'montoPendiente',status:'statusGasto',
     vals:{pagado:'PAGADO',abonado:'ABONADO',pendiente:'PENDIENTE'},
     cajaTipo:'SALIDA',cajaMatch:'referencia',renderFn:'renderCXP',
-    titulo:g=>'🚗 '+(g.tipo||'')+(g.suplidor?' — '+g.suplidor:'')}
+    titulo:g=>'🚗 '+(g.tipo||'')+(g.suplidor?' — '+g.suplidor:'')},
+  gastos:{total:'montoFactura',pagado:'montoAbonado',pendiente:'montoPendiente',status:'statusGasto',
+    vals:{pagado:'SALDADO',abonado:'ABONADO',pendiente:'PENDIENTE'},
+    cajaTipo:'SALIDA',cajaMatch:'referencia',renderFn:'renderGastos',
+    titulo:g=>'🏢 '+(g.descripcion||g.categoria||'')},
+  facturasExternas:{total:'monto',pagado:'abono',pendiente:'pendiente',status:'status',
+    vals:{pagado:'PAGADO',abonado:'ABONADO',pendiente:'PENDIENTE'},
+    cajaTipo:'SALIDA',cajaMatch:'referencia',renderFn:'renderFacturaExterna',
+    titulo:f=>'🧾 '+(f.numero||'')+' — '+(f.vehiculo||'')}
 };
 function recalcGenericoDesdePagos(coleccion,itemId){
   const cfg=_CFG_HIST_PAGOS[coleccion];if(!cfg)return;
@@ -11101,10 +11570,11 @@ function recalcGenericoDesdePagos(coleccion,itemId){
 function verHistorialGenerico(coleccion,itemId){
   const cfg=_CFG_HIST_PAGOS[coleccion];if(!cfg)return;
   const item=(DB[coleccion]||[]).find(x=>x.id===itemId);if(!item)return;
+  const mnd=item.moneda||'RD$';
   const pagos=(item.pagos||[]).map((p,pi)=>({...p,_idx:pi,_id:p.id||('idx_'+pi)}));
   const rows=pagos.map(p=>`<tr>
     <td>${fmtDate(p.fecha)}</td>
-    <td style="font-weight:700;color:var(--red)">${fmt(p.monto)}</td>
+    <td style="font-weight:700;color:var(--red)">${fmtMon(p.monto,p.moneda||mnd)}</td>
     <td>${escHtml(p.cuenta||p.banco||'—')}</td>
     <td>${escHtml(p.nota||'—')}</td>
     <td style="white-space:nowrap">
@@ -11115,9 +11585,9 @@ function verHistorialGenerico(coleccion,itemId){
   const item2=(DB[coleccion]||[]).find(x=>x.id===itemId);
   openModal('📋 Historial de Pagos — '+escHtml((cfg.titulo(item2)||'').replace(/^[^\s]+\s/,'')),`
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
-      <div style="text-align:center;padding:10px;background:var(--gray2);border-radius:8px"><div style="font-size:10px;color:var(--gray)">Total</div><div style="font-weight:800">${fmt(item2[cfg.total]||0)}</div></div>
-      <div style="text-align:center;padding:10px;background:var(--green2);border-radius:8px"><div style="font-size:10px;color:var(--green)">Pagado</div><div style="font-weight:800;color:var(--green)">${fmt(item2[cfg.pagado]||0)}</div></div>
-      <div style="text-align:center;padding:10px;background:var(--red2);border-radius:8px"><div style="font-size:10px;color:var(--red)">Pendiente</div><div style="font-weight:800;color:var(--red)">${fmt(item2[cfg.pendiente]||0)}</div></div>
+      <div style="text-align:center;padding:10px;background:var(--gray2);border-radius:8px"><div style="font-size:10px;color:var(--gray)">Total</div><div style="font-weight:800">${fmtMon(item2[cfg.total]||0,mnd)}</div></div>
+      <div style="text-align:center;padding:10px;background:var(--green2);border-radius:8px"><div style="font-size:10px;color:var(--green)">Pagado</div><div style="font-weight:800;color:var(--green)">${fmtMon(item2[cfg.pagado]||0,mnd)}</div></div>
+      <div style="text-align:center;padding:10px;background:var(--red2);border-radius:8px"><div style="font-size:10px;color:var(--red)">Pendiente</div><div style="font-weight:800;color:var(--red)">${fmtMon(item2[cfg.pendiente]||0,mnd)}</div></div>
     </div>
     <table><thead><tr><th>Fecha</th><th>Monto</th><th>Cuenta/Banco</th><th>Nota</th><th>Acciones</th></tr></thead>
     <tbody>${rows||`<tr><td colspan="5" style="text-align:center;padding:14px;color:var(--gray)">Sin pagos registrados</td></tr>`}</tbody></table>`,
@@ -11133,7 +11603,6 @@ function _findPagoGenerico(coleccion,itemId,pagoId){
 }
 function editarPagoGenericoModal(coleccion,itemId,pagoId){
   const{item,p}=_findPagoGenerico(coleccion,itemId,pagoId);if(!p)return;
-  const cuentas=DB.config.cuentas&&DB.config.cuentas.length?DB.config.cuentas:['Caja General'];
   openModal('✏️ Editar Pago',`
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto</label>
@@ -11141,11 +11610,11 @@ function editarPagoGenericoModal(coleccion,itemId,pagoId){
       </div>
       <div class="form-field"><label>Fecha</label><input type="date" id="epg-fecha" value="${p.fecha||today()}"></div>
     </div>
-    <div class="form-row c2">
-      <div class="form-field"><label>Cuenta</label><select id="epg-cuenta">${cuentas.map(c=>`<option ${c===(p.cuenta||p.banco)?'selected':''}>${escHtml(c)}</option>`).join('')}</select></div>
-      <div class="form-field"><label>Nota</label><input type="text" id="epg-nota" value="${escHtml(p.nota||'')}"></div>
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('epg',p.moneda||item.moneda||'RD$',p.banco||undefined,p.cuenta||undefined)}
     </div>
-    <div style="font-size:11px;color:var(--gray)">⚠️ El pendiente se recalculará automáticamente.</div>`,
+    <div class="form-field"><label>Nota</label><input type="text" id="epg-nota" value="${escHtml(p.nota||'')}"></div>
+    <div style="font-size:11px;color:var(--gray)">⚠️ El pendiente y el movimiento de Caja se actualizarán automáticamente.</div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
      <button class="btn btn-primary" onclick="guardarEditarPagoGenerico('${coleccion}','${itemId}','${pagoId}')">💾 Guardar</button>`);
 }
@@ -11155,10 +11624,22 @@ function guardarEditarPagoGenerico(coleccion,itemId,pagoId){
   if(!nuevoMonto||nuevoMonto<=0){toast('Monto inválido','error');return;}
   p.monto=nuevoMonto;
   p.fecha=document.getElementById('epg-fecha').value||p.fecha;
-  if(p.cuenta!==undefined)p.cuenta=document.getElementById('epg-cuenta').value;
-  if(p.banco!==undefined)p.banco=document.getElementById('epg-cuenta').value;
+  p.moneda=document.getElementById('epg-moneda')?.value||p.moneda||'RD$';
+  p.banco=document.getElementById('epg-banco')?.value||p.banco||'';
+  p.cuenta=document.getElementById('epg-cuenta').value;
   p.nota=document.getElementById('epg-nota').value||'';
   recalcGenericoDesdePagos(coleccion,itemId);
+  // Sincronizar el movimiento de Caja vinculado a este pago (online, por pagoId)
+  const realPagoId=p.id||pagoId;
+  const ci=DB.caja.findIndex(c=>c.pagoId===realPagoId);
+  if(ci>=0){
+    DB.caja[ci].fecha=p.fecha;
+    DB.caja[ci].monto=p.monto;
+    DB.caja[ci].moneda=p.moneda;
+    DB.caja[ci].banco=p.banco;
+    DB.caja[ci].cuenta=p.cuenta;
+    sDB('caja');
+  }
   closeModal();toast('Pago actualizado ✓','success');
   const cfg=_CFG_HIST_PAGOS[coleccion];if(typeof window[cfg.renderFn]==='function')window[cfg.renderFn]();
   if(coleccion==='gastosVehiculos'||coleccion==='cxp')verHistorialCXP(itemId);else verHistorialGenerico(coleccion,itemId);
@@ -11166,9 +11647,13 @@ function guardarEditarPagoGenerico(coleccion,itemId,pagoId){
 function revertirPagoGenerico(coleccion,itemId,pagoId){
   const cfg=_CFG_HIST_PAGOS[coleccion];if(!cfg)return;
   const{item,p,idx}=_findPagoGenerico(coleccion,itemId,pagoId);if(!p)return;
-  if(!confirm(`¿Revertir/eliminar este pago de ${fmt(p.monto)} del ${fmtDate(p.fecha)}?\n\nEsto restaurará el pendiente. Revisa el movimiento de Caja si es necesario eliminarlo manualmente.`))return;
-  const cuentaRef=p.cuenta||p.banco||'';
-  const ci=(DB.caja||[]).findIndex(c=>c.tipo===cfg.cajaTipo&&c.fecha===p.fecha&&parseFloat(c.monto||0)===parseFloat(p.monto||0)&&(c[cfg.cajaMatch]===cuentaRef));
+  if(!confirm(`¿Revertir/eliminar este pago de ${fmtMon(p.monto,p.moneda)} del ${fmtDate(p.fecha)}?\n\nEsto restaurará el pendiente y eliminará el movimiento de Caja vinculado.`))return;
+  const realPagoId=p.id||pagoId;
+  let ci=DB.caja.findIndex(c=>c.pagoId===realPagoId);
+  if(ci<0){
+    const cuentaRef=p.cuenta||p.banco||'';
+    ci=(DB.caja||[]).findIndex(c=>c.tipo===cfg.cajaTipo&&c.fecha===p.fecha&&parseFloat(c.monto||0)===parseFloat(p.monto||0)&&(c[cfg.cajaMatch]===cuentaRef));
+  }
   if(ci>=0){DB.caja.splice(ci,1);sDB('caja');}
   item.pagos.splice(idx,1);
   recalcGenericoDesdePagos(coleccion,itemId);
@@ -11219,7 +11704,7 @@ function exportarSegurosPDF(){
     const venc=s.hasta&&s.hasta<today();
     const sc={PAGADO:'g',ABONADO:'a',PENDIENTE:'r'};
     return`<tr>
-      <td style="font-weight:700">${v?escHtml(v.codigo+' '+v.marca+' '+v.modelo):'—'}</td>
+      <td style="font-weight:700">${v?escHtml(v.codigo+' '+v.marca+' '+v.modelo):(s.vehiculoTexto?escHtml(s.vehiculoTexto):'—')}</td>
       <td>${escHtml(s.cliente||'—')}</td>
       <td style="font-weight:600;color:#2563eb">${escHtml(s.compania||'—')}</td>
       <td style="font-family:monospace">${escHtml(s.poliza||'—')}</td>
@@ -11246,9 +11731,9 @@ function exportarSegurosPDF(){
 }
 function eliminarSeguro(id){
   if(currentUser?.role!=='admin'&&!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}
-  openModal('🗑 Eliminar Seguro','<p>¿Eliminar este seguro?</p>',
+  openModal('🗑 Eliminar Seguro','<p>¿Eliminar este seguro? También se eliminarán sus movimientos de pago registrados en Caja.</p>',
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
-     <button class="btn btn-red" onclick="DB.seguros=DB.seguros.filter(x=>x.id!=='${id}');sDB('seguros');closeModal();toast('Eliminado','success');renderSeguros()">🗑 Eliminar</button>`);
+     <button class="btn btn-red" onclick="DB.seguros=DB.seguros.filter(x=>x.id!=='${id}');DB.caja=(DB.caja||[]).filter(c=>!(c.origenModulo==='seguros'&&c.origenId==='${id}'));sDB('seguros');sDB('caja');closeModal();toast('Eliminado','success');renderSeguros()">🗑 Eliminar</button>`);
 }
 
 // ══ FACTURA EXTERNA ══
@@ -11284,8 +11769,11 @@ function renderFacturaExterna(){
           <td style="font-weight:700;color:${parseFloat(f.pendiente||0)>0?'var(--red)':'var(--green)'}">${fmt(f.pendiente||0)}</td>
           <td>
             <div style="display:flex;gap:4px">
-              <button class="btn btn-sm btn-secondary" onclick="imprimirFacturaExterna('${f.id}')">🖨️</button>
-              ${currentUser?.role==='admin'?`<button class="btn btn-sm btn-red" onclick="DB.facturasExternas=DB.facturasExternas.filter(x=>x.id!=='${f.id}');sDB('facturasExternas');toast('Eliminado','success');renderFacturaExterna()">🗑</button>`:''}
+              <button class="btn btn-sm btn-secondary" onclick="imprimirFacturaExterna('${f.id}')" title="Imprimir">🖨️</button>
+              ${parseFloat(f.pendiente||0)>0?`<button class="btn btn-sm" style="background:var(--green2);color:var(--green)" onclick="abonarFacturaExterna('${f.id}')" title="Abonar">💵</button>`:''}
+              <button class="btn btn-sm" style="background:var(--blue3);color:var(--blue)" onclick="verHistorialGenerico('facturasExternas','${f.id}')" title="Historial de pagos">📋</button>
+              ${(currentUser?.role==='admin'||canDo('editar'))?`<button class="btn btn-sm btn-secondary" onclick="editarFacturaExterna('${f.id}')" title="Editar">✏️</button>`:''}
+              ${currentUser?.role==='admin'?`<button class="btn btn-sm btn-red" onclick="eliminarFacturaExterna('${f.id}')" title="Eliminar">🗑</button>`:''}
             </div>
           </td>
         </tr>`).join(''):'<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--gray)">Sin facturas externas</td></tr>'}
@@ -11379,17 +11867,132 @@ function guardarFacturaExterna(nFact){
     cliente:document.getElementById('fe-cliente').value.trim(),
     clienteDoc:document.getElementById('fe-cli-doc').value.trim(),
     monto,abono,pendiente:Math.max(0,monto-abono),
+    status:Math.max(0,monto-abono)<=0?'PAGADO':abono>0?'ABONADO':'PENDIENTE',
     moneda:feMoneda,banco:feBanco,cuenta:feCuenta,
     fecha:document.getElementById('fe-fecha').value,
-    obs:document.getElementById('fe-obs').value
+    obs:document.getElementById('fe-obs').value,
+    pagos:[]
   };
+  if(abono>0){
+    const pagoId=uid();
+    f.pagos.push({id:pagoId,fecha:f.fecha,monto:abono,moneda:feMoneda,banco:feBanco,cuenta:feCuenta,nota:'Abono inicial'});
+    DB.caja.push({id:uid(),fecha:f.fecha,tipo:'SALIDA',categoria:'Factura Externa',descripcion:`Pago factura externa ${nFact}: ${vehiculo}`,monto:abono,moneda:feMoneda,banco:feBanco,cuenta:feCuenta,referencia:nFact,responsable:currentUser.nombre,origenModulo:'facturasExternas',origenId:f.id,pagoId});
+  }
   if(!DB.facturasExternas)DB.facturasExternas=[];
   DB.facturasExternas.push(f);
-  sDB('facturasExternas');
+  sDB('facturasExternas');sDB('caja');
   closeModal();
   imprimirFacturaExterna(f.id);
   toast('Factura externa guardada ✓ — Generando...','success');
   renderFacturaExterna();
+}
+function abonarFacturaExterna(id){
+  const f=(DB.facturasExternas||[]).find(x=>x.id===id);if(!f)return;
+  const pendiente=parseFloat(f.pendiente||0);
+  openModal('💵 Registrar Abono — '+escHtml(f.numero),`
+    <div style="background:var(--blue3);border-radius:8px;padding:10px;margin-bottom:14px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px">
+        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Monto Total</div><div style="font-weight:800">${fmtMon(f.monto,f.moneda)}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Ya Abonado</div><div style="font-weight:700;color:var(--green)">${fmtMon(f.abono||0,f.moneda)}</div></div>
+        <div><div style="font-size:10px;color:var(--gray);font-weight:700;text-transform:uppercase">Pendiente</div><div style="font-weight:800;color:var(--red)">${fmtMon(pendiente,f.moneda)}</div></div>
+      </div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Monto a Abonar</label>
+        <input type="text" id="fea-monto" value="${fmtMoneyDisplay(pendiente)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" placeholder="0.00">
+      </div>
+      <div class="form-field"><label>Fecha</label><input type="date" id="fea-fecha" value="${today()}"></div>
+    </div>
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('fea',f.moneda||'RD$',f.banco||undefined,f.cuenta||undefined)}
+    </div>
+    <div class="form-field"><label>Nota</label><input type="text" id="fea-nota" placeholder="Descripción del abono"></div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-green" onclick="confirmarAbonoFE('${id}')">✅ Confirmar Abono</button>`);
+}
+function confirmarAbonoFE(id){
+  const i=(DB.facturasExternas||[]).findIndex(x=>x.id===id);if(i<0)return;
+  const f=DB.facturasExternas[i];
+  const monto=parseFloat((document.getElementById('fea-monto').value||'0').replace(/,/g,''));
+  if(!monto||monto<=0){toast('Ingresa un monto válido','error');return;}
+  const pendienteActual=parseFloat(f.pendiente||0);
+  if(monto>pendienteActual){toast('El monto no puede superar el pendiente ('+fmtMon(pendienteActual,f.moneda)+')','error');return;}
+  const moneda=document.getElementById('fea-moneda')?.value||f.moneda||'RD$';
+  const banco=document.getElementById('fea-banco')?.value||'';
+  const cuenta=document.getElementById('fea-cuenta').value;
+  const fecha=document.getElementById('fea-fecha').value;
+  const nota=document.getElementById('fea-nota')?.value||'';
+  f.abono=(parseFloat(f.abono||0)+monto);
+  f.pendiente=Math.max(0,pendienteActual-monto);
+  f.status=f.pendiente<=0?'PAGADO':'ABONADO';
+  f.moneda=moneda;f.banco=banco;f.cuenta=cuenta;
+  if(!f.pagos)f.pagos=[];
+  const pagoId=uid();
+  f.pagos.push({id:pagoId,fecha,monto,moneda,banco,cuenta,nota});
+  DB.caja.push({id:uid(),fecha,tipo:'SALIDA',categoria:'Factura Externa',descripcion:`Pago factura externa ${f.numero}: ${f.vehiculo}`,monto,moneda,banco,cuenta,referencia:f.numero,responsable:currentUser.nombre,origenModulo:'facturasExternas',origenId:id,pagoId});
+  sDB('facturasExternas');sDB('caja');
+  closeModal();
+  toast(f.pendiente<=0?'✅ Factura externa pagada completamente':'💵 Abono registrado ✓','success');
+  renderFacturaExterna();
+}
+function editarFacturaExterna(id){
+  if(currentUser?.role!=='admin'&&!canDo('editar')){toast('No tienes permiso para editar','error');return;}
+  const f=(DB.facturasExternas||[]).find(x=>x.id===id);if(!f)return;
+  openModal('✏️ Editar Factura Externa — '+escHtml(f.numero),`
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Vehículo (marca, modelo, año)</label>
+        <input type="text" id="efe-vehiculo" value="${escHtml(f.vehiculo||'')}">
+      </div>
+      <div class="form-field"><label>N° Chasis / VIN</label>
+        <input type="text" id="efe-vin" value="${escHtml(f.vin||'')}" style="text-transform:uppercase;font-family:monospace">
+      </div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label>Propietario / Vendedor</label><input type="text" id="efe-propietario" value="${escHtml(f.propietario||'')}"></div>
+      <div class="form-field"><label>Cliente / Comprador</label><input type="text" id="efe-cliente" value="${escHtml(f.cliente||'')}"></div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Monto Total</label>
+        <input type="text" id="efe-monto" value="${fmtMoneyDisplay(f.monto||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
+      </div>
+      <div class="form-field"><label>Fecha</label><input type="date" id="efe-fecha" value="${f.fecha||today()}"></div>
+    </div>
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('efe',f.moneda||'RD$',f.banco||undefined,f.cuenta||undefined)}
+    </div>
+    <div class="form-field"><label>Observaciones</label><textarea id="efe-obs" rows="2">${escHtml(f.obs||'')}</textarea></div>
+    <div style="font-size:11px;color:var(--gray);margin-top:4px">⚠️ Los abonos ya registrados no cambian aquí; para eso usa Abonar/Historial.</div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-primary" onclick="guardarEditarFacturaExterna('${id}')">💾 Guardar</button>`);
+}
+function guardarEditarFacturaExterna(id){
+  const i=(DB.facturasExternas||[]).findIndex(x=>x.id===id);if(i<0)return;
+  const f=DB.facturasExternas[i];
+  const vehiculo=document.getElementById('efe-vehiculo').value.trim();
+  const monto=parseFloat((document.getElementById('efe-monto').value||'0').replace(/,/g,''));
+  if(!vehiculo){toast('Ingresa los datos del vehículo','error');return;}
+  if(!monto){toast('Ingresa el monto','error');return;}
+  f.vehiculo=vehiculo;
+  f.vin=document.getElementById('efe-vin').value.trim();
+  f.propietario=document.getElementById('efe-propietario').value.trim();
+  f.cliente=document.getElementById('efe-cliente').value.trim();
+  f.monto=monto;
+  f.pendiente=Math.max(0,monto-parseFloat(f.abono||0));
+  f.status=f.pendiente<=0?'PAGADO':parseFloat(f.abono||0)>0?'ABONADO':'PENDIENTE';
+  f.fecha=document.getElementById('efe-fecha').value;
+  f.moneda=document.getElementById('efe-moneda')?.value||f.moneda||'RD$';
+  f.banco=document.getElementById('efe-banco')?.value||f.banco||'';
+  f.cuenta=document.getElementById('efe-cuenta')?.value||f.cuenta||'';
+  f.obs=document.getElementById('efe-obs').value;
+  sDB('facturasExternas');
+  closeModal();toast('Factura externa actualizada ✓','success');renderFacturaExterna();
+}
+function eliminarFacturaExterna(id){
+  if(currentUser?.role!=='admin'){toast('No tienes permiso para eliminar','error');return;}
+  const f=(DB.facturasExternas||[]).find(x=>x.id===id);if(!f)return;
+  openModal('🗑 Eliminar Factura Externa',`<p>¿Eliminar la factura externa <strong>${escHtml(f.numero)}</strong> — ${escHtml(f.vehiculo||'')}?</p><p style="color:var(--red);font-size:12px;margin-top:8px">⚠️ También se eliminarán sus movimientos de pago registrados en Caja. Esta acción no se puede deshacer.</p>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-red" onclick="DB.facturasExternas=DB.facturasExternas.filter(x=>x.id!=='${id}');DB.caja=(DB.caja||[]).filter(c=>!(c.origenModulo==='facturasExternas'&&c.origenId==='${id}'));sDB('facturasExternas');sDB('caja');closeModal();toast('Eliminado','success');renderFacturaExterna()">🗑 Eliminar</button>`);
 }
 function imprimirFacturaExterna(id){
   const f=(DB.facturasExternas||[]).find(x=>x.id===id);if(!f)return;
@@ -11900,6 +12503,7 @@ function _ejecutarBackup(){
     autorizaciones:DB.autorizaciones||[],
     seguros:DB.seguros||[],
     facturasExternas:DB.facturasExternas||[],
+    prestamos:DB.prestamos||[],
     cumpleanosMensajes:DB.cumpleanosMensajes||{}
   };
   const blob=new Blob([JSON.stringify(datos,null,2)],{type:'application/json'});
@@ -11932,7 +12536,7 @@ function _ejecutarBackupAuto(){
       caja:DB.caja||[],gastos:DB.gastos||[],nomina:DB.nomina||[],nominaPagos:DB.nominaPagos||[],
       gastosVehiculos:DB.gastosVehiculos||[],cxp:DB.cxp||[],cxc:DB.cxc||[],
       autorizaciones:DB.autorizaciones||[],seguros:DB.seguros||[],
-      facturasExternas:DB.facturasExternas||[],cumpleanosMensajes:DB.cumpleanosMensajes||{}
+      facturasExternas:DB.facturasExternas||[],prestamos:DB.prestamos||[],cumpleanosMensajes:DB.cumpleanosMensajes||{}
     };
     const blob=new Blob([JSON.stringify(datos,null,2)],{type:'application/json'});
     const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=filename;
@@ -12081,7 +12685,7 @@ async function fbGuardar(key){
 
 async function fbCargar(){
   const keys=['config','config_logo','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
-    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','presencia','cumpleanosMensajes','log'];
+    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','presencia','cumpleanosMensajes','log'];
   let loaded=false;
   // Fix 4A — carga en paralelo con Promise.allSettled (si una falla, las demás siguen)
   const resultados=await Promise.allSettled(
@@ -12245,7 +12849,7 @@ function iniciarVerificadorVersion(){
 function fbActivarListeners(){
   const keys=['config','config_logo','users','vehiculos','clientes','suplidores',
     'ventas','cotizaciones','caja','gastos','nomina','nominaPagos',
-    'gastosVehiculos','cxp','cxc','autorizaciones'];
+    'gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos'];
   
   keys.forEach(key=>{
     _fbDB.collection(_fbCol).doc(key).onSnapshot(snap=>{
@@ -12321,12 +12925,16 @@ function fbActivarListeners(){
           cxc:()=>typeof renderCXC==='function'&&renderCXC(),
           cxp:()=>typeof renderCXP==='function'&&renderCXP(),
           caja:()=>typeof renderCaja==='function'&&renderCaja(),
+          consultaCuentas:()=>typeof renderConsultaCuentas==='function'&&renderConsultaCuentas(),
           gastosVeh:()=>typeof renderGastosVeh==='function'&&renderGastosVeh(),
           cotizaciones:()=>typeof renderCotizaciones==='function'&&renderCotizaciones(),
           autorizaciones:()=>typeof renderAutorizaciones==='function'&&renderAutorizaciones(),
           usuarios:()=>typeof renderUsuarios==='function'&&renderUsuarios(),
           config:()=>typeof renderConfig==='function'&&renderConfig(),
           informes:()=>typeof renderInformes==='function'&&renderInformes(),
+          seguros:()=>typeof renderSeguros==='function'&&renderSeguros(),
+          facturaExterna:()=>typeof renderFacturaExterna==='function'&&renderFacturaExterna(),
+          prestamos:()=>typeof renderPrestamos==='function'&&renderPrestamos(),
         };
         // Solo re-renderizar si el key afecta la página activa
         const keysParaPagina={
@@ -12335,11 +12943,14 @@ function fbActivarListeners(){
           clientes:['clientes'],suplidores:['suplidores'],
           gastos:['gastos'],nomina:['nomina','nominaPagos'],
           cxc:['cxc','vehiculos'],cxp:['gastosVehiculos','cxp','vehiculos'],
-          caja:['caja'],gastosVeh:['gastosVehiculos','vehiculos'],
+          caja:['caja'],consultaCuentas:['caja'],gastosVeh:['gastosVehiculos','vehiculos'],
           cotizaciones:['cotizaciones','clientes'],
           autorizaciones:['autorizaciones'],
           usuarios:['users'],config:[],
           informes:['ventas','gastos','cxc','gastosVehiculos','nomina'],
+          seguros:['seguros'],
+          facturaExterna:['facturasExternas'],
+          prestamos:['prestamos'],
         };
         const afecta=keysParaPagina[pid]||[];
         if(afecta.includes(key)&&renderMap[pid]){
@@ -12358,7 +12969,7 @@ function fbActivarListeners(){
 window.forzarSincronizacion = async function(){
   if(!window._fbActivo){toast('Firebase no está conectado','error');return;}
   const keys=['config','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
-    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','log'];
+    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','log'];
   const dot=document.getElementById('fb-dot');
   const txt=document.getElementById('fb-text');
   if(dot)dot.style.background='#f59e0b';
@@ -12583,7 +13194,7 @@ window.fbIniciar = async function(){
       if(_traspSyncChanged){sDB('cxc');}
     } else {
       const keys=['config','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
-        'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','log'];
+        'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','log'];
       // Fix 4B — solo subir si hay datos reales, no sobreescribir Firebase con datos vacíos
       const hayDatosReales=
         (DB.vehiculos||[]).length>0||
