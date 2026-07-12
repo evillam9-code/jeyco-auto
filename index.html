@@ -2674,6 +2674,38 @@ function moduloOrigenCaja(categoria){
   if(c.includes('cuadre')||c.includes('ajuste')||c.includes('mov. cta'))return 'Ajuste / Cuadre de Caja';
   return 'Caja (Manual)';
 }
+// Agrupa todos los movimientos de Caja por Moneda → Banco → Cuenta, con Entrada/Salida/Total.
+// Incluye todas las cuentas configuradas aunque no tengan movimientos.
+function calcResumenCuentasGeneral(desde,hasta){
+  const bcs=DB.config.bancoCuentas||[];
+  const map={};
+  bcs.forEach(b=>{
+    const bancoNorm=normalizarBancoGlobal(b.banco);
+    (b.cuentas||[]).forEach(c=>{
+      const tipo=c.tipo||'';
+      const isEfectivo=tipo.toLowerCase().includes('efectivo');
+      const isUSD=tipo.includes('USD')||tipo.includes('Dólares');
+      const moneda=isUSD?'USD':'RD$';
+      const banco=isEfectivo?'💵 Efectivo':bancoNorm;
+      const cuenta=tipo+' — '+c.numero;
+      const key=`${moneda}||${banco}||${cuenta}`;
+      map[key]={moneda,banco,cuenta,entradas:0,salidas:0};
+    });
+  });
+  let movs=DB.caja||[];
+  if(desde)movs=movs.filter(c=>c.fecha&&c.fecha>=desde);
+  if(hasta)movs=movs.filter(c=>c.fecha&&c.fecha<=hasta);
+  movs.forEach(c=>{
+    const banco=normalizarBancoGlobal(c.banco)||'Sin banco';
+    const cuenta=limpiarCuenta(c.cuenta||'')||'Sin cuenta';
+    const moneda=c.moneda||'RD$';
+    const key=`${moneda}||${banco}||${cuenta}`;
+    if(!map[key])map[key]={moneda,banco,cuenta,entradas:0,salidas:0};
+    if(c.tipo==='ENTRADA')map[key].entradas+=parseFloat(c.monto||0);
+    else map[key].salidas+=parseFloat(c.monto||0);
+  });
+  return Object.values(map);
+}
 function renderConsultaCuentas(){
   const bcs=DB.config.bancoCuentas||[];
   const bancoSel=document.getElementById('cc-banco')?.value||(bcs[0]?bcs[0].banco:'');
@@ -2699,10 +2731,49 @@ function renderConsultaCuentas(){
   const salidas=movs.filter(m=>m.tipo==='SALIDA').reduce((a,m)=>a+parseFloat(m.monto||0),0);
   const saldo=entradas-salidas;
 
+  // ── Resumen general por Moneda → Banco → Cuenta (respeta el filtro de fecha si está activo) ──
+  const fmtUSD=n=>'USD '+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const resumenRows=calcResumenCuentasGeneral(desde,hasta);
+  const resumenHTML=['RD$','USD'].filter(m=>resumenRows.some(r=>r.moneda===m)).map(moneda=>{
+    const esUSD=moneda==='USD';
+    const fV=n=>esUSD?fmtUSD(n):fmt(n);
+    const porBanco={};
+    resumenRows.filter(r=>r.moneda===moneda).forEach(r=>{(porBanco[r.banco]=porBanco[r.banco]||[]).push(r);});
+    let totEnt=0,totSal=0;
+    const filas=Object.entries(porBanco).map(([banco,cuentas])=>{
+      const bancoEnt=cuentas.reduce((a,c)=>a+c.entradas,0);
+      const bancoSal=cuentas.reduce((a,c)=>a+c.salidas,0);
+      totEnt+=bancoEnt;totSal+=bancoSal;
+      const filasCuenta=cuentas.map(c=>`<tr>
+        <td style="padding-left:26px;font-size:12px">${escHtml(c.cuenta)}</td>
+        <td style="color:var(--green);font-weight:600">${fV(c.entradas)}</td>
+        <td style="color:var(--red);font-weight:600">${fV(c.salidas)}</td>
+        <td style="font-weight:800;color:${(c.entradas-c.salidas)>=0?'var(--green)':'var(--red)'}">${fV(c.entradas-c.salidas)}</td>
+      </tr>`).join('');
+      return`<tr style="background:var(--gray2)"><td colspan="4" style="font-weight:800">🏦 ${escHtml(banco)}</td></tr>${filasCuenta}
+        <tr style="border-top:1px solid var(--gray3)"><td style="font-weight:700;font-size:12px">Subtotal ${escHtml(banco)}</td><td style="font-weight:700;color:var(--green)">${fV(bancoEnt)}</td><td style="font-weight:700;color:var(--red)">${fV(bancoSal)}</td><td style="font-weight:800">${fV(bancoEnt-bancoSal)}</td></tr>`;
+    }).join('');
+    return`<div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:800;text-transform:uppercase;color:var(--gray);margin-bottom:6px">${esUSD?'🇺🇸 Dólares (USD)':'🇩🇴 Pesos (RD$)'}</div>
+      <table><thead><tr><th>Banco / Cuenta</th><th>Entrada</th><th>Salida</th><th>Total</th></tr></thead>
+      <tbody>${filas}
+        <tr style="background:var(--navy);color:#fff"><td style="font-weight:900">GRAN TOTAL ${moneda}</td><td style="font-weight:900">${fV(totEnt)}</td><td style="font-weight:900">${fV(totSal)}</td><td style="font-weight:900">${fV(totEnt-totSal)}</td></tr>
+      </tbody></table>
+    </div>`;
+  }).join('')||'<div style="text-align:center;padding:16px;color:var(--gray)">Sin cuentas configuradas</div>';
+
   document.getElementById('page-consultaCuentas').innerHTML=`
     <div class="page-header">
       <div><h1>🧾 Consulta de Cuentas</h1><p>Estado de cuenta consolidado — incluye movimientos de todos los módulos del sistema</p></div>
       <button class="btn btn-primary" ${movs.length?'':'disabled'} onclick="exportarConsultaCuentasPDF()">🖨️ Imprimir / Exportar PDF</button>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div class="card-title" style="margin:0;padding:0;border:none">📊 Resumen General por Cuentas</div>
+        <button class="btn btn-secondary btn-sm" onclick="imprimirResumenCuentasGeneral()">🖨️ Imprimir Resumen</button>
+      </div>
+      <div style="font-size:11px;color:var(--gray);margin-bottom:10px">${desde||hasta?`Movimientos ${desde?'desde '+fmtDate(desde)+' ':''}${hasta?'hasta '+fmtDate(hasta):''}`:'Todo el historial disponible.'} Usa los filtros de fecha de abajo para acotar el período.</div>
+      ${resumenHTML}
     </div>
     <div class="card" style="margin-bottom:14px">
       <div class="form-row c4">
@@ -2796,6 +2867,93 @@ function exportarConsultaCuentasPDF(){
     <td class="${m.tipo==='ENTRADA'?'ent':'sal'}">${fV(m.monto)}</td>
   </tr>`).join('')||'<tr><td colspan="5" style="text-align:center;padding:16px;color:#6b7280">Sin movimientos en este período</td></tr>'}</tbody></table>
   <div style="margin-top:20px;text-align:center"><button onclick="window.print()" style="padding:10px 24px;background:#0f172a;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">🖨️ Imprimir / Guardar PDF</button></div>
+  </body></html>`);
+  win.document.close();
+}
+function imprimirResumenCuentasGeneral(){
+  const desde=document.getElementById('cc-desde')?.value||'';
+  const hasta=document.getElementById('cc-hasta')?.value||'';
+  const empresa=DB.config.empresa||'JEYCO AUTO';
+  const logo=DB.config.logoData||'';
+  const rnc=DB.config.rnc||'';
+  const tel=DB.config.telefono||'';
+  const dir=DB.config.direccion||'';
+  const periodoLabel=desde||hasta?`${desde?fmtDate(desde):'Inicio'} al ${hasta?fmtDate(hasta):'Hoy'}`:'Todo el historial';
+  const fmtUSD=n=>'USD '+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const resumenRows=calcResumenCuentasGeneral(desde,hasta);
+
+  const bloquesMoneda=['RD$','USD'].filter(m=>resumenRows.some(r=>r.moneda===m)).map(moneda=>{
+    const esUSD=moneda==='USD';
+    const fV=n=>esUSD?fmtUSD(n):fmt(n);
+    const porBanco={};
+    resumenRows.filter(r=>r.moneda===moneda).forEach(r=>{(porBanco[r.banco]=porBanco[r.banco]||[]).push(r);});
+    let totEnt=0,totSal=0;
+    const filas=Object.entries(porBanco).map(([banco,cuentas])=>{
+      const bancoEnt=cuentas.reduce((a,c)=>a+c.entradas,0);
+      const bancoSal=cuentas.reduce((a,c)=>a+c.salidas,0);
+      totEnt+=bancoEnt;totSal+=bancoSal;
+      const filasCuenta=cuentas.map(c=>`<tr>
+        <td style="padding-left:20px">${escHtml(c.cuenta)}</td>
+        <td class="amt ent">${fV(c.entradas)}</td>
+        <td class="amt sal">${fV(c.salidas)}</td>
+        <td class="amt">${fV(c.entradas-c.salidas)}</td>
+      </tr>`).join('');
+      return`<tr class="sh"><td colspan="4">🏦 ${escHtml(banco)}</td></tr>${filasCuenta}
+        <tr class="sr"><td>Subtotal ${escHtml(banco)}</td><td class="amt ent">${fV(bancoEnt)}</td><td class="amt sal">${fV(bancoSal)}</td><td class="amt">${fV(bancoEnt-bancoSal)}</td></tr>`;
+    }).join('');
+    return`<table style="margin-bottom:14px">
+      <thead class="th"><tr><th colspan="4">${esUSD?'🇺🇸 Dólares (USD)':'🇩🇴 Pesos (RD$)'}</th></tr>
+      <tr><th>Banco / Cuenta</th><th style="text-align:right">Entrada</th><th style="text-align:right">Salida</th><th style="text-align:right">Total</th></tr></thead>
+      <tbody>${filas}
+        <tr class="tot"><td>GRAN TOTAL ${moneda}</td><td class="amt" style="color:#fff">${fV(totEnt)}</td><td class="amt" style="color:#fff">${fV(totSal)}</td><td class="amt" style="color:#fff">${fV(totEnt-totSal)}</td></tr>
+      </tbody></table>`;
+  }).join('')||'<p style="text-align:center;padding:20px;color:#94a3b8">Sin cuentas configuradas</p>';
+
+  const win=window.open('','_blank','width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Resumen General por Cuentas</title>
+  <style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,sans-serif;font-size:10px;color:#0f172a;background:#fff;padding:12px 16px}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:8px;margin-bottom:10px}
+  .hdr img{max-height:48px;max-width:120px;object-fit:contain;display:block;margin-bottom:3px}
+  .hdr-emp{font-size:9px;color:#475569;line-height:1.5}
+  .hdr-emp strong{font-size:12px;color:#0f172a;display:block;margin-bottom:1px}
+  .hdr-titulo{font-size:19px;font-weight:900;color:#0f172a;letter-spacing:1px;text-align:right;line-height:1}
+  .hdr-sub{font-size:9px;color:#6b7280;text-align:right;margin-top:3px}
+  table{width:100%;border-collapse:collapse}
+  .th th{background:#0f172a;color:#fff;padding:6px 8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.2px}
+  td{padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:10px}
+  .sh td{background:#e2e8f0;font-weight:800;font-size:9px;text-transform:uppercase;color:#334155}
+  .sr td{background:#f8fafc;font-weight:800;border-top:1px solid #cbd5e1}
+  .amt{text-align:right;font-family:'Courier New',monospace;font-weight:700}
+  .ent{color:#16a34a}.sal{color:#dc2626}
+  .tot td{background:#0f172a!important;color:#fff;font-weight:900;font-size:11px;padding:7px 8px}
+  @page{size:letter landscape;margin:8mm}
+  @media print{.noprint{display:none}}
+  </style></head><body>
+
+  <div class="hdr">
+    <div>
+      ${logo?`<img src="${logo}">`:''}
+      <div class="hdr-emp">
+        <strong>${escHtml(empresa)}</strong>
+        ${rnc?`RNC: ${escHtml(rnc)}<br>`:''}
+        ${dir?`${escHtml(dir)}<br>`:''}
+        ${tel?`Tel: ${escHtml(tel)}`:''}
+      </div>
+    </div>
+    <div>
+      <div class="hdr-titulo">Resumen General por Cuentas</div>
+      <div class="hdr-sub">Fecha: ${fmtDate(today())} &nbsp;|&nbsp; Período: ${periodoLabel}</div>
+    </div>
+  </div>
+
+  ${bloquesMoneda}
+
+  <div class="noprint" style="margin-top:14px;text-align:center">
+    <button onclick="window.print()" style="padding:8px 28px;background:#0f172a;color:#fff;border:none;border-radius:5px;font-size:12px;cursor:pointer;font-family:Arial">🖨️ Imprimir / Guardar PDF</button>
+  </div>
   </body></html>`);
   win.document.close();
 }
