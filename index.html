@@ -604,9 +604,9 @@ function resetInactTimer(){
       document.getElementById('login-screen').style.display='flex';
       document.getElementById('li-user').value='';
       document.getElementById('li-pass').value='';
-      alert('Sesión cerrada por inactividad (10 min). Inicie sesión nuevamente.');
+      alert('Sesión cerrada por inactividad (1 hora). Inicie sesión nuevamente.');
     }
-  },600000);
+  },3600000);
 }
 ['click','keydown','mousemove','touchstart','scroll'].forEach(ev=>document.addEventListener(ev,resetInactTimer,{passive:true}));
 
