@@ -6269,6 +6269,7 @@ function renderGastosVeh(){
         <div style="display:flex;gap:6px;align-items:flex-end">
           <button class="btn btn-secondary btn-sm" onclick="limpiarFiltrosGastosVeh()">&#8635;</button>
           <button class="btn btn-sm" style="background:var(--navy);color:#fff" onclick="exportarHojaCostos()">📄 Hoja de Costos</button>
+          <button class="btn btn-sm" style="background:#0f172a;color:#fff" onclick="abrirResumenPorVehiculo()">📊 Resumen por Vehículo</button>
         </div>
       </div>
     </div>
@@ -7053,6 +7054,100 @@ function _generarPDFGastosVeh(gastos,tasa,filtroSup,filtroVeh,soloUnVeh){
   </div>
 
   <div class="noprint" style="margin-top:12px;text-align:center">
+    <button onclick="window.print()" style="padding:8px 28px;background:#0f172a;color:#fff;border:none;border-radius:5px;font-size:12px;cursor:pointer;font-family:Arial">🖨️ Imprimir / Guardar PDF</button>
+  </div>
+  </body></html>`);
+  win.document.close();
+}
+
+function abrirResumenPorVehiculo(){
+  openModal('📊 Resumen por Vehículo',`
+    <div class="form-field"><label>Tasa de Cambio a usar (RD$ x USD)</label>
+      <input type="number" id="rpv-tasa" value="${DB.config.tasaCambio||60}" step="0.01">
+      <div style="font-size:11px;color:var(--gray);margin-top:4px">Se usará para convertir a pesos los gastos en dólares de cada vehículo.</div>
+    </div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-primary" onclick="generarResumenPorVehiculo()">📊 Generar Reporte</button>`);
+}
+
+function generarResumenPorVehiculo(){
+  const tasa=parseFloat(document.getElementById('rpv-tasa')?.value||DB.config.tasaCambio||60);
+  closeModal();
+  const empresa=DB.config.empresa||'JEYCO AUTO';
+  const logo=DB.config.logoData||'';
+  const rnc=DB.config.rnc||'';
+  const tel=DB.config.telefono||'';
+  const dir=DB.config.direccion||'';
+  const fN=(n)=>parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fRD=(n)=>'RD$ '+fN(n);
+
+  const vehiculos=DB.vehiculos.filter(v=>['ACTIVO','EN EEUU','ADUANA'].includes(v.status));
+  const filas=vehiculos.map(v=>{
+    const gastos=(DB.gastosVehiculos||[]).filter(g=>g.vehiculoId===v.id);
+    const totalInvertido=gastos.reduce((a,g)=>a+((g.moneda||'RD$')==='USD'?parseFloat(g.montoFactura||0)*parseFloat(g.tasaCambio||tasa):parseFloat(g.montoFactura||0)),0);
+    return{v,totalInvertido};
+  }).sort((a,b)=>(parseInt((a.v.codigo||'').replace(/\D/g,''))||0)-(parseInt((b.v.codigo||'').replace(/\D/g,''))||0));
+  const granTotal=filas.reduce((a,f)=>a+f.totalInvertido,0);
+
+  const win=window.open('','_blank','width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Resumen por Vehículo</title>
+  <style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,sans-serif;font-size:10px;color:#0f172a;background:#fff;padding:12px 16px}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:8px;margin-bottom:10px}
+  .hdr img{max-height:48px;max-width:120px;object-fit:contain;display:block;margin-bottom:3px}
+  .hdr-emp{font-size:9px;color:#475569;line-height:1.5}
+  .hdr-emp strong{font-size:12px;color:#0f172a;display:block;margin-bottom:1px}
+  .hdr-titulo{font-size:19px;font-weight:900;color:#0f172a;letter-spacing:1px;text-align:right;line-height:1}
+  .hdr-sub{font-size:9px;color:#6b7280;text-align:right;margin-top:3px}
+  table{width:100%;border-collapse:collapse}
+  .th th{background:#0f172a;color:#fff;padding:6px 8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.2px}
+  td{padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:10px}
+  tr:nth-child(even) td{background:#f8fafc}
+  .num{width:26px;text-align:center;color:#94a3b8;font-size:9px}
+  .amt{text-align:right;font-family:'Courier New',monospace;font-weight:700;color:#0f172a}
+  .tot td{background:#0f172a!important;color:#fff;font-weight:900;font-size:12px;padding:8px}
+  @page{size:letter landscape;margin:8mm}
+  @media print{.noprint{display:none}}
+  </style></head><body>
+
+  <div class="hdr">
+    <div>
+      ${logo?`<img src="${logo}">`:''}
+      <div class="hdr-emp">
+        <strong>${escHtml(empresa)}</strong>
+        ${rnc?`RNC: ${escHtml(rnc)}<br>`:''}
+        ${dir?`${escHtml(dir)}<br>`:''}
+        ${tel?`Tel: ${escHtml(tel)}`:''}
+      </div>
+    </div>
+    <div>
+      <div class="hdr-titulo">Resumen de Gastos por Vehículo</div>
+      <div class="hdr-sub">Fecha: ${fmtDate(today())} &nbsp;|&nbsp; ${filas.length} vehículo(s) &nbsp;|&nbsp; Tasa: RD$ ${fN(tasa)} x US$</div>
+    </div>
+  </div>
+
+  <table>
+    <thead class="th"><tr>
+      <th class="num">#</th><th>Código</th><th>Marca</th><th>Modelo</th><th>Año</th><th>Color</th>
+      <th style="text-align:right">Total Invertido (RD$)</th>
+    </tr></thead>
+    <tbody>
+      ${filas.length?filas.map((f,i)=>`<tr>
+        <td class="num">${i+1}</td>
+        <td>${escHtml(f.v.codigo||'—')}</td>
+        <td>${escHtml(f.v.marca||'—')}</td>
+        <td>${escHtml(f.v.modelo||'—')}</td>
+        <td>${escHtml(String(f.v.anio||'—'))}</td>
+        <td>${escHtml(f.v.color||'—')}</td>
+        <td class="amt">${fRD(f.totalInvertido)}</td>
+      </tr>`).join(''):'<tr><td colspan="7" style="text-align:center;padding:20px;color:#94a3b8">Sin vehículos activos</td></tr>'}
+      <tr class="tot"><td colspan="6" style="text-align:right">GRAN TOTAL INVERTIDO</td><td class="amt" style="color:#fff">${fRD(granTotal)}</td></tr>
+    </tbody>
+  </table>
+
+  <div class="noprint" style="margin-top:14px;text-align:center">
     <button onclick="window.print()" style="padding:8px 28px;background:#0f172a;color:#fff;border:none;border-radius:5px;font-size:12px;cursor:pointer;font-family:Arial">🖨️ Imprimir / Guardar PDF</button>
   </div>
   </body></html>`);
