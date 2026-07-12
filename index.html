@@ -2434,11 +2434,10 @@ function renderCaja(){
     const bancoNorm=normalizarBanco(b.banco);
     (b.cuentas||[]).forEach(c=>{
       const tipo=c.tipo||'';
-      const isEfectivo=tipo.toLowerCase().includes('efectivo');
       const isUSD=tipo.includes('USD')||tipo.includes('Dólares');
       const moneda=isUSD?'USD':'RD$';
       const cuentaLabel=tipo+' — '+c.numero;
-      ALL_ACCOUNTS.push({banco:isEfectivo?'💵 Efectivo':bancoNorm,cuenta:cuentaLabel,moneda});
+      ALL_ACCOUNTS.push({banco:bancoNorm,cuenta:cuentaLabel,moneda});
     });
   });
 
@@ -2683,10 +2682,9 @@ function calcResumenCuentasGeneral(desde,hasta){
     const bancoNorm=normalizarBancoGlobal(b.banco);
     (b.cuentas||[]).forEach(c=>{
       const tipo=c.tipo||'';
-      const isEfectivo=tipo.toLowerCase().includes('efectivo');
       const isUSD=tipo.includes('USD')||tipo.includes('Dólares');
       const moneda=isUSD?'USD':'RD$';
-      const banco=isEfectivo?'💵 Efectivo':bancoNorm;
+      const banco=bancoNorm;
       const cuenta=tipo+' — '+c.numero;
       const key=`${moneda}||${banco}||${cuenta}`;
       map[key]={moneda,banco,cuenta,entradas:0,salidas:0};
