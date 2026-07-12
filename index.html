@@ -2482,9 +2482,9 @@ function renderCaja(){
     bancoGroups[c.banco].push(c);
   });
 
-  // Total acumulado RD$ y USD para el header
-  const totalAcumRD=Object.values(cuentasAcum).filter(c=>c.moneda==='RD$').reduce((a,c)=>a+(c.entradas-c.salidas),0);
-  const totalAcumUSD=Object.values(cuentasAcum).filter(c=>c.moneda==='USD').reduce((a,c)=>a+(c.entradas-c.salidas),0);
+  // Total del header — respeta el selector de vista (MES/ACUMULADO), igual que las tarjetas por cuenta
+  const totalAcumRD=Object.values(cuentasData).filter(c=>c.moneda==='RD$').reduce((a,c)=>a+(c.entradas-c.salidas),0);
+  const totalAcumUSD=Object.values(cuentasData).filter(c=>c.moneda==='USD').reduce((a,c)=>a+(c.entradas-c.salidas),0);
 
   let filtrados=tab==='ENTRADAS'?cajaFilt.filter(c=>c.tipo==='ENTRADA'):tab==='SALIDAS'?cajaFilt.filter(c=>c.tipo==='SALIDA'):cajaFilt;
 
@@ -2518,12 +2518,13 @@ function renderCaja(){
     </div>`;
   }).join('');
 
-  // Totales acumulados precalculados
-  const acumEntRD  = Object.values(cuentasAcum).filter(c=>c.moneda==='RD$').reduce((a,c)=>a+c.entradas,0);
-  const acumSalRD  = Object.values(cuentasAcum).filter(c=>c.moneda==='RD$').reduce((a,c)=>a+c.salidas,0);
-  const acumEntUSD = Object.values(cuentasAcum).filter(c=>c.moneda==='USD').reduce((a,c)=>a+c.entradas,0);
-  const acumSalUSD = Object.values(cuentasAcum).filter(c=>c.moneda==='USD').reduce((a,c)=>a+c.salidas,0);
+  // Totales del header — respetan el selector de vista (MES/ACUMULADO)
+  const acumEntRD  = Object.values(cuentasData).filter(c=>c.moneda==='RD$').reduce((a,c)=>a+c.entradas,0);
+  const acumSalRD  = Object.values(cuentasData).filter(c=>c.moneda==='RD$').reduce((a,c)=>a+c.salidas,0);
+  const acumEntUSD = Object.values(cuentasData).filter(c=>c.moneda==='USD').reduce((a,c)=>a+c.entradas,0);
+  const acumSalUSD = Object.values(cuentasData).filter(c=>c.moneda==='USD').reduce((a,c)=>a+c.salidas,0);
   const totalGeneralRD = totalAcumRD + (totalAcumUSD * tasa);
+  const tituloSaldo = vista==='ACUMULADO'?'💰 SALDO ACUMULADO — TODAS LAS CUENTAS':`💰 SALDO DEL MES — ${mes}`;
 
   document.getElementById('page-caja').innerHTML=`
     <div class="page-header">
@@ -2542,7 +2543,7 @@ function renderCaja(){
     ${(currentUser?.role==='admin'||(currentUser?.modulos||[]).includes('verSaldoCaja'))?`
     <div style="background:var(--navy);border-radius:14px;padding:20px 24px;margin-bottom:14px">
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#94a3b8;letter-spacing:.8px;margin-bottom:14px">
-        💰 SALDO ACUMULADO — TODAS LAS CUENTAS
+        ${tituloSaldo}
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:10px;text-align:center;margin-bottom:16px">
 
