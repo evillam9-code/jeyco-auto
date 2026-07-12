@@ -4745,21 +4745,31 @@ function htmlTipoAmortOpts(selected){
     (selected==='LINEA_CREDITO'&&t.v==='SOLO_INT_FIJO')?'selected':''}>${t.l}</option>`).join('');
 }
 
+let prestamoSelectedId=null;
 function renderPrestamos(){
   const pg=document.getElementById('page-prestamos');
   if(!pg)return;
   const prestamos=DB.prestamos||[];
   const activos=prestamos.filter(p=>p.status!=='PAGADO');
   const totalDeuda=activos.reduce((a,p)=>a+parseFloat(p.saldo||0),0);
+  const ds='background:#e2e8f0;color:#adb5bd;cursor:not-allowed;border:1px solid #dee2e6';
   pg.innerHTML=`
     <div class="page-header">
       <div><h1>🏦 Préstamos Bancos</h1><p>${activos.length} préstamos activos — Deuda total: ${fmt(totalDeuda)}</p></div>
-      <button class="btn btn-primary" onclick="nuevoPrestamo()">➕ Nuevo Préstamo</button>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <button id="prest-btn-historial" disabled class="btn btn-sm" style="${ds}" onclick="prestamoAccion('historial')">👁 Historial</button>
+        ${(currentUser?.role==='admin'||canDo('editar'))?`<button id="prest-btn-editar" disabled class="btn btn-sm" style="${ds}" onclick="prestamoAccion('editar')">✏️ Editar</button>`:''}
+        ${(currentUser?.role==='admin'||canDo('eliminar'))?`<button id="prest-btn-eliminar" disabled class="btn btn-sm" style="${ds}" onclick="prestamoAccion('eliminar')">🗑 Eliminar</button>`:''}
+        <button id="prest-btn-imprimir" disabled class="btn btn-sm" style="${ds}" onclick="prestamoAccion('imprimir')">🖨️ Imprimir</button>
+        <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
+        <button class="btn btn-primary" onclick="nuevoPrestamo()">➕ Nuevo Préstamo</button>
+      </div>
     </div>
     <div class="card">
       <div class="search-wrap"><input class="search-input" placeholder="Buscar por banco, descripción..." oninput="filterTable('prest-tbl',this.value)"></div>
       <div class="table-wrap"><table id="prest-tbl">
         <thead><tr>
+          <th style="width:36px"></th>
           <th>Banco / Entidad</th><th>Descripción</th><th>Tipo</th>
           <th>Monto Original</th><th>Saldo Pendiente</th><th>Tasa %</th>
           <th>Plazo</th><th>Estado</th><th>Acciones</th>
@@ -4767,7 +4777,8 @@ function renderPrestamos(){
         <tbody>
           ${prestamos.length?prestamos.map(p=>{
             const sc={ACTIVO:'badge-blue',PAGADO:'badge-green',VENCIDO:'badge-red'};
-            return`<tr>
+            return`<tr onclick="selPrestamo('${p.id}',this)" style="cursor:pointer">
+              <td style="text-align:center"><input type="radio" name="prest-sel" onclick="event.stopPropagation();selPrestamo('${p.id}',this.closest('tr'))" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blue)"></td>
               <td style="font-weight:700">${escHtml(p.banco||'—')}</td>
               <td style="font-size:12px">${escHtml(p.descripcion||'—')}</td>
               <td><span class="badge badge-gray" style="font-size:10px">${p.tipo||'—'}</span></td>
@@ -4778,17 +4789,53 @@ function renderPrestamos(){
               <td><span class="badge ${sc[p.status||'ACTIVO']||'badge-gray'}">${p.status||'ACTIVO'}</span></td>
               <td>
                 <div style="display:flex;gap:4px;flex-wrap:wrap">
-                  <button class="btn btn-sm" style="background:var(--blue3);color:var(--blue)" onclick="verAmortizacion('${p.id}')">📋 Tabla</button>
-                  <button class="btn btn-sm" style="background:#f1f5f9;color:var(--gray)" onclick="verHistorialPrestamo('${p.id}')" title="Historial de pagos">👁 Historial</button>
-                  ${p.status!=='PAGADO'?`<button class="btn btn-sm btn-green" onclick="modalPagarCuota('${p.id}')">💳 Pagar</button>
-                  <button class="btn btn-sm btn-amber" onclick="modalAbonoCapital('${p.id}')">🏦 Capital</button>`:''}
+                  <button class="btn btn-sm" style="background:var(--blue3);color:var(--blue)" onclick="event.stopPropagation();verAmortizacion('${p.id}')">📋 Tabla</button>
+                  ${p.status!=='PAGADO'?`<button class="btn btn-sm btn-green" onclick="event.stopPropagation();modalPagarCuota('${p.id}')">💳 Pagar</button>
+                  <button class="btn btn-sm btn-amber" onclick="event.stopPropagation();modalAbonoCapital('${p.id}')">🏦 Capital</button>`:''}
                 </div>
               </td>
             </tr>`;
-          }).join(''):'<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--gray)">Sin préstamos registrados</td></tr>'}
+          }).join(''):'<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--gray)">Sin préstamos registrados</td></tr>'}
         </tbody>
       </table></div>
     </div>`;
+}
+
+function selPrestamo(id,tr){
+  prestamoSelectedId=id;
+  document.querySelectorAll('#prest-tbl tbody tr').forEach(r=>r.style.background='');
+  if(tr)tr.style.background='#e8f0fe';
+  const actB=(bid,bg,c)=>{const b=document.getElementById(bid);if(b){b.disabled=false;b.style.cssText='background:'+bg+';color:'+c+';cursor:pointer;border:none;';}};
+  actB('prest-btn-historial','#475569','#fff');
+  if(currentUser?.role==='admin'||canDo('editar'))actB('prest-btn-editar','#7c3aed','#fff');
+  if(currentUser?.role==='admin'||canDo('eliminar'))actB('prest-btn-eliminar','#dc2626','#fff');
+  actB('prest-btn-imprimir','#0f172a','#fff');
+}
+
+function prestamoAccion(accion){
+  if(!prestamoSelectedId)return;
+  if(accion==='historial')verHistorialPrestamo(prestamoSelectedId);
+  else if(accion==='editar'){
+    if(!(currentUser?.role==='admin'||canDo('editar'))){toast('No tienes permiso para editar','error');return;}
+    editarPrestamo(prestamoSelectedId);
+  }
+  else if(accion==='eliminar'){
+    if(!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}
+    const p=DB.prestamos.find(x=>x.id===prestamoSelectedId);
+    openModal('🗑 Eliminar Préstamo',`<p>¿Eliminar el préstamo de <strong>${escHtml(p?.banco||'')}</strong>? Esto también eliminará los movimientos de Caja relacionados a sus pagos y abonos.</p>`,
+      `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+       <button class="btn btn-red" onclick="eliminarPrestamo('${prestamoSelectedId}')">🗑 Eliminar</button>`);
+  }
+  else if(accion==='imprimir')imprimirPrestamo(prestamoSelectedId);
+}
+
+function eliminarPrestamo(pid){
+  DB.caja=(DB.caja||[]).filter(c=>!(c.origenModulo==='prestamos'&&c.origenId===pid));
+  DB.prestamos=(DB.prestamos||[]).filter(p=>p.id!==pid);
+  sDB('prestamos');sDB('caja');
+  if(typeof fbGuardar==='function'&&window._fbActivo){fbGuardar('prestamos').catch(()=>{});fbGuardar('caja').catch(()=>{});}
+  prestamoSelectedId=null;
+  closeModal();toast('Préstamo eliminado','success');renderPrestamos();
 }
 
 function nuevoPrestamo(){
@@ -4877,6 +4924,193 @@ function guardarPrestamo(){
   sDB('prestamos');
   if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('prestamos').catch(()=>{});
   closeModal();toast('Préstamo registrado ✓','success');renderPrestamos();
+}
+
+function editarPrestamo(pid){
+  const p=DB.prestamos.find(x=>x.id===pid);if(!p)return;
+  openModal('✏️ Editar Préstamo Bancario',`
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Banco / Entidad</label>
+        <input type="text" id="epr-banco" value="${escHtml(p.banco||'')}">
+      </div>
+      <div class="form-field"><label>Descripción / Referencia</label>
+        <input type="text" id="epr-desc" value="${escHtml(p.descripcion||'')}">
+      </div>
+    </div>
+    <div class="form-row c3">
+      <div class="form-field"><label class="required">Tipo</label>
+        <select id="epr-tipo">
+${htmlTipoAmortOpts(p.tipo||'')}
+        </select>
+      </div>
+      <div class="form-field"><label>Monto del Préstamo</label>
+        <input type="text" id="epr-monto" value="${fmtMoneyDisplay(p.monto||0)}" readonly style="background:#f8fafc;color:var(--gray)" title="No editable — protege la tabla de pagos ya registrados">
+      </div>
+      <div class="form-field"><label>Tasa de Interés Mensual (%)</label>
+        <input type="number" id="epr-tasa" step="0.01" value="${p.tasaMensual||0}">
+      </div>
+    </div>
+    <div class="form-row c3">
+      <div class="form-field"><label>Plazo (meses)</label>
+        <input type="number" id="epr-plazo" value="${p.plazo||''}">
+      </div>
+      <div class="form-field"><label>Fecha de Inicio</label>
+        <input type="date" id="epr-fecha" value="${p.fecha||today()}">
+      </div>
+      <div class="form-field"><label>Estado</label>
+        <select id="epr-status">
+          <option value="ACTIVO" ${p.status==='ACTIVO'?'selected':''}>Activo</option>
+          <option value="VENCIDO" ${p.status==='VENCIDO'?'selected':''}>Vencido</option>
+          <option value="PAGADO" ${p.status==='PAGADO'?'selected':''}>Pagado</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('eprb',p.moneda||'RD$',p.banco_pago||undefined,p.cuenta||undefined)}
+    </div>
+    <div class="form-field"><label>Notas</label>
+      <textarea id="epr-notas" rows="2">${escHtml(p.notas||'')}</textarea>
+    </div>`,
+  `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+   <button class="btn btn-primary" onclick="guardarEditarPrestamo('${pid}')">💾 Guardar Cambios</button>`);
+}
+
+function guardarEditarPrestamo(pid){
+  const i=DB.prestamos.findIndex(x=>x.id===pid);if(i<0)return;
+  const banco=document.getElementById('epr-banco')?.value.trim();
+  if(!banco){toast('Ingresa el banco','error');return;}
+  DB.prestamos[i].banco=banco;
+  DB.prestamos[i].descripcion=document.getElementById('epr-desc')?.value.trim()||'';
+  DB.prestamos[i].tipo=document.getElementById('epr-tipo')?.value||DB.prestamos[i].tipo;
+  DB.prestamos[i].tasaMensual=parseFloat(document.getElementById('epr-tasa')?.value||0)||0;
+  DB.prestamos[i].plazo=parseInt(document.getElementById('epr-plazo')?.value||0)||0;
+  DB.prestamos[i].fecha=document.getElementById('epr-fecha')?.value||DB.prestamos[i].fecha;
+  DB.prestamos[i].status=document.getElementById('epr-status')?.value||DB.prestamos[i].status;
+  DB.prestamos[i].moneda=document.getElementById('eprb-moneda')?.value||DB.prestamos[i].moneda;
+  DB.prestamos[i].banco_pago=document.getElementById('eprb-banco')?.value||DB.prestamos[i].banco_pago;
+  DB.prestamos[i].cuenta=document.getElementById('eprb-cuenta')?.value||DB.prestamos[i].cuenta;
+  DB.prestamos[i].notas=document.getElementById('epr-notas')?.value||'';
+  sDB('prestamos');
+  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('prestamos').catch(()=>{});
+  closeModal();toast('Préstamo actualizado ✓','success');renderPrestamos();
+}
+
+function imprimirPrestamo(pid){
+  const p=DB.prestamos.find(x=>x.id===pid);if(!p)return;
+  const empresa=DB.config.empresa||'JEYCO AUTO';
+  const logo=DB.config.logoData||'';
+  const rnc=DB.config.rnc||'';
+  const tel=DB.config.telefono||'';
+  const dir=DB.config.direccion||'';
+  const pagos=p.pagos||[];
+  const totalPagado=pagos.reduce((a,x)=>a+parseFloat(x.monto||0),0);
+  const totalCapital=pagos.reduce((a,x)=>a+parseFloat(x.capital||0),0);
+  const totalInteres=pagos.reduce((a,x)=>a+parseFloat(x.interes||0),0);
+  const fN=(n)=>parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fMon=(n)=>(p.moneda==='USD'?'US$ ':'RD$ ')+fN(n);
+
+  const filasPagos=pagos.map((x,i)=>`<tr>
+    <td class="num">${i+1}</td>
+    <td>${fmtDate(x.fecha)}</td>
+    <td class="amt">${fMon(x.monto)}</td>
+    <td class="amt">${fMon(x.capital||0)}</td>
+    <td class="amt">${fMon(x.interes||0)}</td>
+    <td>${escHtml(x.cuenta||x.banco||'—')}</td>
+    <td>${escHtml(x.nota||'—')}</td>
+  </tr>`).join('');
+
+  const win=window.open('','_blank','width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Préstamo — ${escHtml(p.banco)}</title>
+  <style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,sans-serif;font-size:10px;color:#0f172a;background:#fff;padding:12px 16px}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:8px;margin-bottom:10px}
+  .hdr img{max-height:48px;max-width:120px;object-fit:contain;display:block;margin-bottom:3px}
+  .hdr-emp{font-size:9px;color:#475569;line-height:1.5}
+  .hdr-emp strong{font-size:12px;color:#0f172a;display:block;margin-bottom:1px}
+  .hdr-titulo{font-size:19px;font-weight:900;color:#0f172a;letter-spacing:1px;text-align:right;line-height:1}
+  .hdr-sub{font-size:9px;color:#6b7280;text-align:right;margin-top:3px}
+  .pr-box{border:1px solid #334155;border-radius:4px;margin-bottom:10px;overflow:hidden}
+  .pr-bar{background:#334155;color:#fff;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px}
+  .pr-grid{display:grid;grid-template-columns:repeat(4,1fr)}
+  .vc{padding:5px 8px;border-right:1px solid #e2e8f0;border-top:1px solid #e2e8f0}
+  .vc:nth-child(4n){border-right:none}
+  .vc .l{font-size:8px;font-weight:700;text-transform:uppercase;color:#6b7280;margin-bottom:1px}
+  .vc .v{font-weight:700;font-size:10px}
+  table{width:100%;border-collapse:collapse}
+  .th th{background:#0f172a;color:#fff;padding:6px 8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.2px}
+  td{padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:10px}
+  tr:nth-child(even) td{background:#f8fafc}
+  .num{width:26px;text-align:center;color:#94a3b8;font-size:9px}
+  .amt{text-align:right;font-family:'Courier New',monospace;font-weight:700;color:#0f172a}
+  .res{margin-top:10px;border:1px solid #334155;border-radius:4px;overflow:hidden}
+  .res-bar{background:#334155;color:#fff;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px}
+  .res-top{display:grid;grid-template-columns:repeat(4,1fr)}
+  .rc{padding:6px 10px;border-right:1px solid #e2e8f0}
+  .rc:last-child{border-right:none}
+  .rl{font-size:8px;font-weight:700;text-transform:uppercase;color:#6b7280;margin-bottom:3px}
+  .rv{font-size:13px;font-weight:900}
+  @page{size:letter landscape;margin:8mm}
+  @media print{.noprint{display:none}}
+  </style></head><body>
+
+  <div class="hdr">
+    <div>
+      ${logo?`<img src="${logo}">`:''}
+      <div class="hdr-emp">
+        <strong>${escHtml(empresa)}</strong>
+        ${rnc?`RNC: ${escHtml(rnc)}<br>`:''}
+        ${dir?`${escHtml(dir)}<br>`:''}
+        ${tel?`Tel: ${escHtml(tel)}`:''}
+      </div>
+    </div>
+    <div>
+      <div class="hdr-titulo">Préstamo Bancario</div>
+      <div class="hdr-sub">Fecha: ${fmtDate(today())} &nbsp;|&nbsp; ${pagos.length} pago(s) registrado(s)</div>
+    </div>
+  </div>
+
+  <div class="pr-box">
+    <div class="pr-bar">🏦 Datos del Préstamo</div>
+    <div class="pr-grid">
+      <div class="vc" style="border-top:none"><div class="l">Banco / Entidad</div><div class="v">${escHtml(p.banco||'—')}</div></div>
+      <div class="vc" style="border-top:none"><div class="l">Descripción</div><div class="v">${escHtml(p.descripcion||'—')}</div></div>
+      <div class="vc" style="border-top:none"><div class="l">Tipo</div><div class="v">${escHtml(p.tipo||'—')}</div></div>
+      <div class="vc" style="border-top:none"><div class="l">Estado</div><div class="v">${escHtml(p.status||'ACTIVO')}</div></div>
+      <div class="vc"><div class="l">Monto Original</div><div class="v">${fMon(p.monto)}</div></div>
+      <div class="vc"><div class="l">Saldo Pendiente</div><div class="v">${fMon(p.saldo)}</div></div>
+      <div class="vc"><div class="l">Tasa Mensual</div><div class="v">${p.tasaMensual||0}%</div></div>
+      <div class="vc"><div class="l">Plazo</div><div class="v">${p.plazo||'—'} meses</div></div>
+    </div>
+  </div>
+
+  <table>
+    <thead class="th"><tr>
+      <th class="num">#</th><th>Fecha</th>
+      <th style="text-align:right">Monto</th><th style="text-align:right">Capital</th><th style="text-align:right">Interés</th>
+      <th>Cuenta</th><th>Nota</th>
+    </tr></thead>
+    <tbody>
+      ${filasPagos||'<tr><td colspan="7" style="text-align:center;padding:20px;color:#94a3b8">Sin pagos registrados</td></tr>'}
+    </tbody>
+  </table>
+
+  <div class="res">
+    <div class="res-bar">📊 Resumen</div>
+    <div class="res-top">
+      <div class="rc"><div class="rl">Total Pagado</div><div class="rv" style="color:#16a34a">${fMon(totalPagado)}</div></div>
+      <div class="rc"><div class="rl">Capital Pagado</div><div class="rv" style="color:#2563eb">${fMon(totalCapital)}</div></div>
+      <div class="rc"><div class="rl">Interés Pagado</div><div class="rv" style="color:#d97706">${fMon(totalInteres)}</div></div>
+      <div class="rc"><div class="rl">Saldo Pendiente</div><div class="rv" style="color:#dc2626">${fMon(p.saldo)}</div></div>
+    </div>
+  </div>
+
+  <div class="noprint" style="margin-top:14px;text-align:center">
+    <button onclick="window.print()" style="padding:8px 28px;background:#0f172a;color:#fff;border:none;border-radius:5px;font-size:12px;cursor:pointer;font-family:Arial">🖨️ Imprimir / Guardar PDF</button>
+  </div>
+  </body></html>`);
+  win.document.close();
 }
 
 function verAmortizacion(pid){
@@ -7084,10 +7318,14 @@ function generarResumenPorVehiculo(){
   const vehiculos=DB.vehiculos.filter(v=>['ACTIVO','EN EEUU','ADUANA'].includes(v.status));
   const filas=vehiculos.map(v=>{
     const gastos=(DB.gastosVehiculos||[]).filter(g=>g.vehiculoId===v.id);
-    const totalInvertido=gastos.reduce((a,g)=>a+((g.moneda||'RD$')==='USD'?parseFloat(g.montoFactura||0)*parseFloat(g.tasaCambio||tasa):parseFloat(g.montoFactura||0)),0);
-    return{v,totalInvertido};
+    const totalRD=gastos.filter(g=>(g.moneda||'RD$')==='RD$').reduce((a,g)=>a+parseFloat(g.montoFactura||0),0);
+    const totalUSD=gastos.filter(g=>g.moneda==='USD').reduce((a,g)=>a+parseFloat(g.montoFactura||0),0);
+    const inversionTotal=totalRD+totalUSD*tasa;
+    return{v,totalRD,totalUSD,inversionTotal};
   }).sort((a,b)=>(parseInt((a.v.codigo||'').replace(/\D/g,''))||0)-(parseInt((b.v.codigo||'').replace(/\D/g,''))||0));
-  const granTotal=filas.reduce((a,f)=>a+f.totalInvertido,0);
+  const granTotalRD=filas.reduce((a,f)=>a+f.totalRD,0);
+  const granTotalUSD=filas.reduce((a,f)=>a+f.totalUSD,0);
+  const granInversionTotal=filas.reduce((a,f)=>a+f.inversionTotal,0);
 
   const win=window.open('','_blank','width=900,height=700');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
@@ -7130,20 +7368,20 @@ function generarResumenPorVehiculo(){
 
   <table>
     <thead class="th"><tr>
-      <th class="num">#</th><th>Código</th><th>Marca</th><th>Modelo</th><th>Año</th><th>Color</th>
-      <th style="text-align:right">Total Invertido (RD$)</th>
+      <th class="num">#</th><th>Datos Vehículo</th>
+      <th style="text-align:right">Total en Pesos (RD$)</th>
+      <th style="text-align:right">Total en Dólares (US$)</th>
+      <th style="text-align:right">Inversión Total (RD$)</th>
     </tr></thead>
     <tbody>
       ${filas.length?filas.map((f,i)=>`<tr>
         <td class="num">${i+1}</td>
-        <td>${escHtml(f.v.codigo||'—')}</td>
-        <td>${escHtml(f.v.marca||'—')}</td>
-        <td>${escHtml(f.v.modelo||'—')}</td>
-        <td>${escHtml(String(f.v.anio||'—'))}</td>
-        <td>${escHtml(f.v.color||'—')}</td>
-        <td class="amt">${fRD(f.totalInvertido)}</td>
-      </tr>`).join(''):'<tr><td colspan="7" style="text-align:center;padding:20px;color:#94a3b8">Sin vehículos activos</td></tr>'}
-      <tr class="tot"><td colspan="6" style="text-align:right">GRAN TOTAL INVERTIDO</td><td class="amt" style="color:#fff">${fRD(granTotal)}</td></tr>
+        <td>${escHtml([f.v.codigo,f.v.marca,f.v.modelo,f.v.color].filter(Boolean).join(' — '))}${f.v.anio?' — '+escHtml(String(f.v.anio)):''}</td>
+        <td class="amt">${fRD(f.totalRD)}</td>
+        <td class="amt">${f.totalUSD>0?'US$ '+fN(f.totalUSD):'—'}</td>
+        <td class="amt">${fRD(f.inversionTotal)}</td>
+      </tr>`).join(''):'<tr><td colspan="5" style="text-align:center;padding:20px;color:#94a3b8">Sin vehículos activos</td></tr>'}
+      <tr class="tot"><td colspan="2" style="text-align:right">GRAN TOTAL</td><td class="amt" style="color:#fff">${fRD(granTotalRD)}</td><td class="amt" style="color:#fff">${granTotalUSD>0?'US$ '+fN(granTotalUSD):'—'}</td><td class="amt" style="color:#fff">${fRD(granInversionTotal)}</td></tr>
     </tbody>
   </table>
 
@@ -7586,13 +7824,10 @@ function nuevaVenta(){
         </label>
       </div>
       <div id="sv-recibido-fields" style="display:none">
-        <div class="form-row c3" style="margin-bottom:8px">
-          <div class="form-field" style="margin:0"><label style="font-size:10px">Marca / Modelo</label><input type="text" id="sv-rec-vehiculo" placeholder="Ej: Toyota Corolla 2018"></div>
+        <div class="form-field" style="margin:0 0 8px"><label style="font-size:10px">Marca / Modelo</label><input type="text" id="sv-rec-vehiculo" placeholder="Ej: Toyota Corolla 2018" style="width:100%"></div>
+        <div class="form-row c3" style="margin-bottom:0">
           <div class="form-field" style="margin:0"><label style="font-size:10px">Chasis / VIN</label><input type="text" id="sv-rec-vin" placeholder="Número de chasis o VIN" maxlength="17" style="text-transform:uppercase;font-family:monospace" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')"></div>
-          <div class="form-field" style="margin:0"><label style="font-size:10px">Kilometraje</label><input type="text" id="sv-rec-km" placeholder="0" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)"></div>
-        </div>
-        <div class="form-row c2" style="margin-bottom:0">
-          <div class="form-field" style="margin:0"><label style="font-size:10px">Monto Recibido</label><input type="text" id="sv-rec-monto" placeholder="0.00" oninput="fmtMoneyInput(this);calcPend()"></div>
+          <div class="form-field" style="margin:0"><label style="font-size:10px">Placa</label><input type="text" id="sv-rec-placa" placeholder="Ej: A123456" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()"></div>
           <div class="form-field" style="margin:0"><label style="font-size:10px">Adjuntar Matrícula</label>
             <input type="file" id="sv-rec-matricula" accept="image/jpeg,image/png,application/pdf" onchange="previewFoto('sv-rec-matricula','sv-rec-mat-prev')">
             <img id="sv-rec-mat-prev" style="display:none;width:100%;max-height:60px;object-fit:cover;border-radius:4px;margin-top:4px">
@@ -7914,9 +8149,8 @@ function llenarInfoVenta(vid){
 function calcPend(){
   const p=parseFloat((document.getElementById('sv-precio')?.value||'0').replace(/,/g,''));
   const i=parseFloat((document.getElementById('sv-inicial')?.value||'0').replace(/,/g,''));
-  const rec=parseFloat((document.getElementById('sv-rec-monto')?.value||'0').replace(/,/g,''));
   const pd=document.getElementById('sv-pendiente');
-  if(pd)pd.value=fmtMoneyDisplay(Math.max(0,p-i-rec));
+  if(pd)pd.value=fmtMoneyDisplay(Math.max(0,p-i));
   // Mostrar equivalente si es USD
   const moneda=document.getElementById('sv-moneda')?.value||'RD$';
   const tasa=parseFloat(document.getElementById('sv-tasa')?.value||DB.config.tasaCambio||60);
@@ -7943,8 +8177,7 @@ function confirmarVenta(nf){
   const cliNombre=cli?.nombre||'Cliente';
   const v=DB.vehiculos.find(x=>x.id===vid);
   const inicial=parseFloat((document.getElementById('sv-inicial').value||'0').replace(/,/g,''));
-  const montoRecibido=document.getElementById('sv-tiene-recibido')?.checked?parseFloat((document.getElementById('sv-rec-monto')?.value||'0').replace(/,/g,'')):0;
-  const pendiente=Math.max(0,precio-inicial-montoRecibido);
+  const pendiente=Math.max(0,precio-inicial);
   const banco=document.getElementById('sv-banco')?.value||'';
   const cuenta=document.getElementById('sv-cuenta')?.value||'Caja General';
   const monedaVenta=document.getElementById('sv-moneda')?.value||'RD$';
@@ -8005,10 +8238,9 @@ function confirmarVenta(nf){
     const matEl=document.getElementById('sv-rec-mat-prev');
     const recVehNombre=document.getElementById('sv-rec-vehiculo')?.value||'';
     const recVin=document.getElementById('sv-rec-vin')?.value||'';
-    const recKm=parseFloat((document.getElementById('sv-rec-km')?.value||'0').replace(/,/g,''))||0;
-    const recMonto=parseFloat((document.getElementById('sv-rec-monto')?.value||'0').replace(/,/g,''));
+    const recPlaca=document.getElementById('sv-rec-placa')?.value||'';
     const recMatricula=matEl?.style.display!=='none'&&matEl?.src?matEl.src:'';
-    venta.vehiculoRecibido={vehiculo:recVehNombre,vin:recVin,km:recKm,monto:recMonto,matricula:recMatricula};
+    venta.vehiculoRecibido={vehiculo:recVehNombre,vin:recVin,placa:recPlaca,matricula:recMatricula};
     // Registrar automáticamente como vehículo activo tipo RECIBIDO
     if(recVehNombre){
       // Parsear marca, modelo, año del texto libre
@@ -8030,15 +8262,14 @@ function confirmarVenta(nf){
           codigo:nuevoCodigo,
           marca,modelo,anio,
           vin:recVin,
-          millas:recKm,
           status:'ACTIVO',
           tipoCompra:'RECIBIDO',
           suplidor:cliNombre, // El cliente que lo entregó
-          costo:recMonto,     // El valor por el que se recibió
+          costo:0,
           fecha:venta.fecha,
           notas:`Recibido como parte de pago. Venta: ${nf} — Cliente: ${cliNombre}`,
           propietario:DB.config.propietarios?.[0]||'',
-          color:'',placa:'',carfax:'',foto:'',precioVenta:0,
+          color:'',placa:recPlaca,carfax:'',foto:'',precioVenta:0,
           origenVenta:nf // referencia a la venta de origen
         };
         DB.vehiculos.push(nuevoVeh);
@@ -8062,7 +8293,7 @@ function confirmarVenta(nf){
   DB.caja.push({id:uid(),fecha:venta.fecha,tipo:'ENTRADA',categoria:'Venta de Vehículo',descripcion:`Venta: ${v.codigo} ${v.marca} ${v.modelo}`,monto:inicial||precio,moneda:monedaVenta,banco,cuenta,referencia:nf,responsable:currentUser.nombre,origenModulo:'ventas',origenId:venta.id});
   // Si hay pendiente → CxC automática
   if(pendiente>0){
-    const abonadoInicial=inicial+montoRecibido;
+    const abonadoInicial=inicial;
     DB.cxc.push({id:uid(),ventaId:venta.id,factura:nf,cliente:cliNombre,clienteId:cliId,vehiculo:`${v.codigo} ${v.marca} ${v.modelo}`,concepto:'Pendiente de venta',moneda:monedaVenta,total:precio,abonado:abonadoInicial,saldo:pendiente,fecha:venta.fecha,fechaVence:'',status:pendiente<=0?'SALDADO':abonadoInicial>0?'PARCIAL':'PENDIENTE',pagos:[]});
     sDB('cxc');
   }
@@ -8340,13 +8571,10 @@ function editarVenta(vid){
         </label>
       </div>
       <div id="sv-recibido-fields" style="display:${tieneRec?'block':'none'}">
-        <div class="form-row c3" style="margin-bottom:8px">
-          <div class="form-field" style="margin:0"><label style="font-size:10px">Marca / Modelo</label><input type="text" id="sv-rec-vehiculo" placeholder="Ej: Toyota Corolla 2018" value="${escHtml(rec.vehiculo||'')}"></div>
+        <div class="form-field" style="margin:0 0 8px"><label style="font-size:10px">Marca / Modelo</label><input type="text" id="sv-rec-vehiculo" placeholder="Ej: Toyota Corolla 2018" style="width:100%" value="${escHtml(rec.vehiculo||'')}"></div>
+        <div class="form-row c3" style="margin-bottom:0">
           <div class="form-field" style="margin:0"><label style="font-size:10px">Chasis / VIN</label><input type="text" id="sv-rec-vin" placeholder="Número de chasis o VIN" maxlength="17" style="text-transform:uppercase;font-family:monospace" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')" value="${escHtml(rec.vin||'')}"></div>
-          <div class="form-field" style="margin:0"><label style="font-size:10px">Kilometraje</label><input type="text" id="sv-rec-km" placeholder="0" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" value="${fmtMoneyDisplay(rec.km||0)}"></div>
-        </div>
-        <div class="form-row c2" style="margin-bottom:0">
-          <div class="form-field" style="margin:0"><label style="font-size:10px">Monto Recibido</label><input type="text" id="sv-rec-monto" placeholder="0.00" oninput="fmtMoneyInput(this);calcPend()" value="${fmtMoneyDisplay(rec.monto||0)}"></div>
+          <div class="form-field" style="margin:0"><label style="font-size:10px">Placa</label><input type="text" id="sv-rec-placa" placeholder="Ej: A123456" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()" value="${escHtml(rec.placa||'')}"></div>
           <div class="form-field" style="margin:0"><label style="font-size:10px">Adjuntar Matrícula</label>
             <input type="file" id="sv-rec-matricula" accept="image/jpeg,image/png,application/pdf" onchange="previewFoto('sv-rec-matricula','sv-rec-mat-prev')">
             <img id="sv-rec-mat-prev" style="display:${rec.matricula?'block':'none'};width:100%;max-height:60px;object-fit:cover;border-radius:4px;margin-top:4px" src="${rec.matricula||''}">
@@ -8373,8 +8601,7 @@ function guardarEditarVenta(vid){
   if(!vehId){toast('Selecciona un vehículo','error');return;}
   if(!cliId){toast('Selecciona un cliente','error');return;}
   const inicial=parseFloat((document.getElementById('sv-inicial').value||'0').replace(/,/g,''));
-  const recMonto=parseFloat((document.getElementById('sv-rec-monto')?.value||'0').replace(/,/g,''));
-  const pendiente=Math.max(0,precio-inicial-recMonto);
+  const pendiente=Math.max(0,precio-inicial);
   const veh=DB.vehiculos.find(x=>x.id===vehId);
   const cli=DB.clientes.find(x=>x.id===cliId);
   const banco=document.getElementById('sv-banco')?.value||'Caja General';
@@ -8390,7 +8617,7 @@ function guardarEditarVenta(vid){
   const tieneRec=document.getElementById('sv-tiene-recibido')?.checked;
   const recVehiculo=document.getElementById('sv-rec-vehiculo')?.value||'';
   const recVin=document.getElementById('sv-rec-vin')?.value||'';
-  const recKm=parseFloat((document.getElementById('sv-rec-km')?.value||'0').replace(/,/g,''));
+  const recPlaca=document.getElementById('sv-rec-placa')?.value||'';
   const comentario=document.getElementById('sv-comentario')?.value||'';
   const motivoTransito=document.getElementById('ev-motivo')?.value||'';
   // Matrícula imagen (solo si se subió nueva)
@@ -8423,7 +8650,7 @@ function guardarEditarVenta(vid){
   DB.ventas[i].traspasoPagado=traspasoPagado;
   DB.ventas[i].comentario=comentario;
   if(tieneRec&&recVehiculo){
-    DB.ventas[i].vehiculoRecibido={vehiculo:recVehiculo,vin:recVin,km:recKm,monto:recMonto,matricula:recMatricula};
+    DB.ventas[i].vehiculoRecibido={vehiculo:recVehiculo,vin:recVin,placa:recPlaca,matricula:recMatricula};
   } else if(!tieneRec){
     DB.ventas[i].vehiculoRecibido=null;
   }
@@ -8575,8 +8802,7 @@ function imprimirFactura(vid){
       <div class="rec-grid">
         <div class="campo"><label>Marca / Modelo</label><span>${escHtml(rec.vehiculo)}</span></div>
         <div class="campo"><label>Chasis / VIN</label><span class="mono">${escHtml(rec.vin||'—')}</span></div>
-        <div class="campo"><label>Kilometraje</label><span>${rec.km?Number(rec.km).toLocaleString()+' km':'—'}</span></div>
-        <div class="campo"><label>Valor Recibido</label><span style="color:#16a34a;font-weight:800">${fmt(rec.monto||0)}</span></div>
+        <div class="campo"><label>Placa</label><span class="mono">${escHtml(rec.placa||'—')}</span></div>
       </div>
     </div>
   </div>`:''}
@@ -8594,7 +8820,7 @@ function imprimirFactura(vid){
         return`
         <tr><td class="lbl">Precio de Venta</td><td class="val">${fV(v.precioVenta)}</td></tr>
         <tr><td class="lbl">Inicial Recibido</td><td class="val" style="color:#16a34a">${fV(v.inicial||0)}</td></tr>
-        ${rec?.vehiculo?`<tr><td class="lbl">Vehículo Recibido — ${escHtml(rec.vehiculo)}</td><td class="val" style="color:#16a34a">${fV(rec.monto||0)}</td></tr>`:''}
+        ${rec?.vehiculo?`<tr><td class="lbl">Vehículo Recibido</td><td class="val">${escHtml(rec.vehiculo)}${rec.placa?' — Placa '+escHtml(rec.placa):''}</td></tr>`:''}
         ${parseFloat(v.pendiente||0)>0?`<tr class="fin-pend"><td>⚠️ PENDIENTE VENTA</td><td class="val">${fV(v.pendiente)}</td></tr>`:''}
         ${traspNoPagado?`<tr style="background:#fff7ed"><td style="color:#c2410c;font-weight:700">🔄 TRASPASO/MATRÍCULA PENDIENTE</td><td class="val" style="color:#c2410c">${fV(montoTraspp)}</td></tr>`:''}
         ${totalPendiente>0?`<tr style="background:#fef2f2"><td style="font-weight:900;color:#dc2626">⚠️ TOTAL A DEBER</td><td style="text-align:right;font-weight:900;font-size:15px;color:#dc2626">${fV(totalPendiente)}</td></tr>`:''}`;
