@@ -11148,6 +11148,7 @@ function imprimirReciboCobro(cxc, pago){
   <div class="sec">
     <div class="sec-titulo">💰 Detalle del Cobro</div>
     <div class="resumen">
+      <div class="resumen-row"><span>Lo que Debía</span><span style="font-weight:700">${fV((cxc.saldo||0)+pago.monto)}</span></div>
       <div class="monto-cobro"><span>${esSaldado?'Pago Final Recibido':'Abono Recibido'}</span><span>${fV(pago.monto)}</span></div>
       ${esUSD&&pago.tasa?`<div style="background:#eff6ff;border-radius:6px;padding:8px 12px;margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">
         <div><span style="color:#6b7280">Tasa del día:</span> <strong style="color:#1d4ed8">RD$ ${parseFloat(pago.tasa||0).toFixed(2)}</strong></div>
