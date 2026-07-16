@@ -936,7 +936,8 @@ function _consultasDatos(){
     const cxcVenta=venta?(DB.cxc||[]).find(c=>c.ventaId===venta.id&&!c.esTraspaso):null;
     const cxcTrasp=venta?(DB.cxc||[]).find(c=>c.ventaId===venta.id&&c.esTraspaso):null;
     const gastosVeh=(DB.gastosVehiculos||[]).filter(g=>g.vehiculoId===v.id);
-    const totalCostos=gastosVeh.reduce((a,g)=>a+aRD(g.montoFactura||g.monto||0,g.moneda,g.tasaCambio),0);
+    const cxpRel=(DB.cxp||[]).filter(g=>g.vehiculoId===v.id);
+    const totalCostos=gastosVeh.reduce((a,g)=>a+aRD(g.montoFactura||g.monto||0,g.moneda,g.tasaCambio),0)+cxpRel.reduce((a,g)=>a+aRD(g.montoFactura||0,g.moneda,g.tasaCambio),0);
     const seguro=(DB.seguros||[]).find(s=>s.vehiculoId===v.id);
     const beneficio=venta?aRD(venta.precioVenta||0,venta.moneda,venta.tasaCambio)-totalCostos:null;
     let estadoDinamico=v.status||'—';
@@ -1060,7 +1061,7 @@ function abrirFichaVehiculo(vehiculoId){
         <div class="resumen-row"><span>${totalCostosPend>0?'⏳ Gastos Pendientes por Pagar':'✅ Gastos Saldados'}</span><span style="font-weight:800;color:${totalCostosPend>0?'#dc2626':'#16a34a'}">${fmt(totalCostosPend)}</span></div>
       </div>
       ${items.length?`<table style="margin-top:6px"><thead><tr><th>Tipo/Descripción</th><th>Suplidor</th><th>Factura</th><th>Pagado</th><th>Pendiente</th><th>Estado</th></tr></thead><tbody>
-        ${items.map(g=>`<tr><td>${escHtml(g.tipo||g.descripcion||'—')}</td><td>${escHtml(g.suplidor||'—')}</td><td style="font-weight:700">${fmt(g.montoFactura||g.monto||0)}</td><td style="color:#16a34a">${fmt(g.montoPagado||0)}</td><td style="color:${parseFloat(g.montoPendiente||0)>0?'#dc2626':'#16a34a'}">${fmt(g.montoPendiente||0)}</td><td>${g.statusGasto||'—'}</td></tr>`).join('')}
+        ${items.map(g=>`<tr><td>${escHtml(g.tipo||g.descripcion||'—')}</td><td>${escHtml(g.suplidor||'—')}</td><td style="font-weight:700">${fmtMon(g.montoFactura||g.monto||0,g.moneda)}</td><td style="color:#16a34a">${fmtMon(g.montoPagado||0,g.moneda)}</td><td style="color:${parseFloat(g.montoPendiente||0)>0?'#dc2626':'#16a34a'}">${fmtMon(g.montoPendiente||0,g.moneda)}</td><td>${g.statusGasto||'—'}</td></tr>`).join('')}
       </tbody></table>`:'<div style="font-size:11px;color:#94a3b8;padding:6px">Sin costos registrados para este vehículo</div>'}
     </div>`;
   };
@@ -11088,6 +11089,9 @@ function imprimirReciboCobro(cxc, pago){
   const logo=DB.config.logoData||DB.config.logo||'';
   const esSaldado=pago.saldado;
   const ventaRel=DB.ventas.find(v=>v.id===cxc.ventaId);
+  const cliRel=DB.clientes.find(c=>c.id===cxc.clienteId);
+  const vehRel=DB.vehiculos.find(v=>v.id===ventaRel?.vehiculoId);
+  const vehiculoInfo=vehRel?`${vehRel.marca||''} ${vehRel.modelo||''}${vehRel.anio?' '+vehRel.anio:''}${vehRel.color?' · '+vehRel.color:''}`.trim():(cxc.vehiculo||'—');
   const esUSD=(cxc.moneda||ventaRel?.moneda||'RD$')==='USD';
   const fV=(n)=>esUSD?'$'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(n);
   const empresa=DB.config.empresa||'JEYCO AUTO';
@@ -11141,20 +11145,20 @@ function imprimirReciboCobro(cxc, pago){
     <div class="sec-titulo">👤 Datos del Cliente</div>
     <div class="g2">
       <div class="campo"><label>Nombre</label><span>${escHtml(cxc.cliente||'—')}</span></div>
-      <div class="campo"><label>Vehículo</label><span>${escHtml(cxc.vehiculo||'—')}</span></div>
+      <div class="campo"><label>Vehículo</label><span>${escHtml(vehiculoInfo)}</span></div>
+      <div class="campo"><label>Documento</label><span>${escHtml(cliRel?.documento||'—')}</span></div>
+      <div class="campo"><label>Teléfono(s)</label><span>${escHtml([cliRel?.telefono,cliRel?.telefono2].filter(Boolean).join(' / ')||'—')}</span></div>
     </div>
   </div>
   <div class="sec">
     <div class="sec-titulo">💰 Detalle del Cobro</div>
     <div class="resumen">
-      <div class="resumen-row"><span>Total de la Venta</span><span style="font-weight:700">${fV(cxc.total||0)}</span></div>
-      <div class="resumen-row"><span>Cobrado Anteriormente</span><span style="color:#16a34a">${fV((cxc.abonado||0)-pago.monto)}</span></div>
+      <div class="resumen-row"><span>Lo que Debía</span><span style="font-weight:700">${fV((cxc.saldo||0)+pago.monto)}</span></div>
       <div class="monto-cobro"><span>${esSaldado?'Pago Final Recibido':'Abono Recibido'}</span><span>${fV(pago.monto)}</span></div>
       ${esUSD&&pago.tasa?`<div style="background:#eff6ff;border-radius:6px;padding:8px 12px;margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">
         <div><span style="color:#6b7280">Tasa del día:</span> <strong style="color:#1d4ed8">RD$ ${parseFloat(pago.tasa||0).toFixed(2)}</strong></div>
         <div><span style="color:#6b7280">Equiv. RD$:</span> <strong style="color:#16a34a">${fmt(pago.equivRD||0)}</strong></div>
       </div>`:''}
-      <div class="resumen-row"><span>💳 Cuenta de Ingreso</span><span style="font-weight:700;color:#2563eb">${escHtml(pago.cuenta||'—')}</span></div>
       <div class="saldo-box"><span>${esSaldado?'✅ Cuenta Saldada':'⏳ Saldo Pendiente (esta cuenta)'}</span><span>${fV(cxc.saldo||0)}</span></div>
     </div>
     ${(()=>{
