@@ -619,7 +619,7 @@ function calcResumenMesJEYCO(mesStr,tasa){
   const vm=DB.ventas.filter(v=>v.fecha?.startsWith(mesStr));
   const gm=DB.gastos.filter(g=>g.fecha?.startsWith(mesStr));
   const pm=(DB.nominaPagos||[]).filter(p=>p.mes===mesStr);
-  const beneficio=vm.reduce((a,v)=>a+(v.moneda==='USD'?parseFloat(v.ganancia||0)*tasa:parseFloat(v.ganancia||0)),0);
+  const beneficio=vm.reduce((a,v)=>a+parseFloat(v.ganancia||0),0);
   const gastosBase=gm.reduce((a,g)=>a+parseFloat(g.monto||0),0);
   const nomina=pm.reduce((a,p)=>a+parseFloat(p.monto||0),0);
   const interesesMes=(DB.prestamos||[]).reduce((a,p)=>{
@@ -4421,8 +4421,8 @@ async function exportarInformeWord(){
   const ventasMes=DB.ventas.filter(v=>v.fecha?.startsWith(mes));
   const gastosMes=DB.gastos.filter(g=>g.fecha?.startsWith(mes));
   const pagosMes=(DB.nominaPagos||[]).filter(p=>p.mes===mes);
-  const totalVentas=ventasMes.reduce((a,v)=>a+(v.moneda==='USD'?parseFloat(v.precioVenta||0)*tasa:parseFloat(v.precioVenta||0)),0);
-  const totalGananciaVentas=ventasMes.reduce((a,v)=>a+(v.moneda==='USD'?parseFloat(v.ganancia||0)*tasa:parseFloat(v.ganancia||0)),0);
+  const totalVentas=ventasMes.reduce((a,v)=>a+parseFloat(v.precioVenta||0),0);
+  const totalGananciaVentas=ventasMes.reduce((a,v)=>a+parseFloat(v.ganancia||0),0);
   const totalGastosMes=gastosMes.reduce((a,g)=>a+parseFloat(g.monto||0),0);
   const totalNominaMes=pagosMes.reduce((a,p)=>a+parseFloat(p.monto||0),0);
 
@@ -4533,6 +4533,14 @@ async function exportarInformeWord(){
     if(rd>0)return fmt(rd);
     return'—';
   };
+
+  // Gastos de empresa del mes — acumulado por suplidor
+  const gastosPorSuplidor={};
+  gastosMes.forEach(g=>{
+    const key=g.suplidor||'Sin suplidor';
+    gastosPorSuplidor[key]=(gastosPorSuplidor[key]||0)+parseFloat(g.monto||0);
+  });
+  const gastosSuplidorList=Object.entries(gastosPorSuplidor).sort((a,b)=>b[1]-a[1]);
 
   // Resumen ejecutivo — cuentas por cobrar separadas por moneda
   const cxcPendRD=cxcPend.filter(x=>(x.moneda||'RD$')==='RD$').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
@@ -4722,11 +4730,11 @@ async function exportarInformeWord(){
         <td><div class="l">En EEUU</div><div class="v">${vEEUU.length}</div></td>
         <td><div class="l">En Tránsito</div><div class="v">${vTransito.length}</div></td>
       </tr></table>
-      <p class="rep-note" style="margin-top:12px">Monto e inversión acumulada por vehículo (costo + gastos metidos desde que entró, no solo los del mes):</p>
+      <p class="rep-note" style="margin-top:12px">Costo total acumulado por vehículo (costo + gastos metidos desde que entró, no solo los del mes):</p>
       <table class="rep-table">
-        <thead><tr><th>Código</th><th>Vehículo</th><th>Año</th><th>Estado</th><th class="num">Costo</th><th class="num">Gastos Acum.</th><th class="num">Inversión Total</th></tr></thead>
-        <tbody>${inventarioDetalle.map(({v,gastosVeh,total})=>`<tr><td>${escHtml(v.codigo||'')}</td><td>${escHtml((v.marca||'')+' '+(v.modelo||''))}</td><td>${v.anio||''}</td><td>${escHtml(v.status||'')}</td><td class="num">${fmt(v.costo)}</td><td class="num">${fmt(gastosVeh)}</td><td class="num" style="font-weight:600">${fmt(total)}</td></tr>`).join('')||'<tr><td colspan="7">Sin vehículos en inventario</td></tr>'}
-        ${inventarioDetalle.length?`<tr class="total"><td colspan="4">Total en inventario</td><td class="num">${fmt(totalInvCosto)}</td><td class="num">${fmt(totalInvGastos)}</td><td class="num">${fmt(totalInvTotal)}</td></tr>`:''}</tbody>
+        <thead><tr><th>Código</th><th>Vehículo</th><th>Año</th><th>Estado</th><th class="num">Costo Total del Vehículo</th></tr></thead>
+        <tbody>${inventarioDetalle.map(({v,total})=>`<tr><td>${escHtml(v.codigo||'')}</td><td>${escHtml((v.marca||'')+' '+(v.modelo||''))}</td><td>${v.anio||''}</td><td>${escHtml(v.status||'')}</td><td class="num" style="font-weight:600">${fmt(total)}</td></tr>`).join('')||'<tr><td colspan="5">Sin vehículos en inventario</td></tr>'}
+        ${inventarioDetalle.length?`<tr class="total"><td colspan="4">Total en inventario</td><td class="num">${fmt(totalInvTotal)}</td></tr>`:''}</tbody>
       </table>
     </div>
   </div>
@@ -4734,21 +4742,21 @@ async function exportarInformeWord(){
   <br clear="all" style="page-break-before:always">
   <div class="rep-page">
     <div class="rep-sec">
-      <div class="rep-sec-head"><h3>Gastos de empresa — detalle por gasto</h3><span class="rep-tag close">Del mes</span></div>
+      <div class="rep-sec-head"><h3>Gastos de empresa — acumulado por suplidor</h3><span class="rep-tag close">Del mes</span></div>
       ${tieneGraficoGastosCat?'<p align="center"><img src="cid:graficoGastosCat" width="560" height="'+Math.max(200,40+numCategoriasGastos*18)+'"></p>':''}
       <table class="rep-table">
-        <thead><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Suplidor</th><th class="num">Monto</th></tr></thead>
-        <tbody>${gastosMes.map(g=>`<tr><td>${fmtDate(g.fecha)}</td><td>${escHtml(g.categoria||'')}</td><td>${escHtml(g.descripcion||'')}</td><td>${escHtml(g.suplidor||'—')}</td><td class="num">${fmt(g.monto)}</td></tr>`).join('')||'<tr><td colspan="5">Sin gastos en este período</td></tr>'}
-        ${gastosMes.length?`<tr class="total"><td colspan="4">Total del mes</td><td class="num">${fmt(totalGastosMes)}</td></tr>`:''}</tbody>
+        <thead><tr><th>Suplidor</th><th class="num">Total Gastado</th></tr></thead>
+        <tbody>${gastosSuplidorList.map(([nombre,total])=>`<tr><td style="font-weight:700">${escHtml(nombre)}</td><td class="num">${fmt(total)}</td></tr>`).join('')||'<tr><td colspan="2">Sin gastos en este período</td></tr>'}
+        ${gastosSuplidorList.length?`<tr class="total"><td>Total del mes</td><td class="num">${fmt(totalGastosMes)}</td></tr>`:''}</tbody>
       </table>
     </div>
 
     <div class="rep-sec">
       <div class="rep-sec-head"><h3>Nómina — detalle por empleado</h3><span class="rep-tag close">Del mes</span></div>
       <table class="rep-table">
-        <thead><tr><th>Empleado</th><th>Cargo</th><th class="num">Salario</th><th class="num">Pagado en el mes</th></tr></thead>
-        <tbody>${nominaDetalle.map(({e,pagado})=>`<tr><td style="font-weight:700">${escHtml(e.nombre)}</td><td>${escHtml(e.cargo||'—')}</td><td class="num">${fmt(e.salario)}</td><td class="num ${pagado>0?'pos':''}">${fmt(pagado)}</td></tr>`).join('')||'<tr><td colspan="4">Sin empleados activos</td></tr>'}
-        ${nominaDetalle.length?`<tr class="total"><td colspan="2">Total</td><td class="num">${fmt(totalNominaSalarios)}</td><td class="num">${fmt(totalNominaMes)}</td></tr>`:''}</tbody>
+        <thead><tr><th>Empleado</th><th>Cargo</th><th class="num">Pagado en el mes</th></tr></thead>
+        <tbody>${nominaDetalle.map(({e,pagado})=>`<tr><td style="font-weight:700">${escHtml(e.nombre)}</td><td>${escHtml(e.cargo||'—')}</td><td class="num ${pagado>0?'pos':''}">${fmt(pagado)}</td></tr>`).join('')||'<tr><td colspan="3">Sin empleados activos</td></tr>'}
+        ${nominaDetalle.length?`<tr class="total"><td colspan="2">Total</td><td class="num">${fmt(totalNominaMes)}</td></tr>`:''}</tbody>
       </table>
     </div>
   </div>
