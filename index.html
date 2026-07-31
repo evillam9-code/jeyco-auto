@@ -4435,8 +4435,16 @@ async function exportarInformeWord(){
   const ventasMes=DB.ventas.filter(v=>v.fecha?.startsWith(mes));
   const gastosMes=DB.gastos.filter(g=>g.fecha?.startsWith(mes));
   const pagosMes=(DB.nominaPagos||[]).filter(p=>p.mes===mes);
-  const totalVentas=ventasMes.reduce((a,v)=>a+parseFloat(v.precioVenta||0),0);
-  const totalGananciaVentas=ventasMes.reduce((a,v)=>a+parseFloat(v.ganancia||0),0);
+  // Venta y costo en RD$ por vehículo — NO se usa v.ganancia directamente porque en ventas
+  // en USD ese campo se guarda como (precio en USD) − (costo en RD$), una resta de monedas
+  // distintas sin convertir. v.costoVehiculo sí está en RD$ (viene de los gastos del vehículo).
+  const ventasMesCalc=ventasMes.map(v=>{
+    const ventaRD=aRD(v.precioVenta||0,v.moneda,v.tasaCambio||tasa);
+    const costoRD=parseFloat(v.costoVehiculo||0);
+    return{v,ventaRD,costoRD,gananciaRD:ventaRD-costoRD};
+  });
+  const totalVentas=ventasMesCalc.reduce((a,x)=>a+x.ventaRD,0);
+  const totalGananciaVentas=ventasMesCalc.reduce((a,x)=>a+x.gananciaRD,0);
   const totalGastosMes=gastosMes.reduce((a,g)=>a+parseFloat(g.monto||0),0);
   const totalNominaMes=pagosMes.reduce((a,p)=>a+parseFloat(p.monto||0),0);
 
@@ -4699,9 +4707,14 @@ async function exportarInformeWord(){
       <div class="rep-sec-head"><h3>Ventas del mes — detalle por vehículo</h3><span class="rep-tag close">Del mes</span></div>
       <table class="rep-table">
         <thead><tr><th>Código</th><th>Vehículo</th><th class="num">Gastos</th><th class="num">Venta</th><th class="num">Beneficio</th></tr></thead>
-        <tbody>${ventasMes.map(v=>{const gastosVenta=parseFloat(v.precioVenta||0)-parseFloat(v.ganancia||0);return`<tr><td>${escHtml(v.codigo||'')}</td><td style="font-weight:700">${escHtml(v.vehiculo||'')}</td><td class="num">${fmt(gastosVenta)}</td><td class="num">${fmt(v.precioVenta)}</td><td class="num pos">${fmt(v.ganancia)}</td></tr>`;}).join('')||'<tr><td colspan="5">Sin ventas en este período</td></tr>'}
-        ${ventasMes.length?`<tr class="total"><td colspan="2">Total del mes</td><td class="num">${fmt(totalVentas-totalGananciaVentas)}</td><td class="num">${fmt(totalVentas)}</td><td class="num">${fmt(totalGananciaVentas)}</td></tr>`:''}</tbody>
+        <tbody>${ventasMesCalc.map(({v,ventaRD,costoRD,gananciaRD})=>{
+          const esUSD=v.moneda==='USD';
+          const ventaCell=esUSD?`${fmt(ventaRD)}<br><span style="font-size:9px;color:#5b6472">$${parseFloat(v.precioVenta||0).toLocaleString('en-US',{minimumFractionDigits:2})} USD</span>`:fmt(ventaRD);
+          return`<tr><td>${escHtml(v.codigo||'')}</td><td style="font-weight:700">${escHtml(v.vehiculo||'')}</td><td class="num">${fmt(costoRD)}</td><td class="num">${ventaCell}</td><td class="num pos">${fmt(gananciaRD)}</td></tr>`;
+        }).join('')||'<tr><td colspan="5">Sin ventas en este período</td></tr>'}
+        ${ventasMesCalc.length?`<tr class="total"><td colspan="2">Total del mes</td><td class="num">${fmt(totalVentas-totalGananciaVentas)}</td><td class="num">${fmt(totalVentas)}</td><td class="num">${fmt(totalGananciaVentas)}</td></tr>`:''}</tbody>
       </table>
+      <p class="rep-note" style="margin-top:8px">Las ventas en dólares se muestran convertidas a RD$ (con el monto original en USD debajo), a la tasa de la venta (${fmt(tasa)} por USD por defecto).</p>
     </div>
   </div>
 
