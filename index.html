@@ -1673,7 +1673,7 @@ function showPage(id){
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   const sb=document.getElementById('sidebar');const ov=document.getElementById('sidebar-overlay');
   if(sb&&window.innerWidth<=768){sb.classList.remove('open');if(ov)ov.classList.remove('open');}
-  const r={dashboard:renderDashboard,inventario:renderInventario,ventas:renderVentas,cotizaciones:renderCotizaciones,clientes:renderClientes,suplidores:renderSuplidores,caja:renderCaja,consultaCuentas:renderConsultaCuentas,gastos:renderGastos,nomina:renderNomina,informes:renderInformes,usuarios:renderUsuarios,config:renderConfig,gastosVeh:renderGastosVeh,cxp:renderCXP,cxc:renderCXC,autorizaciones:renderAutorizaciones,seguros:renderSeguros,facturaExterna:renderFacturaExterna,alertas:renderAlertas,chat:renderChat,cumpleanos:renderCumpleanos,cuentas:renderCuentas,backup:renderBackup,bitacora:renderBitacora,prestamos:renderPrestamos,consultas:renderConsultas};
+  const r={dashboard:renderDashboard,inventario:renderInventario,ventas:renderVentas,cotizaciones:renderCotizaciones,clientes:renderClientes,suplidores:renderSuplidores,caja:renderCaja,consultaCuentas:renderConsultaCuentas,gastos:renderGastos,nomina:renderNomina,informes:renderInformes,usuarios:renderUsuarios,config:renderConfig,gastosVeh:renderGastosVeh,cxp:renderCXP,cxc:renderCXC,autorizaciones:renderAutorizaciones,seguros:renderSeguros,facturaExterna:renderFacturaExterna,alertas:renderAlertas,chat:renderChat,cumpleanos:renderCumpleanos,cuentas:renderCuentas,backup:renderBackup,bitacora:renderBitacora,prestamos:renderPrestamos,activosFijos:renderActivosFijos,consultas:renderConsultas};
   // Refresh Firebase si han pasado más de 60 segundos
   const ahora=Date.now();
   if(window._fbActivo&&window._fbCargado&&(!window._lastFbRefresh||ahora-window._lastFbRefresh>60000)){
@@ -5776,7 +5776,17 @@ let prestamoSelectedId=null;
 function renderPrestamos(){
   const pg=document.getElementById('page-prestamos');
   if(!pg)return;
-  const prestamos=DB.prestamos||[];
+  const filtroHasta=document.getElementById('prest-filtro-hasta')?.value||'';
+  // Fecha de corte opcional: recalcula el saldo pendiente "al" esa fecha usando el historial
+  // de pagos (igual criterio que CxC/CxP/Consultas/Informe), para que un pago hecho DESPUÉS
+  // de la fecha de corte no reduzca el saldo que se reporta a esa fecha.
+  let prestamos=DB.prestamos||[];
+  if(filtroHasta){
+    prestamos=prestamos.filter(p=>!p.fecha||p.fecha<=filtroHasta).map(p=>{
+      const saldo=saldoPrestamoAFecha(p,filtroHasta);
+      return{...p,saldo,status:saldo<=0.01?'PAGADO':'ACTIVO'};
+    });
+  }
   const activos=prestamos.filter(p=>p.status!=='PAGADO');
   const totalDeuda=activos.reduce((a,p)=>a+parseFloat(p.saldo||0),0);
   const tasa=parseFloat(DB.config.tasaCambio||60);
@@ -5786,8 +5796,11 @@ function renderPrestamos(){
   const ds='background:#e2e8f0;color:#adb5bd;cursor:not-allowed;border:1px solid #dee2e6';
   pg.innerHTML=`
     <div class="page-header">
-      <div><h1>🏦 Préstamos Bancos</h1><p>${activos.length} préstamos activos — Deuda total: ${fmt(deudaCombinada)}</p></div>
+      <div><h1>🏦 Préstamos Bancos</h1><p>${activos.length} préstamos activos — Deuda total: ${fmt(deudaCombinada)}${filtroHasta?` <span style="color:var(--gray)">— al ${fmtDate(filtroHasta)}</span>`:''}</p></div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <input type="date" id="prest-filtro-hasta" value="${filtroHasta}" onchange="renderPrestamos()" title="Saldo al (fecha de corte) — un pago después de esta fecha no reduce el saldo mostrado. Vacío = saldo actual." style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
+        ${filtroHasta?`<button class="btn btn-secondary btn-sm" onclick="document.getElementById('prest-filtro-hasta').value='';renderPrestamos()" title="Quitar fecha de corte">🔄</button>`:''}
+        <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
         <button id="prest-btn-historial" disabled class="btn btn-sm" style="${ds}" onclick="prestamoAccion('historial')">👁 Historial</button>
         ${(currentUser?.role==='admin'||canDo('editar'))?`<button id="prest-btn-editar" disabled class="btn btn-sm" style="${ds}" onclick="prestamoAccion('editar')">✏️ Editar</button>`:''}
         ${(currentUser?.role==='admin'||canDo('eliminar'))?`<button id="prest-btn-eliminar" disabled class="btn btn-sm" style="${ds}" onclick="prestamoAccion('eliminar')">🗑 Eliminar</button>`:''}
@@ -10674,11 +10687,20 @@ function renderCXP(){
   const filtroSup=document.getElementById('cxp-filtro-sup')?.value||'';
   const filtroVeh=document.getElementById('cxp-filtro-veh')?.value||'';
   const filtroMoneda=document.getElementById('cxp-filtro-moneda')?.value||'';
+  const filtroHasta=document.getElementById('cxp-filtro-hasta')?.value||'';
 
-  // Combinar gastos de vehículos con pendiente + CXP manuales pendientes
-  const gastosVehPend=(DB.gastosVehiculos||[]).filter(g=>parseFloat(g.montoPendiente||0)>0).map(g=>({...g,_origen:'auto'}));
-  const cxpManuales=(DB.cxp||[]).filter(g=>parseFloat(g.montoPendiente||0)>0).map(g=>({...g,_origen:'manual'}));
-  let gastosPend=[...gastosVehPend,...cxpManuales];
+  // Combinar gastos de vehículos con pendiente + CXP manuales pendientes. Con fecha de corte
+  // (filtroHasta), el pendiente se recalcula "al" esa fecha usando el historial de pagos —
+  // igual criterio que CxC/Préstamos/Consultas/Informe — para que un pago hecho DESPUÉS de
+  // la fecha de corte no reduzca el pendiente que se reporta a esa fecha.
+  const fechaCorteCxp=filtroHasta||today();
+  let gastosPend=[
+    ...(DB.gastosVehiculos||[]).map(g=>({...g,_origen:'auto'})),
+    ...(DB.cxp||[]).map(g=>({...g,_origen:'manual'}))
+  ]
+    .filter(g=>!g.fecha||g.fecha<=fechaCorteCxp)
+    .map(g=>({...g,montoPendiente:pendienteGastoAFecha(g,fechaCorteCxp)}))
+    .filter(g=>g.montoPendiente>0.01);
   if(filtroSup)gastosPend=gastosPend.filter(g=>g.suplidor===filtroSup);
   if(filtroVeh)gastosPend=gastosPend.filter(g=>g.vehiculoId===filtroVeh||g.vehiculo===filtroVeh);
   if(filtroMoneda)gastosPend=gastosPend.filter(g=>(g.moneda||'RD$')===filtroMoneda);
@@ -10699,7 +10721,7 @@ function renderCXP(){
   document.getElementById('page-cxp').innerHTML=`
     <div class="page-header">
       <div><h1>📑 Cuentas por Pagar — Vehículos</h1>
-        <p>${gastosPend.length} pendiente(s) — RD$: <strong style="color:var(--red)">${totalPendRD.toLocaleString('es-DO',{minimumFractionDigits:2})}</strong> | USD: <strong style="color:var(--blue)">$${totalPendUSD.toLocaleString('en-US',{minimumFractionDigits:2})}</strong></p>
+        <p>${gastosPend.length} pendiente(s) — RD$: <strong style="color:var(--red)">${totalPendRD.toLocaleString('es-DO',{minimumFractionDigits:2})}</strong> | USD: <strong style="color:var(--blue)">$${totalPendUSD.toLocaleString('en-US',{minimumFractionDigits:2})}</strong>${filtroHasta?` <span style="color:var(--gray)">— al ${fmtDate(filtroHasta)}</span>`:''}</p>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-secondary btn-sm" onclick="imprimirCXP()">📄 Exportar PDF</button>
@@ -10712,7 +10734,7 @@ function renderCXP(){
       <span>Las cuentas por pagar se generan automáticamente al registrar gastos de vehículo con saldo pendiente.</span>
     </div>
     <div class="card" style="margin-bottom:16px">
-      <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end">
+      <div style="display:grid;grid-template-columns:1fr 1fr auto auto;gap:12px;align-items:end">
         <div style="display:flex;flex-direction:column;gap:4px">
           <label style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gray)">Suplidor</label>
           <select id="cxp-filtro-sup" onchange="renderCXP()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
@@ -10727,8 +10749,12 @@ function renderCXP(){
             ${DB.vehiculos.filter(v=>(DB.gastosVehiculos||[]).some(g=>g.vehiculoId===v.id&&parseFloat(g.montoPendiente||0)>0)).map(v=>`<option value="${v.id}" ${v.id===filtroVeh?'selected':''}>${escHtml(v.codigo)} — ${escHtml(v.marca)} ${escHtml(v.modelo)}</option>`).join('')}
           </select>
         </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <label style="font-size:10px;font-weight:700;text-transform:uppercase;color:var(--gray)">Pendiente al (corte)</label>
+          <input type="date" id="cxp-filtro-hasta" value="${filtroHasta}" onchange="renderCXP()" title="Pendiente al (fecha de corte) — un pago después de esta fecha no reduce el pendiente mostrado. Vacío = pendiente actual." style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
+        </div>
         <div><input type="hidden" id="cxp-filtro-moneda" value="${filtroMoneda}">
-          <button class="btn btn-secondary" onclick="document.getElementById('cxp-filtro-sup').value='';document.getElementById('cxp-filtro-veh').value='';renderCXP()">🔄 Limpiar</button>
+          <button class="btn btn-secondary" onclick="document.getElementById('cxp-filtro-sup').value='';document.getElementById('cxp-filtro-veh').value='';document.getElementById('cxp-filtro-hasta').value='';renderCXP()">🔄 Limpiar</button>
         </div>
       </div>
     </div>
@@ -11413,10 +11439,23 @@ function renderCXC(){
 
   const filtroMoneda=document.getElementById('cxc-filtro-moneda')?.value||'RD$';
   const filtroStatus=document.getElementById('cxc-filtro-status')?.value||'PENDIENTE';
+  const filtroHasta=document.getElementById('cxc-filtro-hasta')?.value||'';
   const tasa=parseFloat(DB.config.tasaCambio||60);
   const ds='background:#e2e8f0;color:#adb5bd;cursor:not-allowed;border:1px solid #dee2e6';
 
-  let items=(DB.cxc||[]).filter(x=>(x.moneda||'RD$')===filtroMoneda);
+  // Fecha de corte opcional: recalcula saldo/abonado/estado "al" esa fecha usando el historial
+  // de pagos (igual criterio que CxP/Préstamos/Consultas/Informe), para que un pago hecho
+  // DESPUÉS de la fecha de corte no reduzca el pendiente que se reporta a esa fecha.
+  let baseCxc=(DB.cxc||[]);
+  if(filtroHasta){
+    baseCxc=baseCxc.filter(x=>!x.fecha||x.fecha<=filtroHasta).map(x=>{
+      const saldo=saldoCXCAFecha(x,filtroHasta);
+      const abonado=parseFloat(x.total||0)-saldo;
+      return{...x,saldo,abonado,status:estadoCXCAFecha(saldo,abonado)};
+    });
+  }
+
+  let items=baseCxc.filter(x=>(x.moneda||'RD$')===filtroMoneda);
   if(filtroStatus==='PENDIENTE')items=items.filter(x=>x.status==='PENDIENTE'||x.status==='PARCIAL');
   else if(filtroStatus!=='TODOS')items=items.filter(x=>x.status===filtroStatus);
 
@@ -11428,7 +11467,7 @@ function renderCXC(){
   const totalPend=items.filter(x=>x.status!=='SALDADO').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
 
   // Total General combinando RD$ + USD (independiente del filtro de moneda de arriba)
-  const cxcTodosPend=(DB.cxc||[]).filter(x=>x.status!=='SALDADO');
+  const cxcTodosPend=baseCxc.filter(x=>x.status!=='SALDADO');
   const cxcPendTodosRD=cxcTodosPend.filter(x=>(x.moneda||'RD$')==='RD$').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
   const cxcPendTodosUSD=cxcTodosPend.filter(x=>x.moneda==='USD').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
   const cxcPendTodosCombinado=cxcPendTodosRD+cxcPendTodosUSD*tasa;
@@ -11436,7 +11475,7 @@ function renderCXC(){
   document.getElementById('page-cxc').innerHTML=`
     <div class="page-header">
       <div><h1>📬 Cuentas por Cobrar</h1>
-        <p>${items.length} cuenta(s) — Pendiente: <strong style="color:var(--amber)">${fV(totalPend)}</strong></p>
+        <p>${items.length} cuenta(s) — Pendiente: <strong style="color:var(--amber)">${fV(totalPend)}</strong>${filtroHasta?` <span style="color:var(--gray)">— al ${fmtDate(filtroHasta)}</span>`:''}</p>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select id="cxc-filtro-moneda" onchange="renderCXC()" style="padding:7px 12px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px;font-weight:700">
@@ -11450,6 +11489,8 @@ function renderCXC(){
           <option value="SALDADO" ${filtroStatus==='SALDADO'?'selected':''}>Saldado</option>
           <option value="TODOS" ${filtroStatus==='TODOS'?'selected':''}>Todos</option>
         </select>
+        <input type="date" id="cxc-filtro-hasta" value="${filtroHasta}" onchange="renderCXC()" title="Saldo al (fecha de corte) — un pago después de esta fecha no reduce el pendiente mostrado. Vacío = saldo actual." style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
+        ${filtroHasta?`<button class="btn btn-secondary btn-sm" onclick="document.getElementById('cxc-filtro-hasta').value='';renderCXC()" title="Quitar fecha de corte">🔄</button>`:''}
         <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
         <button id="cxc-btn-cobrar" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('cobrar')">💵 Registrar Cobro</button>
         <button id="cxc-btn-historial" disabled class="btn btn-sm" style="${ds}" onclick="cxcAccion('historial')">👁 Historial</button>
@@ -11521,6 +11562,7 @@ function renderCXC(){
     </div>`;
   const sm=document.getElementById('cxc-filtro-moneda');if(sm)sm.value=filtroMoneda;
   const ss=document.getElementById('cxc-filtro-status');if(ss)ss.value=filtroStatus;
+  const sh=document.getElementById('cxc-filtro-hasta');if(sh)sh.value=filtroHasta;
 }
 
 function selCXC(id,tr){
