@@ -4503,13 +4503,11 @@ async function exportarInformeWord(){
   const totalGastosConIntereses=totalGastosMes+totalInteresMesConvertido;
   const ganNeta=totalGananciaVentas-totalGastosConIntereses-totalNominaMes;
 
-  // Inventario — al cierre, con inversión acumulada por vehículo (activos + aduana + EEUU + tránsito)
-  const inventarioDetalle=[...vActivos,...vAduana,...vEEUU].map(v=>{
-    const gastosVeh=(DB.gastosVehiculos||[]).filter(g=>g.vehiculoId===v.id).reduce((a,g)=>a+parseFloat(g.montoFactura||g.monto||0),0);
-    return{v,gastosVeh,total:parseFloat(v.costo||0)+gastosVeh};
-  });
-  const totalInvCosto=inventarioDetalle.reduce((a,x)=>a+parseFloat(x.v.costo||0),0);
-  const totalInvGastos=inventarioDetalle.reduce((a,x)=>a+x.gastosVeh,0);
+  // Inventario — al cierre, con inversión acumulada por vehículo (activos + aduana + EEUU).
+  // v.costo YA es la suma acumulada (en RD$) de los gastos del vehículo — se mantiene
+  // sincronizado cada vez que se agrega/edita/elimina un gasto (ver actualizarCostoVeh /
+  // eliminarGastoVeh). Sumarle gastosVehiculos aparte duplicaba el mismo dinero.
+  const inventarioDetalle=[...vActivos,...vAduana,...vEEUU].map(v=>({v,total:parseFloat(v.costo||0)}));
   const totalInvTotal=inventarioDetalle.reduce((a,x)=>a+x.total,0);
 
   // Cuentas por cobrar — acumulado por cliente, separado en Pesos y Dólares
