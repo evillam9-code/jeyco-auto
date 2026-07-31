@@ -4452,7 +4452,8 @@ async function exportarInformeWord(){
   const vActivos=DB.vehiculos.filter(v=>v.status==='ACTIVO');
   const vAduana=DB.vehiculos.filter(v=>v.status==='ADUANA');
   const vEEUU=DB.vehiculos.filter(v=>v.status==='EN EEUU');
-  const vTransito=DB.vehiculos.filter(v=>v.status==='TRÁNSITO');
+  // Nota: v.status='TRÁNSITO' se marca al VENDER el vehículo (pendiente de entrega/traspaso),
+  // no antes — por eso NO cuenta como inventario disponible aquí.
 
   // Nómina — detalle por empleado (del mes)
   const nominaDetalle=(DB.nomina||[]).filter(e=>e.activo).map(e=>{
@@ -4503,7 +4504,7 @@ async function exportarInformeWord(){
   const ganNeta=totalGananciaVentas-totalGastosConIntereses-totalNominaMes;
 
   // Inventario — al cierre, con inversión acumulada por vehículo (activos + aduana + EEUU + tránsito)
-  const inventarioDetalle=[...vActivos,...vAduana,...vEEUU,...vTransito].map(v=>{
+  const inventarioDetalle=[...vActivos,...vAduana,...vEEUU].map(v=>{
     const gastosVeh=(DB.gastosVehiculos||[]).filter(g=>g.vehiculoId===v.id).reduce((a,g)=>a+parseFloat(g.montoFactura||g.monto||0),0);
     return{v,gastosVeh,total:parseFloat(v.costo||0)+gastosVeh};
   });
@@ -4742,7 +4743,6 @@ async function exportarInformeWord(){
         <td class="first"><div class="l">En Inventario</div><div class="v">${vActivos.length}</div></td>
         <td><div class="l">En Aduana</div><div class="v">${vAduana.length}</div></td>
         <td><div class="l">En EEUU</div><div class="v">${vEEUU.length}</div></td>
-        <td><div class="l">En Tránsito</div><div class="v">${vTransito.length}</div></td>
       </tr></table>
       <p class="rep-note" style="margin-top:12px">Costo total acumulado por vehículo (costo + gastos metidos desde que entró, no solo los del mes):</p>
       <table class="rep-table">
