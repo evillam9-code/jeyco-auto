@@ -1783,11 +1783,19 @@ function imprimirDashboard(){
   let gastos=(DB.gastos||[]);
   if(dia){ventas=ventas.filter(v=>v.fecha===dia);gastos=gastos.filter(g=>g.fecha===dia);}
   else if(mes){ventas=ventas.filter(v=>(v.fecha||'').startsWith(mes));gastos=gastos.filter(g=>(g.fecha||'').startsWith(mes));}
-  const totalVentas=ventas.reduce((a,v)=>a+parseFloat(v.precioVenta||0),0);
-  const totalGanancia=ventas.reduce((a,v)=>a+parseFloat(v.ganancia||0),0);
+  const ventasRD=ventas.filter(v=>(v.moneda||'RD$')==='RD$');
+  const ventasUSD=ventas.filter(v=>v.moneda==='USD');
+  const totalVentasRD=ventasRD.reduce((a,v)=>a+parseFloat(v.precioVenta||0),0);
+  const totalVentasUSD=ventasUSD.reduce((a,v)=>a+parseFloat(v.precioVenta||0),0);
+  const totalGananciaRD=ventasRD.reduce((a,v)=>a+parseFloat(v.ganancia||0),0);
+  const totalGananciaUSD=ventasUSD.reduce((a,v)=>a+parseFloat(v.ganancia||0),0);
   const totalGastos=gastos.reduce((a,g)=>a+parseFloat(g.monto||0),0);
-  const cxcPend=(DB.cxc||[]).filter(x=>x.status==='PENDIENTE'||x.status==='PARCIAL').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
-  const cxpPend=(DB.gastosVehiculos||[]).filter(g=>parseFloat(g.montoPendiente||0)>0).reduce((a,g)=>a+parseFloat(g.montoPendiente||0),0);
+  const cxcPendItems=(DB.cxc||[]).filter(x=>x.status==='PENDIENTE'||x.status==='PARCIAL');
+  const cxcPendRD=cxcPendItems.filter(x=>(x.moneda||'RD$')==='RD$').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
+  const cxcPendUSD=cxcPendItems.filter(x=>x.moneda==='USD').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
+  const cxpPendItems=(DB.gastosVehiculos||[]).filter(g=>parseFloat(g.montoPendiente||0)>0);
+  const cxpPendRD=cxpPendItems.filter(g=>(g.moneda||'RD$')==='RD$').reduce((a,g)=>a+parseFloat(g.montoPendiente||0),0);
+  const cxpPendUSD=cxpPendItems.filter(g=>g.moneda==='USD').reduce((a,g)=>a+parseFloat(g.montoPendiente||0),0);
   const win=window.open('','_blank','width=800,height=700');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Resumen Inicio</title>
   <style>body{font-family:Arial,sans-serif;padding:28px;font-size:13px;color:#1e293b}h2{margin:0 0 4px}p{margin:0 0 16px;color:#64748b}table{width:100%;border-collapse:collapse;margin-bottom:20px}th{background:#0f172a;color:#fff;padding:9px 12px;text-align:left;font-size:12px}td{padding:9px 12px;border-bottom:1px solid #e2e8f0}.val{font-weight:700;font-size:15px}.green{color:#16a34a}.red{color:#dc2626}.blue{color:#2563eb}@media print{button{display:none}}</style></head><body>
@@ -1798,11 +1806,15 @@ function imprimirDashboard(){
   <tr><td>Total Vehículos</td><td class="val">${totalVeh}</td></tr>
   <tr><td>Disponibles</td><td class="val blue">${disponibles}</td></tr>
   <tr><td>Vendidos</td><td class="val green">${vendidos}</td></tr>
-  <tr><td>Total Ventas (${ventas.length})</td><td class="val green">${fmt(totalVentas)}</td></tr>
-  <tr><td>Ganancia Neta</td><td class="val green">${fmt(totalGanancia)}</td></tr>
+  <tr><td>Total Ventas RD$ (${ventasRD.length})</td><td class="val green">${fmt(totalVentasRD)}</td></tr>
+  ${ventasUSD.length?`<tr><td>Total Ventas USD (${ventasUSD.length})</td><td class="val green">$${totalVentasUSD.toLocaleString('en-US',{minimumFractionDigits:2})}</td></tr>`:''}
+  <tr><td>Ganancia Neta RD$</td><td class="val green">${fmt(totalGananciaRD)}</td></tr>
+  ${ventasUSD.length?`<tr><td>Ganancia Neta USD</td><td class="val green">$${totalGananciaUSD.toLocaleString('en-US',{minimumFractionDigits:2})}</td></tr>`:''}
   <tr><td>Gastos Empresa</td><td class="val red">${fmt(totalGastos)}</td></tr>
-  <tr><td>CxC Pendiente</td><td class="val red">${fmt(cxcPend)}</td></tr>
-  <tr><td>CxP Pendiente</td><td class="val red">${fmt(cxpPend)}</td></tr>
+  <tr><td>CxC Pendiente RD$</td><td class="val red">${fmt(cxcPendRD)}</td></tr>
+  ${cxcPendUSD?`<tr><td>CxC Pendiente USD</td><td class="val red">$${cxcPendUSD.toLocaleString('en-US',{minimumFractionDigits:2})}</td></tr>`:''}
+  <tr><td>CxP Pendiente RD$</td><td class="val red">${fmt(cxpPendRD)}</td></tr>
+  ${cxpPendUSD?`<tr><td>CxP Pendiente USD</td><td class="val red">$${cxpPendUSD.toLocaleString('en-US',{minimumFractionDigits:2})}</td></tr>`:''}
   </tbody></table>
   <div style="margin-top:24px;text-align:center"><button onclick="window.print()" style="padding:10px 28px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px">🖨️ Imprimir / Guardar PDF</button></div>
   </body></html>`);
@@ -1834,7 +1846,8 @@ function renderDashboard(){
   const cxpPend=(DB.gastosVehiculos||[]).filter(g=>parseFloat(g.montoPendiente||0)>0);
   const cxpRD=cxpPend.filter(g=>(g.moneda||'RD$')==='RD$').reduce((a,g)=>a+parseFloat(g.montoPendiente||0),0);
   const cxpUSD=cxpPend.filter(g=>g.moneda==='USD').reduce((a,g)=>a+parseFloat(g.montoPendiente||0),0);
-  const cxcMonto=cxcPend.reduce((a,x)=>a+parseFloat(x.saldo||0),0);
+  const cxcMontoRD=cxcPend.filter(x=>(x.moneda||'RD$')==='RD$').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
+  const cxcMontoUSD=cxcPend.filter(x=>x.moneda==='USD').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
   // Caja del período
   const cajaMes=filtro?DB.caja.filter(c=>dia?c.fecha===dia:c.fecha?.startsWith(mes)):DB.caja;
   const cajaEntRD=cajaMes.filter(c=>c.tipo==='ENTRADA'&&(c.moneda||'RD$')==='RD$').reduce((a,c)=>a+parseFloat(c.monto||0),0);
@@ -1951,7 +1964,8 @@ function renderDashboard(){
       <div class="card" style="margin-bottom:0;border-top:4px solid ${cxcPend.length>0?'var(--amber)':'var(--green)'};cursor:pointer" onclick="showPage('cxc')">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gray);margin-bottom:8px">📬 Por Cobrar</div>
         <div style="font-size:28px;font-weight:900;color:var(--amber)">${cxcPend.length}</div>
-        <div style="font-size:11px;color:var(--gray);margin-top:4px">${cxcMonto.toLocaleString('es-DO',{minimumFractionDigits:2})} pendiente</div>
+        ${cxcMontoRD>0?`<div style="font-size:11px;color:var(--gray)">RD$ ${cxcMontoRD.toLocaleString('es-DO',{minimumFractionDigits:2})}</div>`:''}
+        ${cxcMontoUSD>0?`<div style="font-size:11px;color:var(--blue)">$${cxcMontoUSD.toLocaleString('en-US',{minimumFractionDigits:2})} USD</div>`:''}
       </div>
       <div class="card" style="margin-bottom:0;border-top:4px solid ${cxpPend.length>0?'var(--red)':'var(--green)'};cursor:pointer" onclick="showPage('cxp')">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--gray);margin-bottom:8px">📑 Por Pagar</div>
@@ -8500,6 +8514,13 @@ function renderVentas(){
         <div class="stat-value">${ventasFilt.filter(v=>v.estadoVenta==='VENDIDO').length}</div>
         <div class="stat-sub">En tránsito: ${ventasFilt.filter(v=>v.estadoVenta==='TRÁNSITO').length}</div>
       </div>
+    </div>
+    <div class="card" style="margin-bottom:16px;border-top:3px solid var(--navy)">
+      <div class="card-title">🧮 Total General de Ventas (Pesos + Dólares)</div>
+      <div class="table-wrap"><table><thead><tr><th>Pesos (RD$)</th><th>Dólares (USD)</th><th>Total General</th></tr></thead><tbody>
+        <tr><td style="font-weight:700">${fmt(ventasFilt.filter(v=>(v.moneda||'RD$')==='RD$').reduce((a,v)=>a+parseFloat(v.precioVenta||0),0))}</td><td style="font-weight:700">${totalUSD?fmtUSD(totalUSD):'—'}</td><td style="font-weight:800;color:var(--green)">${fmt(totalV)}</td></tr>
+      </tbody></table></div>
+      <p style="font-size:11px;color:var(--gray);margin-top:8px">Total General combina Pesos + Dólares a la tasa de cada venta (${fmt(tasa)} por USD por defecto). Cuadra con el Informe Mensual y Consultas a la misma fecha.</p>
     </div>
     <!-- TABS: Ventas / Entregas -->
     <div style="display:flex;gap:0;margin-bottom:0;border-bottom:2px solid var(--gray3)">
