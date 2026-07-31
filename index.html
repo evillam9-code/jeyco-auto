@@ -320,6 +320,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
       <div class="page" id="page-usuarios"></div>
       <div class="page" id="page-alertas"></div>
       <div class="page" id="page-prestamos"></div>
+      <div class="page" id="page-activosFijos"></div>
       <div class="page" id="page-consultaCuentas"></div>
       <div class="page" id="page-config"></div>
       <div class="page" id="page-gastosVeh"></div>
@@ -371,6 +372,7 @@ const MENU_DEFS=[
   {id:'caja',       label:'Caja',                 ico:'💳', secDef:'FINANZAS'},
   {id:'consultaCuentas',label:'Consulta de Cuentas', ico:'🧾', secDef:'FINANZAS'},
   {id:'prestamos',  label:'Préstamos Bancos',     ico:'🏦', secDef:'FINANZAS'},
+  {id:'activosFijos',label:'Activos Fijos',       ico:'🏛️', secDef:'FINANZAS'},
   {id:'cotizaciones',label:'Cotizaciones',         ico:'📋', secDef:'OTROS'},
   {id:'autorizaciones',label:'Autorización Compra',ico:'📝',secDef:'OTROS'},
   {id:'seguros',    label:'Seguros',              ico:'🛡️', secDef:'OTROS'},
@@ -427,6 +429,7 @@ let DB={
   autorizaciones:ls('autorizaciones')||[],
   seguros:ls('seguros')||[],
   prestamos:ls('prestamos')||[],
+  activosFijos:ls('activosFijos')||[],
   facturasExternas:ls('facturasExternas')||[],
   chat:ls('chat')||{},
   presencia:ls('presencia')||{},
@@ -459,6 +462,221 @@ function fmtEquivalente(n,moneda,tasa){
 const today=()=>new Date().toISOString().split('T')[0];
 const fmtDate=d=>{if(!d)return '—';try{return new Date(d+'T12:00:00').toLocaleDateString('es-DO',{day:'2-digit',month:'short',year:'numeric'})}catch{return d}};
 const uid=()=>'id'+Date.now()+Math.random().toString(36).slice(2,6);
+// ── Reconstrucción de saldos "a una fecha de corte" (usa el historial de pagos con fecha) ──
+// Se usan en CxP, CxC, Préstamos y en el Informe Mensual para que, filtrando la misma fecha,
+// todos los módulos den el mismo número (no cuentan pagos posteriores a la fecha).
+function pendienteGastoAFecha(g,fechaCorte){
+  fechaCorte=fechaCorte||today();
+  if(g.pagos&&g.pagos.length){
+    const factura=parseFloat(g.montoFactura||g.monto||0);
+    const pagado=g.pagos.filter(p=>p.fecha&&p.fecha<=fechaCorte).reduce((a,p)=>a+parseFloat(p.monto||0),0);
+    return factura-pagado;
+  }
+  return parseFloat(g.montoPendiente||0);
+}
+function pagadoGastoAFecha(g,fechaCorte){
+  fechaCorte=fechaCorte||today();
+  if(g.pagos&&g.pagos.length)return g.pagos.filter(p=>p.fecha&&p.fecha<=fechaCorte).reduce((a,p)=>a+parseFloat(p.monto||0),0);
+  return parseFloat(g.montoPagado||0);
+}
+function estadoGastoAFecha(pendiente,pagado){
+  if(pendiente<=0.01)return 'SALDADO';
+  if(pagado>0.01)return 'ABONADO';
+  return 'PENDIENTE';
+}
+function saldoCXCAFecha(x,fechaCorte){
+  fechaCorte=fechaCorte||today();
+  if(x.pagos&&x.pagos.length){
+    const total=parseFloat(x.total||0);
+    const pagado=x.pagos.filter(p=>p.fecha&&p.fecha<=fechaCorte).reduce((a,p)=>a+parseFloat(p.monto||0),0);
+    return total-pagado;
+  }
+  return parseFloat(x.saldo||0);
+}
+function estadoCXCAFecha(saldo,abonado){
+  if(saldo<=0.01)return 'SALDADO';
+  if(abonado>0.01)return 'PARCIAL';
+  return 'PENDIENTE';
+}
+function saldoPrestamoAFecha(p,fechaCorte){
+  fechaCorte=fechaCorte||today();
+  if(p.pagos&&p.pagos.length){
+    const original=parseFloat(p.monto||0);
+    const capital=p.pagos.filter(pg=>pg.fecha&&pg.fecha<=fechaCorte).reduce((a,pg)=>a+parseFloat(pg.capital||0),0);
+    return Math.max(0,original-capital);
+  }
+  return parseFloat(p.saldo||0);
+}
+// ── Exportación a Word (.doc) ──
+function descargarWord(bodyHtml,filename,extraStyle){
+  const html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>'+(extraStyle||'')+'</style></head><body>'+bodyHtml+'</body></html>';
+  const blob=new Blob(['﻿',html],{type:'application/msword'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+// Igual que descargarWord, pero incrusta imágenes como partes MIME referenciadas por cid:
+// en vez de data-URI — más confiable para que Word las muestre bajo Vista Protegida.
+// imagenes: [{cid, mime, base64}] (base64 SIN el prefijo "data:...;base64,")
+function descargarWordConImagenes(bodyHtml,filename,extraStyle,imagenes){
+  const boundary='----=_NextPart_JEYCO_'+Date.now();
+  const html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>'+(extraStyle||'')+'</style></head><body>'+bodyHtml+'</body></html>';
+  let mime='MIME-Version: 1.0\r\nContent-Type: multipart/related; boundary="'+boundary+'"\r\n\r\n';
+  mime+='--'+boundary+'\r\nContent-Type: text/html; charset="utf-8"\r\nContent-Transfer-Encoding: 8bit\r\n\r\n';
+  mime+=html+'\r\n\r\n';
+  (imagenes||[]).forEach(img=>{
+    mime+='--'+boundary+'\r\nContent-Type: '+img.mime+'\r\nContent-Transfer-Encoding: base64\r\nContent-ID: <'+img.cid+'>\r\nContent-Location: '+img.cid+'\r\n\r\n';
+    mime+=img.base64+'\r\n\r\n';
+  });
+  mime+='--'+boundary+'--\r\n';
+  const blob=new Blob([mime],{type:'application/msword'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+function _redimensionarLogoParaWord(dataUri,targetDisplayPx){
+  return new Promise(resolve=>{
+    if(!dataUri){resolve(null);return;}
+    const img=new Image();
+    img.onload=()=>{
+      const RES_MAX=240;
+      let w=img.naturalWidth||RES_MAX,h=img.naturalHeight||RES_MAX;
+      if(w>RES_MAX||h>RES_MAX){
+        const ratio=Math.min(RES_MAX/w,RES_MAX/h);
+        w=Math.round(w*ratio);h=Math.round(h*ratio);
+      }
+      const canvas=document.createElement('canvas');
+      canvas.width=w;canvas.height=h;
+      const ctx=canvas.getContext('2d');
+      ctx.drawImage(img,0,0,w,h);
+      const dispScale=targetDisplayPx/Math.max(w,h);
+      resolve({src:canvas.toDataURL('image/png'),w:Math.round(w*dispScale),h:Math.round(h*dispScale)});
+    };
+    img.onerror=()=>resolve(null);
+    img.src=dataUri;
+  });
+}
+// ══ GRÁFICOS DEL INFORME (canvas → PNG, para embeber en Word) ══
+function _nuevoCanvasGrafico(w,h){
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='#fbfaf7';ctx.fillRect(0,0,w,h);
+  return{c,ctx};
+}
+function _pngBase64(canvas){return canvas.toDataURL('image/png').split(',')[1];}
+function graficoPastelWord(labels,valores,titulo){
+  const w=560,h=Math.max(200,40+labels.length*18),cx=140,cy=h/2,r=110;
+  const{c,ctx}=_nuevoCanvasGrafico(w,h);
+  ctx.font='bold 13px Arial';ctx.fillStyle='#1c2230';ctx.fillText(titulo,20,20);
+  const total=valores.reduce((a,v)=>a+v,0)||1;
+  const colores=['#1c2456','#9a7b3f','#3f6b4e','#9c3b32','#5b6472','#7c9cbf','#c9a35a','#6d5a8c','#4a8a7d','#b3552f'];
+  let ang=-Math.PI/2;
+  valores.forEach((v,i)=>{
+    const slice=(v/total)*Math.PI*2;
+    ctx.fillStyle=colores[i%colores.length];
+    ctx.beginPath();ctx.moveTo(cx,cy);ctx.arc(cx,cy,r,ang,ang+slice);ctx.closePath();ctx.fill();
+    ang+=slice;
+  });
+  let ly=44;
+  ctx.font='10px Arial';ctx.textAlign='left';
+  labels.forEach((lb,i)=>{
+    ctx.fillStyle=colores[i%colores.length];ctx.fillRect(300,ly-9,10,10);
+    ctx.fillStyle='#1c2230';
+    const pct=((valores[i]/total)*100).toFixed(0);
+    ctx.fillText((lb.length>16?lb.slice(0,16)+'…':lb)+' — '+pct+'%',314,ly);
+    ly+=18;
+  });
+  return c;
+}
+function graficoBarrasHorizontalesWord(labels,valores,titulo,color){
+  const w=680,h=Math.max(220,50+labels.length*26),padL=180,padR=90,padT=34;
+  const{c,ctx}=_nuevoCanvasGrafico(w,h);
+  ctx.font='bold 13px Arial';ctx.fillStyle='#1c2230';ctx.fillText(titulo,20,20);
+  const max=Math.max(...valores,1);
+  const plotW=w-padL-padR;
+  const paletaDefecto=['#1c2456','#3f6b4e','#7c9cbf','#9a7b3f','#9c3b32','#6d5a8c','#4a8a7d','#b3552f'];
+  const colores=Array.isArray(color)?color:(color?[color]:paletaDefecto);
+  labels.forEach((lb,i)=>{
+    const yb=padT+i*26;
+    const bw=(valores[i]/max)*plotW;
+    ctx.fillStyle=colores[i%colores.length];
+    ctx.fillRect(padL,yb,bw,16);
+    ctx.fillStyle='#1c2230';ctx.font='10px Arial';ctx.textAlign='right';
+    ctx.fillText(lb.length>22?lb.slice(0,22)+'…':lb,padL-8,yb+13);
+    ctx.textAlign='left';
+    ctx.fillText(fmt(valores[i]),padL+bw+6,yb+13);
+  });
+  return c;
+}
+// Resumen de un mes (beneficio/gastos/nómina), usado en la tendencia anual del Informe.
+function calcResumenMesJEYCO(mesStr,tasa){
+  const vm=DB.ventas.filter(v=>v.fecha?.startsWith(mesStr));
+  const gm=DB.gastos.filter(g=>g.fecha?.startsWith(mesStr));
+  const pm=(DB.nominaPagos||[]).filter(p=>p.mes===mesStr);
+  const beneficio=vm.reduce((a,v)=>a+(v.moneda==='USD'?parseFloat(v.ganancia||0)*tasa:parseFloat(v.ganancia||0)),0);
+  const gastosBase=gm.reduce((a,g)=>a+parseFloat(g.monto||0),0);
+  const nomina=pm.reduce((a,p)=>a+parseFloat(p.monto||0),0);
+  const interesesMes=(DB.prestamos||[]).reduce((a,p)=>{
+    const pagosDelMes=(p.pagos||[]).filter(pg=>pg.fecha?.startsWith(mesStr));
+    const interesMes=pagosDelMes.reduce((s,pg)=>s+parseFloat(pg.interes||0),0);
+    return a+(p.moneda==='USD'?interesMes*tasa:interesMes);
+  },0);
+  const gastos=gastosBase+interesesMes;
+  return{beneficio,gastos,nomina,ganNeta:beneficio-gastos-nomina};
+}
+// ══ ESTILOS DEL INFORME DE CIERRE (impreso a Word) ══
+const INFORME_CIERRE_CSS=`
+  *{box-sizing:border-box}
+  body{font-family:Georgia,'Times New Roman',serif;color:#1c2230;margin:0;padding:0;background:#fbfaf7}
+  .rep-page{max-width:820px;margin:0 auto;padding:16px 4px 40px}
+  .rep-letterhead{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #1c2230;padding-bottom:16px;margin-bottom:6px}
+  .rep-brand{font-size:24px;font-weight:600;letter-spacing:.3px}
+  .rep-brand small{display:block;font-family:Arial,sans-serif;font-size:10.5px;font-weight:400;letter-spacing:.4px;color:#5b6472;margin-top:5px;text-transform:uppercase}
+  .rep-doctype{text-align:right;font-family:Arial,sans-serif}
+  .rep-doctype .t{font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#9a7b3f}
+  .rep-doctype .p{font-size:14px;font-weight:600;margin-top:3px}
+  .rep-doctype .g{font-size:10.5px;color:#5b6472;margin-top:2px}
+  .rep-subrule{border-bottom:1px solid #c9ccd3;margin-bottom:6px}
+  .rep-sec{margin:26px 0 20px}
+  .rep-sec-head{border-bottom:1px solid #1c2230;padding-bottom:5px;margin-bottom:10px}
+  .rep-sec-head h3{font-size:14pt;font-weight:600;letter-spacing:.4px;margin:0;font-variant:small-caps;display:inline}
+  .rep-tag{font-family:Arial,sans-serif;font-size:9px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;padding:2px 7px;border-radius:3px;border:1px solid #c9ccd3;color:#5b6472;margin-left:8px}
+  .rep-tag.close{background:#e8dfc9;border-color:#e8dfc9;color:#9a7b3f}
+  .rep-note{font-family:Arial,sans-serif;font-size:11px;color:#5b6472;margin:0 0 8px;line-height:1.5}
+  .rep-summary{width:100%;border-collapse:collapse;font-family:Arial,sans-serif;margin:6px 0 4px;border-top:1px solid #c9ccd3;border-bottom:1px solid #c9ccd3}
+  .rep-summary td{padding:12px 4px;text-align:center;border-left:1px solid #c9ccd3}
+  .rep-summary td.first{border-left:none}
+  .rep-summary .l{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:#5b6472}
+  .rep-summary .v{font-size:16px;font-weight:600;margin-top:4px}
+  .rep-summary .v.pos{color:#3f6b4e}
+  .rep-summary .v.neg{color:#9c3b32}
+  .rep-table{width:100%;border-collapse:collapse;font-family:Arial,sans-serif;font-size:11px}
+  .rep-table th{text-align:left;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#5b6472;border-bottom:1.5px solid #1c2230;padding:0 8px 6px 0}
+  .rep-table th.num,.rep-table td.num{text-align:right}
+  .rep-table td{padding:6px 8px 6px 0;border-bottom:1px solid #c9ccd3}
+  .rep-table tr.total td{border-top:1.5px solid #1c2230;border-bottom:3px double #1c2230;font-weight:700;padding-top:7px;padding-bottom:7px}
+  .rep-table td.neg{color:#9c3b32}
+  .rep-table td.pos{color:#3f6b4e}
+  .rep-footer{margin-top:34px;padding-top:12px;border-top:1px solid #c9ccd3;font-family:Arial,sans-serif;font-size:9.5px;color:#5b6472}
+  .rep-subhead{font-family:Arial,sans-serif;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:#9a7b3f;margin:18px 0 6px}
+  .rep-subhead:first-of-type{margin-top:4px}
+  .rep-cover{text-align:center;padding-top:50px}
+  .rep-cover-logo{max-height:240px;margin-bottom:18px}
+  .rep-cover-empresa{font-size:26px;font-weight:700;letter-spacing:.4px;text-align:center}
+  .rep-cover-sub{font-family:Arial,sans-serif;font-size:11px;color:#5b6472;margin-top:6px;text-align:center}
+  .rep-cover-title{font-family:Arial,sans-serif;font-size:26pt;font-weight:700;color:#9a7b3f;margin-top:30px;text-align:center}
+  .rep-cover-periodo{font-family:Arial,sans-serif;font-size:14pt;font-weight:700;color:#5b6472;margin-top:8px;text-align:center}
+  .rep-cover-obs{text-align:justify;max-width:560px;margin:36px auto 0;border-top:1px solid #c9ccd3;padding-top:16px}
+  .rep-cover-obs h3{font-family:Arial,sans-serif;font-size:11pt;font-weight:700;margin:0 0 12px;color:#1c2230}
+  .rep-cover-obs ul{margin:0;padding-left:18px;font-family:Arial,sans-serif;font-size:10pt;line-height:1.6;color:#1c2230}
+  .rep-cover-promo{background:#1a2456;color:#fff;padding:14px 24px;margin-top:70px;text-align:center;font-family:Arial,sans-serif;font-weight:700}
+`;
 function genFactura(){const nums=DB.ventas.map(v=>{const m=(v.factura||'').match(/(\d+)$/);return m?parseInt(m[1]):0;});const next=(nums.length?Math.max(...nums):0)+1;return 'FAC-'+String(next).padStart(6,'0');}
 const escHtml=s=>{const d=document.createElement('div');d.textContent=s||'';return d.innerHTML};
 // ══ BANCOS Y CUENTAS HELPER ══
@@ -579,7 +797,7 @@ function confirmarResetDatos2(){
   }, 200);
 }
 function ejecutarResetDatos(){
-  const keys=['vehiculos','clientes','suplidores','ventas','cotizaciones','caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos'];
+  const keys=['vehiculos','clientes','suplidores','ventas','cotizaciones','caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos'];
   keys.forEach(k=>{DB[k]=[];localStorage.removeItem(k);});
   keys.forEach(k=>{if(window._fbActivo)fbGuardar(k);});
   closeModal();toast('Datos limpiados ✓','success');showPage('dashboard');
@@ -809,7 +1027,7 @@ function aplicarPermisosNav(){
   if(!currentUser)return;
   // Ocultar nav-items de módulos sin acceso
   const MODS_NAV=['dashboard','informes','consultas','suplidores','inventario','gastosVeh','cxp',
-    'clientes','ventas','cxc','gastos','nomina','caja','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cumpleanos','cuentas'];
+    'clientes','ventas','cxc','gastos','nomina','caja','activosFijos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cumpleanos','cuentas'];
   MODS_NAV.forEach(id=>{
     const nav=document.getElementById('nav-'+id);
     if(!nav)return;
@@ -855,7 +1073,7 @@ function logBit(modulo,accion,detalle){
 // ══════════════════════════════════════════
 //   MÓDULO CONSULTAS — Ficha completa por vehículo
 // ══════════════════════════════════════════
-let _consultasFiltro={search:'',cliente:'',propietario:'',suplidor:'',estado:''};
+let _consultasFiltro={search:'',cliente:'',propietario:'',suplidor:'',estado:'',hasta:''};
 function renderConsultas(){
   const pg=document.getElementById('page-consultas');
   if(!pg){setTimeout(renderConsultas,300);return;}
@@ -914,9 +1132,14 @@ function renderConsultas(){
             <option value="CXC_PEND" ${f.estado==='CXC_PEND'?'selected':''}>Con CxC Pendiente</option>
           </select>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="_consultasFiltro={search:'',cliente:'',propietario:'',suplidor:'',estado:''};renderConsultas()" title="Limpiar filtros">🔄</button>
+        <div class="form-field" style="margin:0;min-width:150px">
+          <label style="font-size:11px">📅 Saldos al (fecha de corte)</label>
+          <input type="date" value="${f.hasta}" onchange="_consultasFiltro.hasta=this.value;_renderConsultasTabla()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px;width:100%" title="Muestra los saldos de CxC como estaban en esta fecha, igual que el Informe Mensual. Vacío = saldo actual.">
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="_consultasFiltro={search:'',cliente:'',propietario:'',suplidor:'',estado:'',hasta:''};renderConsultas()" title="Limpiar filtros">🔄</button>
         <button class="btn btn-secondary btn-sm" onclick="exportarConsultasPDF()">📄 Exportar Lista PDF</button>
       </div>
+      ${f.hasta?`<p style="font-size:11px;color:var(--amber);margin-top:8px">📅 Mostrando saldos de CxC al ${fmtDate(f.hasta)} (fecha de corte) — cuadra con el Informe Mensual de ese período.</p>`:''}
     </div>
     <div id="consultas-resumen"></div>
     <div class="card" id="consultas-resultado-card" style="display:none">
@@ -930,11 +1153,17 @@ function renderConsultas(){
     </div>`;
   _renderConsultasTabla();
 }
-function _consultasDatos(){
+function _consultasDatos(hasta){
   return DB.vehiculos.map(v=>{
     const venta=DB.ventas.find(x=>x.vehiculoId===v.id);
-    const cxcVenta=venta?(DB.cxc||[]).find(c=>c.ventaId===venta.id&&!c.esTraspaso):null;
-    const cxcTrasp=venta?(DB.cxc||[]).find(c=>c.ventaId===venta.id&&c.esTraspaso):null;
+    let cxcVenta=venta?(DB.cxc||[]).find(c=>c.ventaId===venta.id&&!c.esTraspaso):null;
+    let cxcTrasp=venta?(DB.cxc||[]).find(c=>c.ventaId===venta.id&&c.esTraspaso):null;
+    // Fecha de corte opcional: recalcula el saldo "al" esa fecha, igual criterio que
+    // CxC/CxP/Préstamos y el Informe Mensual, para que estos números cuadren entre sí.
+    if(hasta){
+      if(cxcVenta)cxcVenta={...cxcVenta,saldo:saldoCXCAFecha(cxcVenta,hasta)};
+      if(cxcTrasp)cxcTrasp={...cxcTrasp,saldo:saldoCXCAFecha(cxcTrasp,hasta)};
+    }
     const gastosVeh=(DB.gastosVehiculos||[]).filter(g=>g.vehiculoId===v.id);
     const cxpRel=(DB.cxp||[]).filter(g=>g.vehiculoId===v.id);
     const totalCostos=gastosVeh.reduce((a,g)=>a+aRD(g.montoFactura||g.monto||0,g.moneda,g.tasaCambio),0)+cxpRel.reduce((a,g)=>a+aRD(g.montoFactura||0,g.moneda,g.tasaCambio),0);
@@ -969,7 +1198,7 @@ function _renderConsultasTabla(){
   }
   if(resumen)resumen.innerHTML='';
   if(card)card.style.display='';
-  let datos=_consultasDatos();
+  let datos=_consultasDatos(f.hasta);
   if(f.search){
     const q=f.search.toLowerCase();
     datos=datos.filter(d=>(d.v.codigo||'').toLowerCase().includes(q)||(d.v.vin||'').toLowerCase().includes(q)||(d.v.marca||'').toLowerCase().includes(q)||(d.v.modelo||'').toLowerCase().includes(q)||(d.v.placa||'').toLowerCase().includes(q));
@@ -4086,13 +4315,33 @@ function renderInformes(){
   const nominaMes=DB.nomina.filter(e=>e.activo).reduce((a,e)=>a+parseFloat(e.salario||0),0);
   const gastosCat={};gastosMes.forEach(g=>{gastosCat[g.categoria||'General']=(gastosCat[g.categoria||'General']||0)+parseFloat(g.monto||0);});
 
+  // Cuentas por cobrar/pagar/préstamos "al cierre del mes" — mismo criterio (fecha de corte)
+  // que usan CxC/CxP/Préstamos y Consultas, para que este resumen cuadre 1 a 1 con esos módulos.
+  const [_ay,_am]=mes.split('-').map(Number);
+  const finMes=new Date(_ay,_am,0).toISOString().split('T')[0];
+  const cxcPendItems=(DB.cxc||[]).filter(x=>x.fecha&&x.fecha<=finMes).map(x=>({...x,saldo:saldoCXCAFecha(x,finMes)})).filter(x=>x.saldo>0.01);
+  const cxcPendRD=cxcPendItems.filter(x=>(x.moneda||'RD$')==='RD$').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
+  const cxcPendUSD=cxcPendItems.filter(x=>x.moneda==='USD').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
+  const cxcPendCombinado=cxcPendRD+cxcPendUSD*tasa;
+  const cxpPendItems=[...(DB.gastosVehiculos||[]),...(DB.cxp||[])]
+    .filter(g=>g.fecha&&g.fecha<=finMes)
+    .map(g=>({...g,montoPendiente:pendienteGastoAFecha(g,finMes)}))
+    .filter(g=>g.montoPendiente>0.01);
+  const cxpPendRD=cxpPendItems.filter(g=>(g.moneda||'RD$')==='RD$').reduce((a,g)=>a+parseFloat(g.montoPendiente||0),0);
+  const cxpPendUSD=cxpPendItems.filter(g=>g.moneda==='USD').reduce((a,g)=>a+parseFloat(g.montoPendiente||0),0);
+  const cxpPendCombinado=cxpPendRD+cxpPendUSD*tasa;
+  const prestamosCierre=(DB.prestamos||[]).filter(p=>!p.fecha||p.fecha<=finMes).map(p=>({p,saldoCierre:saldoPrestamoAFecha(p,finMes)}));
+  const prestamosSaldoRD=prestamosCierre.filter(x=>(x.p.moneda||'RD$')==='RD$').reduce((a,x)=>a+x.saldoCierre,0);
+  const prestamosSaldoUSD=prestamosCierre.filter(x=>x.p.moneda==='USD').reduce((a,x)=>a+x.saldoCierre,0);
+  const prestamosSaldoCombinado=prestamosSaldoRD+prestamosSaldoUSD*tasa;
+
   pg.innerHTML=`
     <div class="page-header">
       <div><h1>📊 Informe Mensual</h1><p>Período: ${mes}</p></div>
       <div style="display:flex;gap:8px;align-items:center">
         <input type="month" id="inf-mes" value="${mes}" onchange="renderInformes()" style="padding:7px 12px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
         <button class="btn btn-secondary" onclick="window.print()">🖨️ Imprimir</button>
-        <button class="btn btn-primary btn-sm" onclick="exportarInformePDF()">📄 Exportar PDF Completo</button>
+        <button class="btn btn-primary btn-sm" onclick="exportarInformeWord()">📝 Exportar a Word</button>
       </div>
     </div>
     <div class="stats-grid">
@@ -4100,6 +4349,15 @@ function renderInformes(){
       <div class="stat-card blue"><div class="stat-ico">📈</div><div class="stat-label">Ganancia Bruta</div><div class="stat-value">${fmt(totalG)}</div></div>
       <div class="stat-card red"><div class="stat-ico">💸</div><div class="stat-label">Gastos</div><div class="stat-value">${fmt(totalGastos)}</div></div>
       <div class="stat-card ${totalG-totalGastos>=0?'green':'red'}"><div class="stat-ico">📊</div><div class="stat-label">Ganancia Neta</div><div class="stat-value">${fmt(totalG-totalGastos)}</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">🧮 Cuentas al cierre (${fmtDate(finMes)}) — cuadra con CxC / CxP / Préstamos / Consultas</div>
+      <div class="table-wrap"><table><thead><tr><th></th><th>Pesos (RD$)</th><th>Dólares (USD)</th><th>Total General</th></tr></thead><tbody>
+        <tr><td>Por Cobrar</td><td style="font-weight:700">${fmt(cxcPendRD)}</td><td style="font-weight:700">${cxcPendUSD?fmtUSD(cxcPendUSD):'—'}</td><td style="font-weight:800;color:var(--blue)">${fmt(cxcPendCombinado)}</td></tr>
+        <tr><td>Por Pagar</td><td style="font-weight:700">${fmt(cxpPendRD)}</td><td style="font-weight:700">${cxpPendUSD?fmtUSD(cxpPendUSD):'—'}</td><td style="font-weight:800;color:var(--red)">${fmt(cxpPendCombinado)}</td></tr>
+        <tr><td>Préstamos Pendientes</td><td style="font-weight:700">${fmt(prestamosSaldoRD)}</td><td style="font-weight:700">${prestamosSaldoUSD?fmtUSD(prestamosSaldoUSD):'—'}</td><td style="font-weight:800;color:var(--amber)">${fmt(prestamosSaldoCombinado)}</td></tr>
+      </tbody></table></div>
+      <p style="font-size:11px;color:var(--gray);margin-top:8px">Total General combina Pesos + Dólares a la tasa de Caja (${fmt(tasa)} por USD). Estos montos son al ${fmtDate(finMes)} (fin del mes seleccionado) e incluyen deudas anteriores aún pendientes.</p>
     </div>
     <div class="two-col">
       <div class="card"><div class="card-title">📦 Vehículos Vendidos</div>
@@ -4151,6 +4409,426 @@ function renderInformes(){
   document.getElementById('inf-mes').value=mes;
 }
 
+// ══ INFORME MENSUAL — EXPORTAR A WORD (Informe de Cierre) ══
+async function exportarInformeWord(){
+  const mes=document.getElementById('inf-mes')?.value||today().slice(0,7);
+  const [ay,am]=mes.split('-').map(Number);
+  const finMes=new Date(ay,am,0).toISOString().split('T')[0];
+  const empresa=DB.config.empresa||'JEYCO AUTO';
+  const tasa=parseFloat(DB.config.tasaCambio||60);
+
+  // ── DEL MES ──
+  const ventasMes=DB.ventas.filter(v=>v.fecha?.startsWith(mes));
+  const gastosMes=DB.gastos.filter(g=>g.fecha?.startsWith(mes));
+  const pagosMes=(DB.nominaPagos||[]).filter(p=>p.mes===mes);
+  const totalVentas=ventasMes.reduce((a,v)=>a+(v.moneda==='USD'?parseFloat(v.precioVenta||0)*tasa:parseFloat(v.precioVenta||0)),0);
+  const totalGananciaVentas=ventasMes.reduce((a,v)=>a+(v.moneda==='USD'?parseFloat(v.ganancia||0)*tasa:parseFloat(v.ganancia||0)),0);
+  const totalGastosMes=gastosMes.reduce((a,g)=>a+parseFloat(g.monto||0),0);
+  const totalNominaMes=pagosMes.reduce((a,p)=>a+parseFloat(p.monto||0),0);
+
+  // ── AL CIERRE (misma fecha de corte que CxC/CxP/Préstamos/Consultas) ──
+  const cxcPend=(DB.cxc||[]).filter(x=>x.fecha&&x.fecha<=finMes).map(x=>({...x,saldo:saldoCXCAFecha(x,finMes)})).filter(x=>x.saldo>0.01);
+  const cxpPend=[
+    ...(DB.gastosVehiculos||[]).map(g=>({...g,_origen:'auto'})),
+    ...(DB.cxp||[]).map(g=>({...g,_origen:'manual'}))
+  ]
+    .filter(g=>g.fecha&&g.fecha<=finMes)
+    .map(g=>({...g,montoPendiente:pendienteGastoAFecha(g,finMes)}))
+    .filter(g=>g.montoPendiente>0.01);
+  const vActivos=DB.vehiculos.filter(v=>v.status==='ACTIVO');
+  const vAduana=DB.vehiculos.filter(v=>v.status==='ADUANA');
+  const vEEUU=DB.vehiculos.filter(v=>v.status==='EN EEUU');
+  const vTransito=DB.vehiculos.filter(v=>v.status==='TRÁNSITO');
+
+  // Nómina — detalle por empleado (del mes)
+  const nominaDetalle=(DB.nomina||[]).filter(e=>e.activo).map(e=>{
+    const pagado=pagosMes.filter(p=>p.empleadoId===e.id).reduce((a,p)=>a+parseFloat(p.monto||0),0);
+    return{e,pagado};
+  });
+  const totalNominaSalarios=nominaDetalle.reduce((a,x)=>a+parseFloat(x.e.salario||0),0);
+
+  // Activos fijos — al cierre
+  const activosCalc=(DB.activosFijos||[]).map(a=>({a,...calcDepreciacionActivo(a,mes)}));
+  const totalActivoCompra=activosCalc.reduce((s,c)=>s+valorCompraTotalActivo(c.a),0);
+  const totalActivoDepMes=activosCalc.reduce((s,c)=>s+c.mensual,0);
+  const totalActivoAcum=activosCalc.reduce((s,c)=>s+c.acumulada,0);
+  const totalActivoLibros=activosCalc.reduce((s,c)=>s+c.valorLibros,0);
+
+  // Cuentas bancarias — saldo acumulado al cierre del mes
+  const cajaHastaCierre=DB.caja.filter(c=>c.fecha&&c.fecha<=finMes);
+  const cuentasCierre={};
+  cajaHastaCierre.forEach(c=>{
+    const key=(c.banco&&c.cuenta)?`${c.banco} / ${c.cuenta}`:(c.banco||'Sin cuenta');
+    const mon=c.moneda||'RD$';
+    if(!cuentasCierre[key])cuentasCierre[key]={rd:0,usd:0};
+    const signo=c.tipo==='ENTRADA'?1:-1;
+    if(mon==='USD')cuentasCierre[key].usd+=signo*parseFloat(c.monto||0);
+    else cuentasCierre[key].rd+=signo*parseFloat(c.monto||0);
+  });
+  const cuentasList=Object.entries(cuentasCierre);
+  const totalCuentasRD=cuentasList.reduce((a,[,v])=>a+v.rd,0);
+  const totalCuentasUSD=cuentasList.reduce((a,[,v])=>a+v.usd,0);
+
+  // Intereses de préstamos — del mes + saldo al cierre
+  const prestamosDetalle=(DB.prestamos||[]).filter(p=>!p.fecha||p.fecha<=finMes).map(p=>{
+    const pagosDelMes=(p.pagos||[]).filter(pg=>pg.fecha?.startsWith(mes));
+    const capitalMes=pagosDelMes.reduce((a,pg)=>a+parseFloat(pg.capital||0),0);
+    const interesMes=pagosDelMes.reduce((a,pg)=>a+parseFloat(pg.interes||0),0);
+    return{p,capitalMes,interesMes,saldoCierre:saldoPrestamoAFecha(p,finMes)};
+  });
+  const prestamosRD=prestamosDetalle.filter(x=>(x.p.moneda||'RD$')==='RD$');
+  const prestamosUSD=prestamosDetalle.filter(x=>x.p.moneda==='USD');
+  const totalCapitalMesRD=prestamosRD.reduce((a,x)=>a+x.capitalMes,0);
+  const totalInteresMesRD=prestamosRD.reduce((a,x)=>a+x.interesMes,0);
+  const totalSaldoPrestamosRD=prestamosRD.reduce((a,x)=>a+x.saldoCierre,0);
+  const totalCapitalMesUSD=prestamosUSD.reduce((a,x)=>a+x.capitalMes,0);
+  const totalInteresMesUSD=prestamosUSD.reduce((a,x)=>a+x.interesMes,0);
+  const totalSaldoPrestamosUSD=prestamosUSD.reduce((a,x)=>a+x.saldoCierre,0);
+  const totalInteresMesConvertido=totalInteresMesRD+totalInteresMesUSD*tasa;
+  const totalGastosConIntereses=totalGastosMes+totalInteresMesConvertido;
+  const ganNeta=totalGananciaVentas-totalGastosConIntereses-totalNominaMes;
+
+  // Inventario — al cierre, con inversión acumulada por vehículo (activos + aduana + EEUU + tránsito)
+  const inventarioDetalle=[...vActivos,...vAduana,...vEEUU,...vTransito].map(v=>{
+    const gastosVeh=(DB.gastosVehiculos||[]).filter(g=>g.vehiculoId===v.id).reduce((a,g)=>a+parseFloat(g.montoFactura||g.monto||0),0);
+    return{v,gastosVeh,total:parseFloat(v.costo||0)+gastosVeh};
+  });
+  const totalInvCosto=inventarioDetalle.reduce((a,x)=>a+parseFloat(x.v.costo||0),0);
+  const totalInvGastos=inventarioDetalle.reduce((a,x)=>a+x.gastosVeh,0);
+  const totalInvTotal=inventarioDetalle.reduce((a,x)=>a+x.total,0);
+
+  // Cuentas por cobrar — acumulado por cliente, separado en Pesos y Dólares
+  const cxcPorCliente={};
+  cxcPend.forEach(x=>{
+    const key=x.cliente||'Sin cliente';
+    if(!cxcPorCliente[key])cxcPorCliente[key]={rd:0,usd:0};
+    if((x.moneda||'RD$')==='USD')cxcPorCliente[key].usd+=parseFloat(x.saldo||0);
+    else cxcPorCliente[key].rd+=parseFloat(x.saldo||0);
+  });
+  const cxcClienteList=Object.entries(cxcPorCliente).map(([nombre,v])=>[nombre,{...v,combinado:v.rd+v.usd*tasa}]).sort((a,b)=>b[1].combinado-a[1].combinado);
+
+  // Cuentas por pagar — acumulado por suplidor, separado RD$/USD y por origen
+  const cxpPorSuplidor={};
+  cxpPend.forEach(g=>{
+    const key=g.suplidor||'Sin suplidor';
+    if(!cxpPorSuplidor[key])cxpPorSuplidor[key]={vehRD:0,vehUSD:0,manRD:0,manUSD:0};
+    const esUSD=(g.moneda||'RD$')==='USD';
+    const campo=(g._origen==='auto'?'veh':'man')+(esUSD?'USD':'RD');
+    cxpPorSuplidor[key][campo]+=parseFloat(g.montoPendiente||0);
+  });
+  const cxpSuplidorList=Object.entries(cxpPorSuplidor).map(([nombre,v])=>{
+    const rd=v.vehRD+v.manRD, usd=v.vehUSD+v.manUSD;
+    return[nombre,{...v,rd,usd,combinado:rd+usd*tasa}];
+  }).sort((a,b)=>b[1].combinado-a[1].combinado);
+  const totalCXPPendRD=cxpSuplidorList.reduce((a,[,v])=>a+v.rd,0);
+  const totalCXPPendUSD=cxpSuplidorList.reduce((a,[,v])=>a+v.usd,0);
+  const totalCXPCombinado=totalCXPPendRD+totalCXPPendUSD*tasa;
+  const totalVehRD=cxpSuplidorList.reduce((a,[,v])=>a+v.vehRD,0);
+  const totalVehUSD=cxpSuplidorList.reduce((a,[,v])=>a+v.vehUSD,0);
+  const totalManRD=cxpSuplidorList.reduce((a,[,v])=>a+v.manRD,0);
+  const totalManUSD=cxpSuplidorList.reduce((a,[,v])=>a+v.manUSD,0);
+  const fmtOrigen=(rd,usd)=>{
+    if(rd>0&&usd>0)return`${fmt(rd)}<br>${fmtUSD(usd)}`;
+    if(usd>0)return fmtUSD(usd);
+    if(rd>0)return fmt(rd);
+    return'—';
+  };
+
+  // Resumen ejecutivo — cuentas por cobrar separadas por moneda
+  const cxcPendRD=cxcPend.filter(x=>(x.moneda||'RD$')==='RD$').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
+  const cxcPendUSD=cxcPend.filter(x=>x.moneda==='USD').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
+  const cxcPendCombinado=cxcPendRD+cxcPendUSD*tasa;
+
+  // Resumen ejecutivo — patrimonio (inventario + efectivo/cuentas + activos fijos)
+  const totalEfectivoCombinado=totalCuentasRD+totalCuentasUSD*tasa;
+  const totalPatrimonio=totalInvTotal+totalEfectivoCombinado+totalActivoLibros;
+
+  // Capital Neto — Patrimonio + Cuentas por Cobrar − (Cuentas por Pagar + Préstamos)
+  const totalPorPagarGeneral=totalCXPCombinado+totalSaldoPrestamosRD+totalSaldoPrestamosUSD*tasa;
+  const capitalNeto=totalPatrimonio+cxcPendCombinado-totalPorPagarGeneral;
+
+  // Tendencia — Enero a Diciembre del año del informe
+  const NOMBRES_MES=['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'];
+  const tendenciaMeses=NOMBRES_MES.map((nombre,idx)=>{
+    const mStr=ay+'-'+String(idx+1).padStart(2,'0');
+    if(mStr>mes)return{mes:nombre,futuro:true};
+    if(mStr===mes)return{mes:nombre,beneficio:totalGananciaVentas,gastos:totalGastosConIntereses,nomina:totalNominaMes,ganNeta};
+    return{mes:nombre,...calcResumenMesJEYCO(mStr,tasa)};
+  });
+  const totalTendBeneficio=tendenciaMeses.reduce((a,t)=>a+(t.futuro?0:t.beneficio),0);
+  const totalTendGastos=tendenciaMeses.reduce((a,t)=>a+(t.futuro?0:t.gastos+t.nomina),0);
+  const totalTendGanNeta=tendenciaMeses.reduce((a,t)=>a+(t.futuro?0:t.ganNeta),0);
+
+  // Observaciones y recomendaciones — generadas según los datos del mes
+  const observaciones=[];
+  if(ganNeta<0){
+    observaciones.push('La ganancia neta del mes fue negativa ('+fmt(ganNeta)+'). Se recomienda revisar los gastos operativos y la nómina frente al volumen de ventas.');
+  } else if(totalGananciaVentas>0&&ganNeta<totalGananciaVentas*0.3){
+    observaciones.push('Los gastos y la nómina consumieron una parte importante del beneficio de ventas del mes. Conviene revisar oportunidades de reducción de costos.');
+  }
+  if(cxcPendCombinado>0&&totalVentas>0&&cxcPendCombinado>totalVentas*0.5){
+    observaciones.push('El saldo pendiente por cobrar ('+fmt(cxcPendCombinado)+') es alto en relación a las ventas del mes. Se sugiere reforzar la gestión de cobros.');
+  }
+  if(totalCXPCombinado>0){
+    observaciones.push('Hay '+fmt(totalCXPCombinado)+' pendientes por pagar a suplidores. Priorizar los saldos más antiguos para evitar recargos.');
+  }
+  if(vAduana.length>0||vEEUU.length>0){
+    observaciones.push(vAduana.length+' vehículo(s) en aduana y '+vEEUU.length+' en EEUU — dar seguimiento a los tiempos de importación para no atrasar su disponibilidad en venta.');
+  }
+  if(!observaciones.length){
+    observaciones.push('El mes cerró dentro de parámetros normales; no se identificaron alertas relevantes en los datos.');
+  }
+
+  const logoWord=await _redimensionarLogoParaWord(DB.config.logoData,520);
+  const nombreMesPortada=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][am-1];
+
+  // Gráficos del informe (se generan como PNG y se embeben por cid: en el Word)
+  const imagenesGraficos=[];
+  let numCategoriasGastos=0;
+  try{
+    const gastosPorCat={};
+    gastosMes.forEach(g=>{const cat=g.categoria||'Sin categoría';gastosPorCat[cat]=(gastosPorCat[cat]||0)+parseFloat(g.monto||0);});
+    const catEntries=Object.entries(gastosPorCat).sort((a,b)=>b[1]-a[1]);
+    numCategoriasGastos=catEntries.length;
+    if(catEntries.length){
+      imagenesGraficos.push({cid:'graficoGastosCat',mime:'image/png',base64:_pngBase64(graficoPastelWord(catEntries.map(e=>e[0]),catEntries.map(e=>e[1]),'Gastos del Mes por Categoría'))});
+    }
+    const topCxc=cxcClienteList.slice(0,8);
+    if(topCxc.length){
+      imagenesGraficos.push({cid:'graficoCxc',mime:'image/png',base64:_pngBase64(graficoBarrasHorizontalesWord(topCxc.map(e=>e[0]),topCxc.map(e=>e[1].combinado),'Top Clientes — Saldo Pendiente CxC (combinado)'))});
+    }
+    imagenesGraficos.push({cid:'graficoCapitalNeto',mime:'image/png',base64:_pngBase64(graficoBarrasHorizontalesWord(
+      ['Inversión en Vehículos','Efectivo y Cuentas Bancarias','Activos Fijos','Cuentas por Cobrar','Cuentas por Pagar','Capital Neto'],
+      [totalInvTotal,totalEfectivoCombinado,totalActivoLibros,cxcPendCombinado,totalPorPagarGeneral,capitalNeto].map(v=>Math.max(v,0)),
+      'Resumen de Capital Neto al Cierre',
+      ['#1c2456','#3f6b4e','#7c9cbf','#2e7d5b','#9c3b32','#c9a35a']
+    ))});
+  }catch(e){console.warn('Error generando gráficos del informe:',e.message);}
+  const tieneGraficoGastosCat=imagenesGraficos.some(i=>i.cid==='graficoGastosCat');
+  const tieneGraficoCxc=imagenesGraficos.some(i=>i.cid==='graficoCxc');
+  const tieneGraficoCapitalNeto=imagenesGraficos.some(i=>i.cid==='graficoCapitalNeto');
+
+  const html=`<div class="rep-page rep-cover" align="center">
+    ${logoWord?`<p align="center" style="text-align:center;margin:0"><img class="rep-cover-logo" src="cid:logoJeyco" width="${logoWord.w}" height="${logoWord.h}"></p>`:''}
+    <div class="rep-cover-empresa" align="center">${escHtml(empresa)}</div>
+    <div class="rep-cover-sub" align="center">${escHtml(DB.config.direccion||'')}${DB.config.rnc?'   ·   RNC '+escHtml(DB.config.rnc):''}</div>
+    <div class="rep-cover-title" align="center">Informe mensual</div>
+    <div class="rep-cover-periodo" align="center">Período: ${nombreMesPortada} del ${ay}</div>
+    <div class="rep-cover-obs">
+      <h3>Observaciones y recomendaciones del mes</h3>
+      <ul>${observaciones.map(o=>`<li>${escHtml(o)}</li>`).join('')}</ul>
+    </div>
+    <div class="rep-cover-promo" align="center">Tel: 809-747-5614 | Edward Villa | VILLASYS</div>
+  </div>
+
+  <br clear="all" style="page-break-before:always">
+  <div class="rep-page">
+    <div class="rep-letterhead">
+      <div class="rep-brand">${escHtml(empresa)}<small>${DB.config.rnc?'RNC '+escHtml(DB.config.rnc)+' · ':''}${escHtml(DB.config.direccion||'')}</small></div>
+      <div class="rep-doctype"><div class="t">Informe de Cierre</div><div class="p">Período: ${mes}</div><div class="g">Generado el ${fmtDate(today())}</div></div>
+    </div>
+    <div class="rep-subrule"></div>
+
+    <div class="rep-sec">
+      <div class="rep-sec-head"><h3>Resumen general del mes</h3><span class="rep-tag close">Tasa: ${fmt(tasa)}</span></div>
+
+      <div class="rep-subhead">Cuentas</div>
+      <table class="rep-table">
+        <thead><tr><th></th><th class="num">Pesos</th><th class="num">Dólar</th><th class="num">Total</th></tr></thead>
+        <tbody>
+          <tr><td>Por Cobrar</td><td class="num">${fmt(cxcPendRD)}</td><td class="num">${cxcPendUSD?fmtUSD(cxcPendUSD):'—'}</td><td class="num" style="font-weight:700">${fmt(cxcPendCombinado)}</td></tr>
+          <tr><td>Por Pagar (gastos vehículo + CxP manual)</td><td class="num">${fmt(totalCXPPendRD)}</td><td class="num">${totalCXPPendUSD?fmtUSD(totalCXPPendUSD):'—'}</td><td class="num" style="font-weight:700">${fmt(totalCXPCombinado)}</td></tr>
+          <tr><td>Préstamos Pendientes</td><td class="num">${fmt(totalSaldoPrestamosRD)}</td><td class="num">${totalSaldoPrestamosUSD?fmtUSD(totalSaldoPrestamosUSD):'—'}</td><td class="num" style="font-weight:700">${fmt(totalSaldoPrestamosRD+totalSaldoPrestamosUSD*tasa)}</td></tr>
+        </tbody>
+      </table>
+
+      <div class="rep-subhead">Inventario y Patrimonio</div>
+      <table class="rep-table">
+        <tbody>
+          <tr><td>Inversión en Vehículos</td><td class="num">${fmt(totalInvTotal)}</td></tr>
+          <tr><td>Efectivo y Cuentas Bancarias</td><td class="num">${fmt(totalEfectivoCombinado)}</td></tr>
+          <tr><td>Activos Fijos (valor en libros)</td><td class="num">${fmt(totalActivoLibros)}</td></tr>
+          <tr class="total"><td>Sub Total Patrimonio</td><td class="num">${fmt(totalPatrimonio)}</td></tr>
+        </tbody>
+      </table>
+
+      <div class="rep-subhead">Gastos del mes</div>
+      <table class="rep-table">
+        <tbody>
+          <tr><td>Pago Intereses Préstamos</td><td class="num">${fmt(totalInteresMesConvertido)}</td></tr>
+          <tr><td>Nómina</td><td class="num">${fmt(totalNominaMes)}</td></tr>
+          <tr><td>Otros Gastos</td><td class="num">${fmt(totalGastosMes)}</td></tr>
+          <tr class="total"><td>Sub Total</td><td class="num">${fmt(totalGastosConIntereses+totalNominaMes)}</td></tr>
+        </tbody>
+      </table>
+
+      <div class="rep-subhead">Resultado del mes</div>
+      <table class="rep-summary"><tr>
+        <td class="first"><div class="l">Beneficio Ventas Mes</div><div class="v pos">${fmt(totalGananciaVentas)}</div></td>
+        <td><div class="l">Intereses Mensuales</div><div class="v neg">${fmt(totalInteresMesConvertido)}</div></td>
+        <td><div class="l">Beneficio Neto Mes</div><div class="v ${ganNeta>=0?'pos':'neg'}">${fmt(ganNeta)}</div></td>
+      </tr></table>
+      <p class="rep-note" style="margin-top:8px">Beneficio de ventas del mes, menos gastos del mes (incluye intereses pagados de préstamos), menos nómina pagada.</p>
+    </div>
+  </div>
+
+  <br clear="all" style="page-break-before:always">
+  <div class="rep-page">
+    <div class="rep-sec">
+      <div class="rep-sec-head"><h3>Ventas del mes — detalle por vehículo</h3><span class="rep-tag close">Del mes</span></div>
+      <table class="rep-table">
+        <thead><tr><th>Código</th><th>Vehículo</th><th class="num">Gastos</th><th class="num">Venta</th><th class="num">Beneficio</th></tr></thead>
+        <tbody>${ventasMes.map(v=>{const gastosVenta=parseFloat(v.precioVenta||0)-parseFloat(v.ganancia||0);return`<tr><td>${escHtml(v.codigo||'')}</td><td style="font-weight:700">${escHtml(v.vehiculo||'')}</td><td class="num">${fmt(gastosVenta)}</td><td class="num">${fmt(v.precioVenta)}</td><td class="num pos">${fmt(v.ganancia)}</td></tr>`;}).join('')||'<tr><td colspan="5">Sin ventas en este período</td></tr>'}
+        ${ventasMes.length?`<tr class="total"><td colspan="2">Total del mes</td><td class="num">${fmt(totalVentas-totalGananciaVentas)}</td><td class="num">${fmt(totalVentas)}</td><td class="num">${fmt(totalGananciaVentas)}</td></tr>`:''}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <br clear="all" style="page-break-before:always">
+  <div class="rep-page">
+    <div class="rep-sec">
+      <div class="rep-sec-head"><h3>Cuentas por cobrar pendientes</h3><span class="rep-tag close">Al cierre</span></div>
+      <p class="rep-note">Acumulado por cliente — solo saldo pendiente, separado en Pesos y Dólares, con el total ya convertido a la tasa de Caja (${fmt(tasa)} por USD).</p>
+      ${tieneGraficoCxc?'<p align="center"><img src="cid:graficoCxc" width="680" height="'+Math.max(220,50+Math.min(cxcClienteList.length,8)*26)+'"></p>':''}
+      <table class="rep-table">
+        <thead><tr><th>Cliente</th><th class="num">Pesos</th><th class="num">Dólar</th><th class="num">Total</th></tr></thead>
+        <tbody>${cxcClienteList.map(([nombre,v])=>`<tr><td style="font-weight:700">${escHtml(nombre)}</td><td class="num">${v.rd?fmt(v.rd):'—'}</td><td class="num">${v.usd?fmtUSD(v.usd):'—'}</td><td class="num neg" style="font-weight:700">${fmt(v.combinado)}</td></tr>`).join('')||'<tr><td colspan="4">Sin cuentas por cobrar pendientes</td></tr>'}
+        ${cxcClienteList.length?`<tr class="total"><td>Total pendiente</td><td class="num">${fmt(cxcPendRD)}</td><td class="num">${fmtUSD(cxcPendUSD)}</td><td class="num">${fmt(cxcPendCombinado)}</td></tr>`:''}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <br clear="all" style="page-break-before:always">
+  <div class="rep-page">
+    <div class="rep-sec">
+      <div class="rep-sec-head"><h3>Cuentas por pagar pendientes</h3><span class="rep-tag close">Al cierre</span></div>
+      <p class="rep-note">Acumulado por suplidor. "Por Gastos de Vehículo" es deuda ligada a un vehículo específico; "CXP Manual" es deuda con el suplidor que no viene de un gasto de vehículo.</p>
+      <table class="rep-table">
+        <thead><tr><th>Suplidor</th><th class="num">Por Gastos de Vehículo</th><th class="num">CXP Manual</th><th class="num">Total Pendiente</th></tr></thead>
+        <tbody>${cxpSuplidorList.map(([nombre,v])=>`<tr><td style="font-weight:700">${escHtml(nombre)}</td><td class="num">${fmtOrigen(v.vehRD,v.vehUSD)}</td><td class="num">${fmtOrigen(v.manRD,v.manUSD)}</td><td class="num neg" style="font-weight:600">${fmtOrigen(v.rd,v.usd)}</td></tr>`).join('')||'<tr><td colspan="4">Sin cuentas por pagar pendientes</td></tr>'}
+        ${cxpSuplidorList.length?`<tr class="total"><td>Total</td><td class="num">${fmtOrigen(totalVehRD,totalVehUSD)}</td><td class="num">${fmtOrigen(totalManRD,totalManUSD)}</td><td class="num">${fmtOrigen(totalCXPPendRD,totalCXPPendUSD)}</td></tr>`:''}</tbody>
+      </table>
+      <p class="rep-note" style="margin-top:8px"><strong>Total General (pesos + dólares convertidos a la tasa de Caja, ${fmt(tasa)} por USD): ${fmt(totalCXPCombinado)}</strong></p>
+    </div>
+  </div>
+
+  <br clear="all" style="page-break-before:always">
+  <div class="rep-page">
+    <div class="rep-sec">
+      <div class="rep-sec-head"><h3>Inventario — al cierre</h3><span class="rep-tag close">Al cierre</span></div>
+      <table class="rep-summary"><tr>
+        <td class="first"><div class="l">En Inventario</div><div class="v">${vActivos.length}</div></td>
+        <td><div class="l">En Aduana</div><div class="v">${vAduana.length}</div></td>
+        <td><div class="l">En EEUU</div><div class="v">${vEEUU.length}</div></td>
+        <td><div class="l">En Tránsito</div><div class="v">${vTransito.length}</div></td>
+      </tr></table>
+      <p class="rep-note" style="margin-top:12px">Monto e inversión acumulada por vehículo (costo + gastos metidos desde que entró, no solo los del mes):</p>
+      <table class="rep-table">
+        <thead><tr><th>Código</th><th>Vehículo</th><th>Año</th><th>Estado</th><th class="num">Costo</th><th class="num">Gastos Acum.</th><th class="num">Inversión Total</th></tr></thead>
+        <tbody>${inventarioDetalle.map(({v,gastosVeh,total})=>`<tr><td>${escHtml(v.codigo||'')}</td><td>${escHtml((v.marca||'')+' '+(v.modelo||''))}</td><td>${v.anio||''}</td><td>${escHtml(v.status||'')}</td><td class="num">${fmt(v.costo)}</td><td class="num">${fmt(gastosVeh)}</td><td class="num" style="font-weight:600">${fmt(total)}</td></tr>`).join('')||'<tr><td colspan="7">Sin vehículos en inventario</td></tr>'}
+        ${inventarioDetalle.length?`<tr class="total"><td colspan="4">Total en inventario</td><td class="num">${fmt(totalInvCosto)}</td><td class="num">${fmt(totalInvGastos)}</td><td class="num">${fmt(totalInvTotal)}</td></tr>`:''}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <br clear="all" style="page-break-before:always">
+  <div class="rep-page">
+    <div class="rep-sec">
+      <div class="rep-sec-head"><h3>Gastos de empresa — detalle por gasto</h3><span class="rep-tag close">Del mes</span></div>
+      ${tieneGraficoGastosCat?'<p align="center"><img src="cid:graficoGastosCat" width="560" height="'+Math.max(200,40+numCategoriasGastos*18)+'"></p>':''}
+      <table class="rep-table">
+        <thead><tr><th>Fecha</th><th>Categoría</th><th>Descripción</th><th>Suplidor</th><th class="num">Monto</th></tr></thead>
+        <tbody>${gastosMes.map(g=>`<tr><td>${fmtDate(g.fecha)}</td><td>${escHtml(g.categoria||'')}</td><td>${escHtml(g.descripcion||'')}</td><td>${escHtml(g.suplidor||'—')}</td><td class="num">${fmt(g.monto)}</td></tr>`).join('')||'<tr><td colspan="5">Sin gastos en este período</td></tr>'}
+        ${gastosMes.length?`<tr class="total"><td colspan="4">Total del mes</td><td class="num">${fmt(totalGastosMes)}</td></tr>`:''}</tbody>
+      </table>
+    </div>
+
+    <div class="rep-sec">
+      <div class="rep-sec-head"><h3>Nómina — detalle por empleado</h3><span class="rep-tag close">Del mes</span></div>
+      <table class="rep-table">
+        <thead><tr><th>Empleado</th><th>Cargo</th><th class="num">Salario</th><th class="num">Pagado en el mes</th></tr></thead>
+        <tbody>${nominaDetalle.map(({e,pagado})=>`<tr><td style="font-weight:700">${escHtml(e.nombre)}</td><td>${escHtml(e.cargo||'—')}</td><td class="num">${fmt(e.salario)}</td><td class="num ${pagado>0?'pos':''}">${fmt(pagado)}</td></tr>`).join('')||'<tr><td colspan="4">Sin empleados activos</td></tr>'}
+        ${nominaDetalle.length?`<tr class="total"><td colspan="2">Total</td><td class="num">${fmt(totalNominaSalarios)}</td><td class="num">${fmt(totalNominaMes)}</td></tr>`:''}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <br clear="all" style="page-break-before:always">
+  <div class="rep-page">
+    <div class="rep-sec">
+      <div class="rep-sec-head"><h3>Activos fijos y depreciación</h3><span class="rep-tag close">Al cierre</span></div>
+      <p class="rep-note">Todos los activos vigentes, con depreciación acumulada desde su compra — no solo los del mes.</p>
+      <table class="rep-table">
+        <thead><tr><th>Activo</th><th class="num">Cant.</th><th class="num">Valor Compra</th><th class="num">Depr. del Mes</th><th class="num">Depr. Acumulada</th><th class="num">Valor en Libros</th></tr></thead>
+        <tbody>${activosCalc.map(({a,mensual,acumulada,valorLibros})=>`<tr><td>${escHtml(a.nombre)}</td><td class="num">${cantidadActivo(a)}</td><td class="num">${fmt(valorCompraTotalActivo(a))}</td><td class="num">${fmt(mensual)}</td><td class="num">${fmt(acumulada)}</td><td class="num" style="font-weight:600">${fmt(valorLibros)}</td></tr>`).join('')||'<tr><td colspan="6">Sin activos fijos registrados</td></tr>'}
+        ${activosCalc.length?`<tr class="total"><td colspan="2">Total</td><td class="num">${fmt(totalActivoCompra)}</td><td class="num">${fmt(totalActivoDepMes)}</td><td class="num">${fmt(totalActivoAcum)}</td><td class="num">${fmt(totalActivoLibros)}</td></tr>`:''}</tbody>
+      </table>
+    </div>
+
+    <div class="rep-sec">
+      <div class="rep-sec-head"><h3>Cuentas bancarias al cierre</h3><span class="rep-tag close">Al cierre</span></div>
+      <table class="rep-table">
+        <thead><tr><th>Cuenta</th><th class="num">Saldo RD$</th><th class="num">Saldo USD</th></tr></thead>
+        <tbody>${cuentasList.map(([nombre,v])=>`<tr><td style="font-weight:700">${escHtml(nombre)}</td><td class="num">${v.rd?fmt(v.rd):'—'}</td><td class="num">${v.usd?fmtUSD(v.usd):'—'}</td></tr>`).join('')||'<tr><td colspan="3">Sin cuentas bancarias registradas</td></tr>'}
+        ${cuentasList.length?`<tr class="total"><td>Total General</td><td class="num">${fmt(totalCuentasRD)}</td><td class="num">${fmtUSD(totalCuentasUSD)}</td></tr>`:''}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <br clear="all" style="page-break-before:always">
+  <div class="rep-page">
+    <div class="rep-sec">
+      <div class="rep-sec-head"><h3>Intereses generados por préstamos</h3><span class="rep-tag close">Del mes + saldo al cierre</span></div>
+      <p class="rep-note">Todos los préstamos que tiene la compañía, con su Saldo Pendiente al cierre. RD$ y USD no se combinan en un solo total.</p>
+      <table class="rep-table">
+        <thead><tr><th>Acreedor</th><th>Moneda</th><th class="num">Capital pagado</th><th class="num">Interés generado</th><th class="num">Saldo Pendiente al cierre</th></tr></thead>
+        <tbody>${prestamosDetalle.map(({p,capitalMes,interesMes,saldoCierre})=>{const esUSD=p.moneda==='USD';const f=esUSD?fmtUSD:fmt;return`<tr><td style="font-weight:700">${escHtml(p.banco||'—')}</td><td>${esUSD?'USD':'RD$'}</td><td class="num">${f(capitalMes)}</td><td class="num neg">${f(interesMes)}</td><td class="num">${f(saldoCierre)}</td></tr>`;}).join('')||'<tr><td colspan="5">Sin préstamos registrados</td></tr>'}
+        ${prestamosRD.length?`<tr class="total"><td colspan="2">Total RD$</td><td class="num">${fmt(totalCapitalMesRD)}</td><td class="num">${fmt(totalInteresMesRD)}</td><td class="num">${fmt(totalSaldoPrestamosRD)}</td></tr>`:''}
+        ${prestamosUSD.length?`<tr class="total"><td colspan="2">Total USD</td><td class="num">${fmtUSD(totalCapitalMesUSD)}</td><td class="num">${fmtUSD(totalInteresMesUSD)}</td><td class="num">${fmtUSD(totalSaldoPrestamosUSD)}</td></tr>`:''}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <br clear="all" style="page-break-before:always">
+  <div class="rep-page">
+    <div class="rep-sec">
+      <div class="rep-sec-head"><h3>Resumen acumulado por mes</h3><span class="rep-tag close">${ay}</span></div>
+      <p class="rep-note">Cómo va la empresa mes a mes durante el año, para ver la tendencia del negocio. Los meses aún no llegados quedan en blanco.</p>
+      <table class="rep-table">
+        <thead><tr><th>Mes</th><th class="num">Beneficio</th><th class="num">Gastos</th><th class="num">Ganancia Neta</th></tr></thead>
+        <tbody>${tendenciaMeses.map(t=>t.futuro?`<tr><td style="font-weight:700">${t.mes}</td><td class="num">—</td><td class="num">—</td><td class="num">—</td></tr>`:`<tr><td style="font-weight:700">${t.mes}</td><td class="num pos">${fmt(t.beneficio)}</td><td class="num neg">${fmt(t.gastos+t.nomina)}</td><td class="num ${t.ganNeta>=0?'pos':'neg'}" style="font-weight:600">${fmt(t.ganNeta)}</td></tr>`).join('')}
+        <tr class="total"><td>Total ${ay}</td><td class="num">${fmt(totalTendBeneficio)}</td><td class="num">${fmt(totalTendGastos)}</td><td class="num ${totalTendGanNeta>=0?'pos':'neg'}">${fmt(totalTendGanNeta)}</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="rep-sec">
+      <div class="rep-sec-head"><h3>Resumen de Capital Neto</h3><span class="rep-tag close">Al cierre</span></div>
+      <p class="rep-note">Patrimonio (Inventario + Efectivo y Cuentas Bancarias + Activos Fijos) + Cuentas por Cobrar − Cuentas por Pagar (CxP + Préstamos), todo combinado a la tasa de Caja (${fmt(tasa)} por USD).</p>
+      ${tieneGraficoCapitalNeto?'<p align="center"><img src="cid:graficoCapitalNeto" width="680" height="220"></p>':''}
+      <table class="rep-table">
+        <tbody>
+          <tr><td>Inversión en Vehículos</td><td class="num pos">${fmt(totalInvTotal)}</td></tr>
+          <tr><td>Efectivo y Cuentas Bancarias</td><td class="num ${totalEfectivoCombinado>=0?'pos':'neg'}">${fmt(totalEfectivoCombinado)}</td></tr>
+          <tr><td>Activos Fijos (valor en libros)</td><td class="num pos">${fmt(totalActivoLibros)}</td></tr>
+          <tr class="total"><td>Sub Total Patrimonio</td><td class="num">${fmt(totalPatrimonio)}</td></tr>
+          <tr><td>Cuentas por Cobrar</td><td class="num pos">${fmt(cxcPendCombinado)}</td></tr>
+          <tr><td>Cuentas por Pagar (CxP + Préstamos)</td><td class="num neg">${fmt(totalPorPagarGeneral)}</td></tr>
+          <tr class="total"><td>Capital Neto</td><td class="num ${capitalNeto>=0?'pos':'neg'}" style="font-weight:800">${fmt(capitalNeto)}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="rep-footer">${escHtml(empresa)} — Informe de Cierre · ${mes}</div>
+  </div>`;
+  const nombreMesArchivo=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'][am-1];
+  const nombreArchivoInforme='Informe Mensual '+empresa+' '+nombreMesArchivo+' '+ay+'.doc';
+  if(logoWord){
+    imagenesGraficos.push({cid:'logoJeyco',mime:'image/png',base64:logoWord.src.split(',')[1]});
+  }
+  descargarWordConImagenes(html,nombreArchivoInforme,INFORME_CIERRE_CSS,imagenesGraficos);
+  toast('📝 Informe exportado — revisa las descargas','success');
+}
+
 // ══ USUARIOS ══
 function eliminarUsuario(i){
   const u=DB.users[i];
@@ -4164,7 +4842,7 @@ function guardarPermisosUsuarioConfig(i){
   if(currentUser?.role!=='admin'){toast('Solo el administrador puede editar usuarios','error');return;}
   const u=DB.users[i];
   if(!u)return;
-  const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','consultaCuentas','prestamos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
+  const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','consultaCuentas','prestamos','activosFijos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
   const ALERT_IDS=['SIN_VIN','SIN_COSTO','CXP','CXC_VENCIDA','CXC','SIN_VENDER_6M','SIN_VENDER_1A','DOCS','PLACA_60','PLACA_EXHIB_VENC','PLACA_EXHIB_PROX'];
   const alertas=ALERT_IDS.filter(id=>document.getElementById(`cfg-alerta-${i}-${id}`)?.checked);
   if(u.role!=='admin'){
@@ -4192,7 +4870,7 @@ function guardarPermisosUsuarioConfig(i){
       nomina:renderNomina,cxc:renderCXC,cxp:renderCXP,caja:renderCaja,
       gastosVeh:renderGastosVeh,cotizaciones:renderCotizaciones,
       autorizaciones:renderAutorizaciones,usuarios:renderUsuarios,
-      informes:renderInformes,config:renderConfig,prestamos:renderPrestamos};
+      informes:renderInformes,config:renderConfig,prestamos:renderPrestamos,activosFijos:renderActivosFijos};
     if(_rm[_pid])setTimeout(_rm[_pid],100);
   }
 }
@@ -4209,7 +4887,7 @@ function renderUsuarios(){
     {id:'cxp',label:'Cuentas por Pagar'},{id:'clientes',label:'Clientes'},
     {id:'ventas',label:'Ventas'},{id:'cxc',label:'Cuentas por Cobrar'},
     {id:'suplidores',label:'Suplidores'},{id:'gastos',label:'Gastos Empresa'},
-    {id:'nomina',label:'Nómina'},{id:'caja',label:'Caja'},{id:'consultaCuentas',label:'🧾 Consulta de Cuentas'},{id:'prestamos',label:'💰 Préstamos'},
+    {id:'nomina',label:'Nómina'},{id:'caja',label:'Caja'},{id:'consultaCuentas',label:'🧾 Consulta de Cuentas'},{id:'prestamos',label:'💰 Préstamos'},{id:'activosFijos',label:'🏛️ Activos Fijos'},
     {id:'cotizaciones',label:'Cotizaciones'},{id:'autorizaciones',label:'Autorización Compra'},{id:'seguros',label:'Seguros'},{id:'facturaExterna',label:'Facturas Externas'},{id:'alertas',label:'Alertas'},{id:'verSaldoCaja',label:'💰 Saldo Caja'},{id:'chat',label:'💬 Chat'},
     {id:'usuarios',label:'Usuarios'},{id:'config',label:'Configuración'},
     {id:'cuentas',label:'🏦 Cuentas'},{id:'cumpleanos',label:'🎂 Cumpleaños'},{id:'backup',label:'💾 Backup'},
@@ -4334,7 +5012,7 @@ function crearUsuarioNuevo(){
   const role=document.getElementById('nu-role')?.value;
   if(!nombre||!user||!pass){toast('Complete nombre, usuario y contraseña','error');return;}
   if(DB.users.find(u=>u.username===user)){toast('El usuario ya existe','error');return;}
-  const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','consultaCuentas','prestamos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
+  const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','consultaCuentas','prestamos','activosFijos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
   const DEL_IDS=['ventas','clientes','suplidores','gastos','nomina','gastosVeh','cxc','inventario'];
   const modulos=role==='admin'?MODS_IDS:MODS_IDS.filter(id=>document.getElementById('nu-mod-'+id)?.checked);
   const puedeEliminar=role==='admin'||DEL_IDS.some(id=>document.getElementById('nu-del-'+id)?.checked);
@@ -4424,7 +5102,7 @@ function editarUsuario(i){
     {id:'gastosVeh',label:'💸 Gastos Vehículo'},{id:'cxp',label:'📑 Cuentas por Pagar'},
     {id:'clientes',label:'👤 Clientes'},{id:'ventas',label:'💰 Ventas'},
     {id:'cxc',label:'📬 Cuentas por Cobrar'},{id:'gastos',label:'🏢 Gastos Empresa'},
-    {id:'nomina',label:'👷 Nómina'},{id:'caja',label:'💳 Caja'},{id:'consultaCuentas',label:'🧾 Consulta de Cuentas'},{id:'prestamos',label:'🏦 Préstamos Bancos'},
+    {id:'nomina',label:'👷 Nómina'},{id:'caja',label:'💳 Caja'},{id:'consultaCuentas',label:'🧾 Consulta de Cuentas'},{id:'prestamos',label:'🏦 Préstamos Bancos'},{id:'activosFijos',label:'🏛️ Activos Fijos'},
     {id:'cotizaciones',label:'📋 Cotizaciones'},{id:'autorizaciones',label:'📝 Autorización Compra'},
     {id:'seguros',label:'🛡️ Seguros'},{id:'facturaExterna',label:'🧾 Facturas Externas'},{id:'alertas',label:'🔔 Alertas'},{id:'verSaldoCaja',label:'💰 Ver Saldo Caja'},{id:'chat',label:'💬 Chat Interno'},
     {id:'cuentas',label:'🏦 Cuentas'},{id:'cumpleanos',label:'🎂 Cumpleaños'},
@@ -4517,7 +5195,7 @@ function guardarUsuario(idx){
   const pass=document.getElementById('u-pass').value;
   if(!nombre||!user||(!pass&&idx===undefined)){toast('Complete todos los campos','error');return;}
   if(idx===undefined&&DB.users.find(u=>u.username===user)){toast('El usuario ya existe','error');return;}
-  const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','consultaCuentas','prestamos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
+  const MODS_IDS=['dashboard','informes','consultas','inventario','gastosVeh','cxp','clientes','ventas','cxc','suplidores','gastos','nomina','caja','consultaCuentas','prestamos','activosFijos','cotizaciones','autorizaciones','seguros','facturaExterna','alertas','verSaldoCaja','chat','usuarios','config','cuentas','cumpleanos','backup'];
   const nuevosMods=MODS_IDS.filter(m=>{const el=document.getElementById('u-mod-'+m);return el&&el.checked;});
   const permKeys=['editar','eliminar','imprimir','pdf','editarVentas','editarClientes','editarSuplidores','editarGastos','editarNomina','editarGastosVeh','editarCobros','editarVehiculos','borrarVentas','borrarClientes','borrarSuplidores','borrarGastos','borrarNomina','borrarGastosVeh','borrarCobros','borrarVehiculos','editarCxp','editarCaja','editarCotizaciones','editarAutorizaciones','editarSeguros','editarFacturas','editarCuentas','editarCumpleanos','borrarCxp','borrarCaja','borrarCotizaciones','borrarAutorizaciones','borrarSeguros','borrarFacturas','borrarCuentas','borrarCumpleanos'];
   const nuevosPerms={};permKeys.forEach(k=>{const el=document.getElementById('u-perm-'+k);if(el)nuevosPerms[k]=el.checked;});
@@ -4535,7 +5213,7 @@ function guardarUsuario(idx){
       nomina:renderNomina,cxc:renderCXC,cxp:renderCXP,caja:renderCaja,
       gastosVeh:renderGastosVeh,cotizaciones:renderCotizaciones,
       autorizaciones:renderAutorizaciones,usuarios:renderUsuarios,
-      informes:renderInformes,config:renderConfig,prestamos:renderPrestamos};
+      informes:renderInformes,config:renderConfig,prestamos:renderPrestamos,activosFijos:renderActivosFijos};
     if(_rm2[_pid2])setTimeout(_rm2[_pid2],150);
   }
 }
@@ -4903,6 +5581,189 @@ function htmlTipoAmortOpts(selected){
     (selected==='LINEA_CREDITO'&&t.v==='SOLO_INT_FIJO')?'selected':''}>${t.l}</option>`).join('');
 }
 
+// ══ ACTIVOS FIJOS ══
+function cantidadActivo(a){return parseInt(a.cantidad||1)||1;}
+function valorCompraTotalActivo(a){return parseFloat(a.valorCompra||0)*cantidadActivo(a);}
+function calcDepreciacionActivo(a,hastaMes){
+  const cantidad=cantidadActivo(a);
+  const compra=parseFloat(a.valorCompra||0)*cantidad;
+  const residual=parseFloat(a.valorResidual||0)*cantidad;
+  const vidaUtil=parseInt(a.vidaUtil||0)||1;
+  const mensual=(compra-residual)/vidaUtil;
+  const fc=new Date((a.fecha||today())+'T12:00:00');
+  const [yh,mh]=(hastaMes||today().slice(0,7)).split('-').map(Number);
+  let meses=(yh-fc.getFullYear())*12+(mh-(fc.getMonth()+1))+1;
+  if(meses<0)meses=0;
+  if(meses>vidaUtil)meses=vidaUtil;
+  const acumulada=Math.min(mensual*meses,compra-residual);
+  const valorLibros=Math.max(compra-acumulada,residual);
+  const depMesActual=meses>0&&meses<=vidaUtil?mensual:0;
+  return {mensual:depMesActual,acumulada,valorLibros};
+}
+function renderActivosFijos(){
+  const pg=document.getElementById('page-activosFijos');
+  if(!pg){setTimeout(renderActivosFijos,300);return;}
+  if(!DB.activosFijos)DB.activosFijos=[];
+  const mesActual=today().slice(0,7);
+  const activos=DB.activosFijos;
+  const calc=activos.map(a=>({a,...calcDepreciacionActivo(a,mesActual)}));
+  const totalCompra=activos.reduce((s,a)=>s+valorCompraTotalActivo(a),0);
+  const totalDepMes=calc.reduce((s,c)=>s+c.mensual,0);
+  const totalAcum=calc.reduce((s,c)=>s+c.acumulada,0);
+  const totalLibros=calc.reduce((s,c)=>s+c.valorLibros,0);
+  pg.innerHTML=`
+    <div class="page-header">
+      <div><h1>🏛️ Activos Fijos</h1><p>${activos.length} activo(s) registrado(s)</p></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-secondary" onclick="exportarActivosFijosWord()">📝 Exportar a Word</button>
+        ${(currentUser?.role==='admin'||canDo('editar'))?`<button class="btn btn-primary" onclick="nuevoActivoFijo()">➕ Nuevo Activo</button>`:''}
+      </div>
+    </div>
+    <div class="stats-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:16px">
+      <div class="stat-card blue"><div class="stat-ico">🏛️</div><div class="stat-label">Activos Registrados</div><div class="stat-value">${activos.length}</div><div class="stat-sub">${fmt(totalCompra)} en compras</div></div>
+      <div class="stat-card purple"><div class="stat-ico">📉</div><div class="stat-label">Depreciación del Mes</div><div class="stat-value">${fmt(totalDepMes)}</div></div>
+      <div class="stat-card amber"><div class="stat-ico">🧾</div><div class="stat-label">Depreciación Acumulada</div><div class="stat-value">${fmt(totalAcum)}</div></div>
+      <div class="stat-card green"><div class="stat-ico">💼</div><div class="stat-label">🧮 Valor en Libros (General — valida contra el Informe)</div><div class="stat-value">${fmt(totalLibros)}</div></div>
+    </div>
+    <div class="card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>Activo</th><th>Categoría</th><th>Compra</th><th>Cant.</th><th>Valor Compra</th><th>Vida Útil</th><th>Depr. Mensual</th><th>Depr. Acumulada</th><th>Valor en Libros</th><th>Acciones</th></tr></thead>
+        <tbody>${activos.length?calc.map(({a,mensual,acumulada,valorLibros})=>`<tr>
+          <td style="font-weight:700">${escHtml(a.nombre)}</td>
+          <td>${escHtml(a.categoria||'—')}</td>
+          <td>${fmtDate(a.fecha)}</td>
+          <td style="text-align:center">${cantidadActivo(a)}</td>
+          <td>${fmt(valorCompraTotalActivo(a))}</td>
+          <td>${a.vidaUtil} m</td>
+          <td>${fmt(mensual)}</td>
+          <td>${fmt(acumulada)}</td>
+          <td style="font-weight:700;color:${valorLibros>0?'var(--navy)':'var(--gray)'}">${fmt(valorLibros)}</td>
+          <td>
+            <div style="display:flex;gap:4px">
+              ${(currentUser?.role==='admin'||canDo('editar'))?`<button class="btn btn-secondary btn-sm" onclick="editarActivoFijo('${a.id}')">✏️</button>`:''}
+              ${(currentUser?.role==='admin'||canDo('eliminar'))?`<button class="btn btn-red btn-sm" onclick="eliminarActivoFijo('${a.id}')">🗑</button>`:''}
+            </div>
+          </td>
+        </tr>`).join(''):'<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--gray)">Sin activos fijos registrados</td></tr>'}
+        ${activos.length?`<tr style="background:var(--gray2)"><td colspan="7" style="font-weight:700;text-align:right">TOTALES</td><td style="font-weight:800">${fmt(totalAcum)}</td><td style="font-weight:800;color:var(--green)">${fmt(totalLibros)}</td><td></td></tr>`:''}
+        </tbody>
+      </table></div>
+    </div>`;
+}
+function _formActivoFijo(a){
+  const categorias=['Mobiliario','Equipos','Tecnología','Vehículo','Herramientas','Otro'];
+  return`
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Nombre del Activo</label>
+        <input type="text" id="af-nombre" value="${escHtml(a?.nombre||'')}" placeholder="Ej: Aire acondicionado oficina"></div>
+      <div class="form-field"><label>Categoría</label>
+        <select id="af-categoria">${categorias.map(c=>`<option ${c===a?.categoria?'selected':''}>${c}</option>`).join('')}</select></div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Fecha de Compra</label>
+        <input type="date" id="af-fecha" value="${a?.fecha||today()}"></div>
+      <div class="form-field"><label class="required">Valor de Compra (por unidad)</label>
+        <input type="text" id="af-valor" value="${a?.valorCompra?fmtMoneyDisplay(a.valorCompra):''}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" placeholder="0.00"></div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label class="required">Cantidad</label>
+        <input type="text" id="af-cantidad" value="${a?.cantidad||1}" placeholder="Ej: 5" title="Cuántas unidades iguales de este activo (ej. 5 sillas). El valor de compra es por unidad."></div>
+      <div class="form-field"><label class="required">Vida Útil (meses)</label>
+        <input type="text" id="af-vida" value="${a?.vidaUtil||''}" placeholder="Ej: 60"></div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label>Valor Residual (por unidad)</label>
+        <input type="text" id="af-residual" value="${a?.valorResidual?fmtMoneyDisplay(a.valorResidual):''}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" placeholder="0.00"></div>
+      <div class="form-field"><label>Notas</label><input type="text" id="af-obs" value="${escHtml(a?.obs||'')}" placeholder="Opcional"></div>
+    </div>`;
+}
+function nuevoActivoFijo(){
+  openModal('🏛️ Nuevo Activo Fijo',_formActivoFijo(null),
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-primary" onclick="guardarActivoFijo()">💾 Guardar Activo</button>`);
+}
+function editarActivoFijo(id){
+  const a=(DB.activosFijos||[]).find(x=>x.id===id);if(!a)return;
+  openModal('✏️ Editar Activo Fijo',_formActivoFijo(a),
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-primary" onclick="guardarActivoFijo('${id}')">💾 Guardar Cambios</button>`);
+}
+function guardarActivoFijo(id){
+  const nombre=document.getElementById('af-nombre').value.trim();
+  const categoria=document.getElementById('af-categoria').value;
+  const fecha=document.getElementById('af-fecha').value;
+  const valorCompra=parseFloat((document.getElementById('af-valor').value||'0').replace(/,/g,''));
+  const cantidad=parseInt(document.getElementById('af-cantidad').value||'1')||1;
+  const vidaUtil=parseInt(document.getElementById('af-vida').value||'0');
+  const valorResidual=parseFloat((document.getElementById('af-residual').value||'0').replace(/,/g,''));
+  const obs=document.getElementById('af-obs').value.trim();
+  if(!nombre){toast('Ingresa el nombre del activo','error');return;}
+  if(!fecha){toast('Ingresa la fecha de compra','error');return;}
+  if(!valorCompra){toast('Ingresa el valor de compra','error');return;}
+  if(cantidad<1){toast('La cantidad debe ser al menos 1','error');return;}
+  if(!vidaUtil){toast('Ingresa la vida útil en meses','error');return;}
+  if(!DB.activosFijos)DB.activosFijos=[];
+  const prev=id?DB.activosFijos.find(x=>x.id===id):null;
+  const a={id:id||uid(),nombre,categoria,fecha,valorCompra,cantidad,valorResidual,vidaUtil,obs,creado:prev?.creado||today()};
+  if(id){const i=DB.activosFijos.findIndex(x=>x.id===id);DB.activosFijos[i]=a;}
+  else DB.activosFijos.push(a);
+  sDB('activosFijos');
+  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('activosFijos').catch(()=>{});
+  closeModal();
+  toast('Activo guardado ✓','success');
+  renderActivosFijos();
+}
+function eliminarActivoFijo(id){
+  if(currentUser?.role!=='admin'&&!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}
+  openModal('🗑 Eliminar Activo','<p>¿Eliminar este activo fijo? Esta acción no se puede deshacer.</p>',
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-red" onclick="confirmarEliminarActivoFijo('${id}')">🗑 Eliminar</button>`);
+}
+function confirmarEliminarActivoFijo(id){
+  DB.activosFijos=(DB.activosFijos||[]).filter(x=>x.id!==id);
+  sDB('activosFijos');
+  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('activosFijos').catch(()=>{});
+  closeModal();
+  toast('Activo eliminado ✓','success');
+  renderActivosFijos();
+}
+function exportarActivosFijosWord(){
+  const mesActual=today().slice(0,7);
+  const activos=DB.activosFijos||[];
+  const calc=activos.map(a=>({a,...calcDepreciacionActivo(a,mesActual)}));
+  const totalCompra=activos.reduce((s,a)=>s+valorCompraTotalActivo(a),0);
+  const totalAcum=calc.reduce((s,c)=>s+c.acumulada,0);
+  const totalLibros=calc.reduce((s,c)=>s+c.valorLibros,0);
+  const empresa=DB.config.empresa||'JEYCO';
+  const html=`<div style="font-family:Arial,sans-serif;font-size:12px;color:#0f172a">
+    <h2 style="margin:0 0 4px">${escHtml(empresa)}</h2>
+    <div style="color:#64748b;margin-bottom:16px">ACTIVOS FIJOS Y DEPRECIACIÓN — Al cierre de ${fmtDate(today())}</div>
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="background:#0f172a;color:#fff">
+        <th style="padding:6px 8px;text-align:left">Activo</th><th style="padding:6px 8px;text-align:left">Categoría</th>
+        <th style="padding:6px 8px;text-align:left">Compra</th><th style="padding:6px 8px;text-align:right">Cant.</th><th style="padding:6px 8px;text-align:right">Valor Compra</th>
+        <th style="padding:6px 8px;text-align:right">Depr. Acumulada</th><th style="padding:6px 8px;text-align:right">Valor en Libros</th>
+      </tr></thead>
+      <tbody>
+      ${calc.map(({a,acumulada,valorLibros})=>`<tr>
+        <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0">${escHtml(a.nombre)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0">${escHtml(a.categoria||'—')}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0">${fmtDate(a.fecha)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:right">${cantidadActivo(a)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:right">${fmt(valorCompraTotalActivo(a))}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:right">${fmt(acumulada)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700">${fmt(valorLibros)}</td>
+      </tr>`).join('')}
+      <tr style="font-weight:700"><td colspan="4" style="padding:6px 8px;text-align:right">TOTAL</td>
+        <td style="padding:6px 8px;text-align:right">${fmt(totalCompra)}</td>
+        <td style="padding:6px 8px;text-align:right">${fmt(totalAcum)}</td>
+        <td style="padding:6px 8px;text-align:right">${fmt(totalLibros)}</td></tr>
+      </tbody>
+    </table>
+    </div>`;
+  descargarWord(html,'Activos_Fijos_'+today()+'.doc');
+}
+
 let prestamoSelectedId=null;
 function renderPrestamos(){
   const pg=document.getElementById('page-prestamos');
@@ -4910,10 +5771,14 @@ function renderPrestamos(){
   const prestamos=DB.prestamos||[];
   const activos=prestamos.filter(p=>p.status!=='PAGADO');
   const totalDeuda=activos.reduce((a,p)=>a+parseFloat(p.saldo||0),0);
+  const tasa=parseFloat(DB.config.tasaCambio||60);
+  const deudaRD=activos.filter(p=>(p.moneda||'RD$')==='RD$').reduce((a,p)=>a+parseFloat(p.saldo||0),0);
+  const deudaUSD=activos.filter(p=>p.moneda==='USD').reduce((a,p)=>a+parseFloat(p.saldo||0),0);
+  const deudaCombinada=deudaRD+deudaUSD*tasa;
   const ds='background:#e2e8f0;color:#adb5bd;cursor:not-allowed;border:1px solid #dee2e6';
   pg.innerHTML=`
     <div class="page-header">
-      <div><h1>🏦 Préstamos Bancos</h1><p>${activos.length} préstamos activos — Deuda total: ${fmt(totalDeuda)}</p></div>
+      <div><h1>🏦 Préstamos Bancos</h1><p>${activos.length} préstamos activos — Deuda total: ${fmt(deudaCombinada)}</p></div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         <button id="prest-btn-historial" disabled class="btn btn-sm" style="${ds}" onclick="prestamoAccion('historial')">👁 Historial</button>
         ${(currentUser?.role==='admin'||canDo('editar'))?`<button id="prest-btn-editar" disabled class="btn btn-sm" style="${ds}" onclick="prestamoAccion('editar')">✏️ Editar</button>`:''}
@@ -4922,6 +5787,13 @@ function renderPrestamos(){
         <div style="width:1px;height:28px;background:var(--gray3);margin:0 2px"></div>
         <button class="btn btn-primary" onclick="nuevoPrestamo()">➕ Nuevo Préstamo</button>
       </div>
+    </div>
+    <div class="card" style="margin-bottom:16px;border-top:3px solid var(--navy)">
+      <div class="card-title">🧮 Total General de Deuda (Pesos + Dólares)</div>
+      <div class="table-wrap"><table><thead><tr><th>Pesos (RD$)</th><th>Dólares (USD)</th><th>Total General</th></tr></thead><tbody>
+        <tr><td style="font-weight:700">${fmt(deudaRD)}</td><td style="font-weight:700">${deudaUSD?fmtUSD(deudaUSD):'—'}</td><td style="font-weight:800;color:var(--red)">${fmt(deudaCombinada)}</td></tr>
+      </tbody></table></div>
+      <p style="font-size:11px;color:var(--gray);margin-top:8px">Total General combina Pesos + Dólares a la tasa de Caja (${fmt(tasa)} por USD). Cuadra con el Informe Mensual y Consultas a la misma fecha.</p>
     </div>
     <div class="card">
       <div class="search-wrap"><input class="search-input" placeholder="Buscar por banco, descripción..." oninput="filterTable('prest-tbl',this.value)"></div>
@@ -9873,6 +10745,14 @@ function renderCXP(){
       </div>
     </div>
 
+    <div class="card" style="margin-bottom:16px;border-top:3px solid var(--navy)">
+      <div class="card-title">🧮 Total General por Pagar (Pesos + Dólares)</div>
+      <div class="table-wrap"><table><thead><tr><th>Pesos (RD$)</th><th>Dólares (USD)</th><th>Total General</th></tr></thead><tbody>
+        <tr><td style="font-weight:700">${fmt(totalPendRD)}</td><td style="font-weight:700">${totalPendUSD?fmtUSD(totalPendUSD):'—'}</td><td style="font-weight:800;color:var(--red)">${fmt(totalPendRD+totalPendUSD*tasa)}</td></tr>
+      </tbody></table></div>
+      <p style="font-size:11px;color:var(--gray);margin-top:8px">Total General combina Pesos + Dólares a la tasa de Caja (${fmt(tasa)} por USD). Cuadra con el Informe Mensual y Consultas a la misma fecha.</p>
+    </div>
+
     <div class="card">
       <div class="search-wrap"><input class="search-input" placeholder="Buscar por suplidor, vehículo, tipo de gasto..." oninput="filterTable('cxp-tbl',this.value)"></div>
       <div class="table-wrap"><table id="cxp-tbl">
@@ -10539,6 +11419,12 @@ function renderCXC(){
   const totalCobrado=items.filter(x=>x.status!=='SALDADO').reduce((a,x)=>a+parseFloat(x.abonado||0),0);
   const totalPend=items.filter(x=>x.status!=='SALDADO').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
 
+  // Total General combinando RD$ + USD (independiente del filtro de moneda de arriba)
+  const cxcTodosPend=(DB.cxc||[]).filter(x=>x.status!=='SALDADO');
+  const cxcPendTodosRD=cxcTodosPend.filter(x=>(x.moneda||'RD$')==='RD$').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
+  const cxcPendTodosUSD=cxcTodosPend.filter(x=>x.moneda==='USD').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
+  const cxcPendTodosCombinado=cxcPendTodosRD+cxcPendTodosUSD*tasa;
+
   document.getElementById('page-cxc').innerHTML=`
     <div class="page-header">
       <div><h1>📬 Cuentas por Cobrar</h1>
@@ -10584,6 +11470,14 @@ function renderCXC(){
         <div class="stat-value" style="color:var(--red)">${fV(totalPend)}</div>
         ${esUSD?`<div class="stat-sub">${fmt(totalPend*tasa)}</div>`:`<div class="stat-sub">$${parseFloat((totalPend/tasa)||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})} USD</div>`}
       </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-title">🧮 Total General por Cobrar (todas las monedas)</div>
+      <div class="table-wrap"><table><thead><tr><th>Pesos (RD$)</th><th>Dólares (USD)</th><th>Total General</th></tr></thead><tbody>
+        <tr><td style="font-weight:700">${fmt(cxcPendTodosRD)}</td><td style="font-weight:700">${cxcPendTodosUSD?fmtUSD(cxcPendTodosUSD):'—'}</td><td style="font-weight:800;color:var(--blue)">${fmt(cxcPendTodosCombinado)}</td></tr>
+      </tbody></table></div>
+      <p style="font-size:11px;color:var(--gray);margin-top:8px">Total General combina Pesos + Dólares a la tasa de Caja (${fmt(tasa)} por USD). Cuadra con el Informe Mensual y Consultas a la misma fecha.</p>
     </div>
 
     <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#92400e;display:flex;align-items:center;gap:8px">
@@ -12986,6 +13880,7 @@ function _ejecutarBackup(){
     seguros:DB.seguros||[],
     facturasExternas:DB.facturasExternas||[],
     prestamos:DB.prestamos||[],
+    activosFijos:DB.activosFijos||[],
     cumpleanosMensajes:DB.cumpleanosMensajes||{}
   };
   const blob=new Blob([JSON.stringify(datos,null,2)],{type:'application/json'});
@@ -13167,7 +14062,7 @@ async function fbGuardar(key){
 
 async function fbCargar(){
   const keys=['config','config_logo','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
-    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','presencia','cumpleanosMensajes','log'];
+    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos','presencia','cumpleanosMensajes','log'];
   let loaded=false;
   // Fix 4A — carga en paralelo con Promise.allSettled (si una falla, las demás siguen)
   const resultados=await Promise.allSettled(
@@ -13331,7 +14226,7 @@ function iniciarVerificadorVersion(){
 function fbActivarListeners(){
   const keys=['config','config_logo','users','vehiculos','clientes','suplidores',
     'ventas','cotizaciones','caja','gastos','nomina','nominaPagos',
-    'gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos'];
+    'gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos'];
   
   keys.forEach(key=>{
     _fbDB.collection(_fbCol).doc(key).onSnapshot(snap=>{
@@ -13417,6 +14312,7 @@ function fbActivarListeners(){
           seguros:()=>typeof renderSeguros==='function'&&renderSeguros(),
           facturaExterna:()=>typeof renderFacturaExterna==='function'&&renderFacturaExterna(),
           prestamos:()=>typeof renderPrestamos==='function'&&renderPrestamos(),
+          activosFijos:()=>typeof renderActivosFijos==='function'&&renderActivosFijos(),
         };
         // Solo re-renderizar si el key afecta la página activa
         const keysParaPagina={
@@ -13433,6 +14329,7 @@ function fbActivarListeners(){
           seguros:['seguros'],
           facturaExterna:['facturasExternas'],
           prestamos:['prestamos'],
+          activosFijos:['activosFijos'],
         };
         const afecta=keysParaPagina[pid]||[];
         if(afecta.includes(key)&&renderMap[pid]){
@@ -13451,7 +14348,7 @@ function fbActivarListeners(){
 window.forzarSincronizacion = async function(){
   if(!window._fbActivo){toast('Firebase no está conectado','error');return;}
   const keys=['config','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
-    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','log'];
+    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos','log'];
   const dot=document.getElementById('fb-dot');
   const txt=document.getElementById('fb-text');
   if(dot)dot.style.background='#f59e0b';
@@ -13676,7 +14573,7 @@ window.fbIniciar = async function(){
       if(_traspSyncChanged){sDB('cxc');}
     } else {
       const keys=['config','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
-        'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','log'];
+        'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos','log'];
       // Fix 4B — solo subir si hay datos reales, no sobreescribir Firebase con datos vacíos
       const hayDatosReales=
         (DB.vehiculos||[]).length>0||
