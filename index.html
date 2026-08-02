@@ -4324,7 +4324,17 @@ function renderInformes(){
     else{if(mon==='USD')infCuentas[key].salUSD+=parseFloat(c.monto||0);else infCuentas[key].salRD+=parseFloat(c.monto||0);}
   });
   const totalV=ventasMes.reduce((a,v)=>a+parseFloat(v.precioVenta||0),0);
-  const totalG=ventasMes.reduce((a,v)=>a+parseFloat(v.ganancia||0),0);
+  // Venta/costo/ganancia en RD$ por vehículo — v.ganancia no sirve directo en ventas USD
+  // (resta precio USD − costo RD$ sin convertir). Mismo criterio que exportarInformeWord.
+  const ventasMesCalc=ventasMes.map(v=>{
+    const ventaRD=aRD(v.precioVenta||0,v.moneda,v.tasaCambio||tasa);
+    const costoRD=parseFloat(v.costoVehiculo||0);
+    const gananciaRD=ventaRD-costoRD;
+    const beneficioJeyco=(gananciaRD-parseFloat(v.gastoAdicional||0))/(parseInt(v.dividirEntre||1)||1);
+    return{v,ventaRD,costoRD,gananciaRD,beneficioJeyco};
+  });
+  const totalG=ventasMesCalc.reduce((a,x)=>a+x.gananciaRD,0);
+  const totalBeneficioJeyco=ventasMesCalc.reduce((a,x)=>a+x.beneficioJeyco,0);
   const totalGastos=gastosMes.reduce((a,g)=>a+parseFloat(g.monto||0),0);
   const nominaMes=DB.nomina.filter(e=>e.activo).reduce((a,e)=>a+parseFloat(e.salario||0),0);
   const gastosCat={};gastosMes.forEach(g=>{gastosCat[g.categoria||'General']=(gastosCat[g.categoria||'General']||0)+parseFloat(g.monto||0);});
@@ -4375,9 +4385,9 @@ function renderInformes(){
     </div>
     <div class="two-col">
       <div class="card"><div class="card-title">📦 Vehículos Vendidos</div>
-        ${ventasMes.length?`<div class="table-wrap"><table><thead><tr><th>Código</th><th>Vehículo</th><th>Cliente</th><th>Venta</th><th>Ganancia</th></tr></thead><tbody>
-          ${ventasMes.map(v=>`<tr><td class="mono" style="font-size:11px">${escHtml(v.codigo||'—')}</td><td style="font-size:12px">${escHtml(v.vehiculo||'—')}</td><td>${escHtml(v.cliente||'—')}</td><td style="font-weight:700;color:var(--green)">${fmt(v.precioVenta)}</td><td style="font-weight:700;color:${parseFloat(v.ganancia)>=0?'var(--green)':'var(--red)'}">${fmt(v.ganancia)}</td></tr>`).join('')}
-          <tr style="background:var(--blue3)"><td colspan="3" style="font-weight:700">TOTAL</td><td style="font-weight:800;color:var(--blue)">${fmt(totalV)}</td><td style="font-weight:800;color:var(--green)">${fmt(totalG)}</td></tr>
+        ${ventasMesCalc.length?`<div class="table-wrap"><table><thead><tr><th>Código</th><th>Vehículo</th><th>Cliente</th><th>Venta</th><th>Ganancia</th><th>Beneficio Jeyco</th></tr></thead><tbody>
+          ${ventasMesCalc.map(({v,ventaRD,gananciaRD,beneficioJeyco})=>`<tr><td class="mono" style="font-size:11px">${escHtml(v.codigo||'—')}</td><td style="font-size:12px">${escHtml(v.vehiculo||'—')}</td><td>${escHtml(v.cliente||'—')}</td><td style="font-weight:700;color:var(--green)">${fmt(ventaRD)}</td><td style="font-weight:700;color:${gananciaRD>=0?'var(--green)':'var(--red)'}">${fmt(gananciaRD)}</td><td style="font-weight:700;color:${beneficioJeyco>=0?'var(--blue)':'var(--red)'}">${fmt(beneficioJeyco)}${(v.dividirEntre||1)>1?`<div style="font-size:10px;color:var(--gray);font-weight:400">÷${v.dividirEntre}${parseFloat(v.gastoAdicional||0)>0?` − ${fmt(v.gastoAdicional)} extra`:''}</div>`:parseFloat(v.gastoAdicional||0)>0?`<div style="font-size:10px;color:var(--gray);font-weight:400">− ${fmt(v.gastoAdicional)} extra</div>`:''}</td></tr>`).join('')}
+          <tr style="background:var(--blue3)"><td colspan="3" style="font-weight:700">TOTAL</td><td style="font-weight:800;color:var(--blue)">${fmt(totalV)}</td><td style="font-weight:800;color:var(--green)">${fmt(totalG)}</td><td style="font-weight:800;color:var(--blue)">${fmt(totalBeneficioJeyco)}</td></tr>
         </tbody></table></div>`:'<div style="text-align:center;padding:24px;color:var(--gray)">Sin ventas este mes</div>'}
       </div>
       <div class="card"><div class="card-title">💸 Gastos por Categoría</div>
@@ -4413,11 +4423,12 @@ function renderInformes(){
     </div>
     <div class="card" style="background:var(--navy)">
       <div style="font-size:15px;font-weight:800;color:#fff;margin-bottom:14px">📊 RESUMEN MENSUAL — ${mes}</div>
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
         <div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">Ventas</div><div style="font-size:18px;font-weight:800;color:#4ade80">${fmt(totalV)}</div></div>
         <div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">Ganancia Bruta</div><div style="font-size:18px;font-weight:800;color:#60a5fa">${fmt(totalG)}</div></div>
         <div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">Gastos</div><div style="font-size:18px;font-weight:800;color:#f87171">${fmt(totalGastos)}</div></div>
         <div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">Ganancia Neta</div><div style="font-size:18px;font-weight:800;color:${totalG-totalGastos>=0?'#4ade80':'#f87171'}">${fmt(totalG-totalGastos)}</div></div>
+        <div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px;border:1px solid #60a5fa"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">💼 Total Beneficio Jeyco</div><div style="font-size:18px;font-weight:800;color:#60a5fa">${fmt(totalBeneficioJeyco)}</div></div>
       </div>
     </div>`;
   document.getElementById('inf-mes').value=mes;
@@ -8836,6 +8847,14 @@ function nuevaVenta(){
         <input type="text" id="sv-pendiente" value="" readonly style="background:#f8fafc;font-weight:700;color:var(--red)">
       </div>
     </div>
+    <div class="form-row c2">
+      <div class="form-field"><label>💼 Gasto Adicional No Registrado</label>
+        <input type="text" id="sv-gasto-extra" value="0" placeholder="0.00" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
+      </div>
+      <div class="form-field"><label>👥 Dividir Beneficio Entre</label>
+        <input type="number" id="sv-dividir-entre" value="1" min="1" step="1">
+      </div>
+    </div>
     <div style="background:var(--blue3);border-radius:8px;padding:12px;margin-top:8px">
       <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:10px">📋 Tipo de Transferencia</div>
       <div class="form-row c2" style="margin-bottom:10px">
@@ -9276,6 +9295,8 @@ function confirmarVenta(nf){
   const comentarioVenta=document.getElementById('sv-comentario')?.value||'';
   const garantiaVenta=document.getElementById('sv-garantia')?.value||'';
   const millajeVenta=parseFloat((document.getElementById('sv-millaje-venta')?.value||'0').replace(/,/g,''))||0;
+  const gastoAdicional=parseFloat((document.getElementById('sv-gasto-extra')?.value||'0').replace(/,/g,''))||0;
+  const dividirEntre=parseInt(document.getElementById('sv-dividir-entre')?.value||'1')||1;
   // Placa exhibición (solo endorso)
   const placaExhibFecha=tipoTransferencia==='endoso'?(document.getElementById('sv-placa-exhib-fecha')?.value||''):'';
   let placaExhibFotoData='';
@@ -9312,6 +9333,8 @@ function confirmarVenta(nf){
     comentario:comentarioVenta,
     garantia:garantiaVenta,
     millajeVenta,
+    gastoAdicional,
+    dividirEntre,
     placaExhibFecha,
     placaExhibFoto:placaExhibFotoData
   };
@@ -9587,6 +9610,14 @@ function editarVenta(vid){
         <input type="text" id="sv-pendiente" value="${fmtMoneyDisplay(v.pendiente||0)}" readonly style="background:#f8fafc;font-weight:700;color:var(--red)">
       </div>
     </div>
+    <div class="form-row c2">
+      <div class="form-field"><label>💼 Gasto Adicional No Registrado</label>
+        <input type="text" id="sv-gasto-extra" value="${fmtMoneyDisplay(v.gastoAdicional||0)}" placeholder="0.00" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
+      </div>
+      <div class="form-field"><label>👥 Dividir Beneficio Entre</label>
+        <input type="number" id="sv-dividir-entre" value="${v.dividirEntre||1}" min="1" step="1">
+      </div>
+    </div>
     <div class="form-row c2" style="margin-bottom:10px">
       <div class="form-field"><label>Estado</label>
         <select id="ev-estado">
@@ -9703,6 +9734,8 @@ function guardarEditarVenta(vid){
   const recPlaca=document.getElementById('sv-rec-placa')?.value||'';
   const comentario=document.getElementById('sv-comentario')?.value||'';
   const motivoTransito=document.getElementById('ev-motivo')?.value||'';
+  const gastoAdicional=parseFloat((document.getElementById('sv-gasto-extra')?.value||'0').replace(/,/g,''))||0;
+  const dividirEntre=parseInt(document.getElementById('sv-dividir-entre')?.value||'1')||1;
   // Matrícula imagen (solo si se subió nueva)
   const fileInput=document.getElementById('sv-rec-matricula');
   const oldRec=DB.ventas[i].vehiculoRecibido||{};
@@ -9732,6 +9765,8 @@ function guardarEditarVenta(vid){
   DB.ventas[i].montoTraspaso=traspasoMonto; // sincronizar ambos campos
   DB.ventas[i].traspasoPagado=traspasoPagado;
   DB.ventas[i].comentario=comentario;
+  DB.ventas[i].gastoAdicional=gastoAdicional;
+  DB.ventas[i].dividirEntre=dividirEntre;
   if(tieneRec&&recVehiculo){
     DB.ventas[i].vehiculoRecibido={vehiculo:recVehiculo,vin:recVin,placa:recPlaca,matricula:recMatricula};
   } else if(!tieneRec){
