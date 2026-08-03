@@ -9,7 +9,12 @@
       "Bash(taskkill //F //IM python.exe)",
       "Bash(awk 'NR==10415,NR==10495{print NR\": \"$0}' \"C:\\\\Users\\\\User\\\\Desktop\\\\PROGRAMAS WEB NUEVA\\\\JEYCO\\\\index.html\")",
       "Bash(awk -F: '$1>10415 && $1<10600')",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(node --check \"index.html\")",
+      "Bash(node --check /tmp/_check.js)",
+      "Bash(export SCRATCH=\"C:\\\\Users\\\\User\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-User-Desktop-PROGRAMAS-WEB-NUEVA-JEYCO\\\\ba0ca7d7-1fba-43cc-a04b-6b1b2ad26718\\\\scratchpad\")",
+      "Bash(node --check __TRACKED_VAR__/_check.js)",
+      "Bash(node -e \"let l=require\\('fs'\\).readFileSync\\(0,'utf8'\\); console.log\\(eval\\(l\\)\\)\")"
     ]
   }
 }
