@@ -2958,82 +2958,57 @@ function calcResumenCuentasGeneral(desde,hasta){
 }
 function renderConsultaCuentas(){
   const bcs=DB.config.bancoCuentas||[];
-  const bancoSel=document.getElementById('cc-banco')?.value||(bcs[0]?bcs[0].banco:'');
-  const bancoObj=bcs.find(b=>b.banco===bancoSel)||bcs[0];
-  const primeraCuenta=bancoObj&&bancoObj.cuentas&&bancoObj.cuentas[0]?(bancoObj.cuentas[0].tipo+' — '+bancoObj.cuentas[0].numero):'';
-  const cuentaSel=document.getElementById('cc-cuenta')?.value||primeraCuenta;
+  const bancoSel=document.getElementById('cc-banco')?.value||'';
+  const bancoObj=bcs.find(b=>b.banco===bancoSel);
+  const cuentaSel=document.getElementById('cc-cuenta')?.value||'';
   const desde=document.getElementById('cc-desde')?.value||'';
   const hasta=document.getElementById('cc-hasta')?.value||'';
 
-  const bancoOpts=bcs.map(b=>`<option value="${escHtml(b.banco)}" ${b.banco===bancoSel?'selected':''}>${escHtml(b.banco)}</option>`).join('')||'<option value="">Sin bancos configurados</option>';
-  const cuentaOpts=(bancoObj?.cuentas||[]).map(c=>{const v=c.tipo+' — '+c.numero;return`<option value="${escHtml(v)}" ${v===cuentaSel?'selected':''}>${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`;}).join('')||'<option value="">Sin cuentas</option>';
+  const bancoOpts=`<option value="">Seleccionar banco...</option>`+bcs.map(b=>`<option value="${escHtml(b.banco)}" ${b.banco===bancoSel?'selected':''}>${escHtml(b.banco)}</option>`).join('');
+  const cuentaOpts=`<option value="">Seleccionar cuenta...</option>`+(bancoObj?.cuentas||[]).map(c=>{const v=c.tipo+' — '+c.numero;return`<option value="${escHtml(v)}" ${v===cuentaSel?'selected':''}>${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`;}).join('');
 
-  let movs=DB.caja.filter(c=>normalizarBancoGlobal(c.banco)===normalizarBancoGlobal(bancoSel)&&limpiarCuenta(c.cuenta||'')===limpiarCuenta(cuentaSel));
-  if(desde)movs=movs.filter(c=>c.fecha&&c.fecha>=desde);
-  if(hasta)movs=movs.filter(c=>c.fecha&&c.fecha<=hasta);
-  movs=movs.slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
-
-  const cuentaInfo=(bancoObj?.cuentas||[]).find(c=>(c.tipo+' — '+c.numero)===cuentaSel);
-  const esUSD=cuentaInfo?(cuentaInfo.tipo.includes('USD')||cuentaInfo.tipo.includes('Dólares')):false;
-  const fV=n=>esUSD?fmtUSD(n):fmt(n);
-
-  const entradas=movs.filter(m=>m.tipo==='ENTRADA').reduce((a,m)=>a+parseFloat(m.monto||0),0);
-  const salidas=movs.filter(m=>m.tipo==='SALIDA').reduce((a,m)=>a+parseFloat(m.monto||0),0);
-  const saldo=entradas-salidas;
-
-  // ── Resumen general por Moneda → Banco → Cuenta (respeta el filtro de fecha si está activo) ──
-  const fmtUSD=n=>'USD '+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  const resumenRows=calcResumenCuentasGeneral(desde,hasta);
-  const resumenHTML=['RD$','USD'].filter(m=>resumenRows.some(r=>r.moneda===m)).map(moneda=>{
-    const esUSD=moneda==='USD';
-    const fV=n=>esUSD?fmtUSD(n):fmt(n);
-    const porBanco={};
-    resumenRows.filter(r=>r.moneda===moneda).forEach(r=>{(porBanco[r.banco]=porBanco[r.banco]||[]).push(r);});
-    let totEnt=0,totSal=0;
-    const filas=Object.entries(porBanco).map(([banco,cuentas])=>{
-      const bancoEnt=cuentas.reduce((a,c)=>a+c.entradas,0);
-      const bancoSal=cuentas.reduce((a,c)=>a+c.salidas,0);
-      totEnt+=bancoEnt;totSal+=bancoSal;
-      const filasCuenta=cuentas.map(c=>`<tr>
-        <td style="padding-left:26px;font-size:12px">${escHtml(c.cuenta)}</td>
-        <td style="color:var(--green);font-weight:600">${fV(c.entradas)}</td>
-        <td style="color:var(--red);font-weight:600">${fV(c.salidas)}</td>
-        <td style="font-weight:800;color:${(c.entradas-c.salidas)>=0?'var(--green)':'var(--red)'}">${fV(c.entradas-c.salidas)}</td>
-      </tr>`).join('');
-      return`<tr style="background:var(--gray2)"><td colspan="4" style="font-weight:800">🏦 ${escHtml(banco)}</td></tr>${filasCuenta}
-        <tr style="border-top:1px solid var(--gray3)"><td style="font-weight:700;font-size:12px">Subtotal ${escHtml(banco)}</td><td style="font-weight:700;color:var(--green)">${fV(bancoEnt)}</td><td style="font-weight:700;color:var(--red)">${fV(bancoSal)}</td><td style="font-weight:800">${fV(bancoEnt-bancoSal)}</td></tr>`;
-    }).join('');
-    return`<div style="margin-bottom:14px">
-      <div style="font-size:12px;font-weight:800;text-transform:uppercase;color:var(--gray);margin-bottom:6px">${esUSD?'🇺🇸 Dólares (USD)':'🇩🇴 Pesos (RD$)'}</div>
-      <table><thead><tr><th>Banco / Cuenta</th><th>Entrada</th><th>Salida</th><th>Total</th></tr></thead>
-      <tbody>${filas}
-        <tr style="background:var(--navy);color:#fff"><td style="font-weight:900">GRAN TOTAL ${moneda}</td><td style="font-weight:900">${fV(totEnt)}</td><td style="font-weight:900">${fV(totSal)}</td><td style="font-weight:900">${fV(totEnt-totSal)}</td></tr>
-      </tbody></table>
-    </div>`;
-  }).join('')||'<div style="text-align:center;padding:16px;color:var(--gray)">Sin cuentas configuradas</div>';
+  const hayBusqueda=!!(bancoSel&&cuentaSel);
+  let movs=[];
+  let entradas=0,salidas=0,saldo=0,fV=fmt;
+  if(hayBusqueda){
+    movs=DB.caja.filter(c=>normalizarBancoGlobal(c.banco)===normalizarBancoGlobal(bancoSel)&&limpiarCuenta(c.cuenta||'')===limpiarCuenta(cuentaSel));
+    if(desde)movs=movs.filter(c=>c.fecha&&c.fecha>=desde);
+    if(hasta)movs=movs.filter(c=>c.fecha&&c.fecha<=hasta);
+    movs=movs.slice().sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+    const cuentaInfo=(bancoObj?.cuentas||[]).find(c=>(c.tipo+' — '+c.numero)===cuentaSel);
+    const esUSD=cuentaInfo?(cuentaInfo.tipo.includes('USD')||cuentaInfo.tipo.includes('Dólares')):false;
+    fV=n=>esUSD?fmtUSD(n):fmt(n);
+    entradas=movs.filter(m=>m.tipo==='ENTRADA').reduce((a,m)=>a+parseFloat(m.monto||0),0);
+    salidas=movs.filter(m=>m.tipo==='SALIDA').reduce((a,m)=>a+parseFloat(m.monto||0),0);
+    saldo=entradas-salidas;
+  }
 
   document.getElementById('page-consultaCuentas').innerHTML=`
     <div class="page-header">
-      <div><h1>🧾 Consulta de Cuentas</h1><p>Estado de cuenta consolidado — incluye movimientos de todos los módulos del sistema</p></div>
-      <button class="btn btn-primary" ${movs.length?'':'disabled'} onclick="exportarConsultaCuentasPDF()">🖨️ Imprimir / Exportar PDF</button>
-    </div>
-    <div class="card" style="margin-bottom:14px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-        <div class="card-title" style="margin:0;padding:0;border:none">📊 Resumen General por Cuentas</div>
-        <button class="btn btn-secondary btn-sm" onclick="imprimirResumenCuentasGeneral()">🖨️ Imprimir Resumen</button>
+      <div><h1>🧾 Consulta de Cuentas</h1><p>Busca un banco y una cuenta para ver su estado de cuenta</p></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary btn-sm" onclick="imprimirResumenCuentasGeneral()">🖨️ Imprimir Resumen General</button>
+        <button class="btn btn-primary" ${hayBusqueda&&movs.length?'':'disabled'} onclick="exportarConsultaCuentasPDF()">🖨️ Imprimir / Exportar PDF</button>
       </div>
-      <div style="font-size:11px;color:var(--gray);margin-bottom:10px">${desde||hasta?`Movimientos ${desde?'desde '+fmtDate(desde)+' ':''}${hasta?'hasta '+fmtDate(hasta):''}`:'Todo el historial disponible.'} Usa los filtros de fecha de abajo para acotar el período.</div>
-      ${resumenHTML}
     </div>
     <div class="card" style="margin-bottom:14px">
       <div class="form-row c4">
-        <div class="form-field"><label>Banco</label><select id="cc-banco" onchange="renderConsultaCuentas()">${bancoOpts}</select></div>
+        <div class="form-field"><label>🔍 Banco</label><select id="cc-banco" onchange="document.getElementById('cc-cuenta').value='';renderConsultaCuentas()">${bancoOpts}</select></div>
         <div class="form-field"><label>Cuenta</label><select id="cc-cuenta" onchange="renderConsultaCuentas()">${cuentaOpts}</select></div>
         <div class="form-field"><label>Desde</label><input type="date" id="cc-desde" value="${desde}" onchange="renderConsultaCuentas()"></div>
         <div class="form-field"><label>Hasta</label><input type="date" id="cc-hasta" value="${hasta}" onchange="renderConsultaCuentas()"></div>
       </div>
-      <div style="font-size:11px;color:var(--gray);margin-top:2px">${desde||hasta?`Mostrando movimientos ${desde?'desde '+fmtDate(desde)+' ':''}${hasta?'hasta '+fmtDate(hasta):''}`:'Mostrando todo el historial disponible para esta cuenta.'}</div>
+      <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="document.getElementById('cc-banco').value='';document.getElementById('cc-cuenta').value='';document.getElementById('cc-desde').value='';document.getElementById('cc-hasta').value='';renderConsultaCuentas()">🔄 Limpiar</button>
     </div>
+    ${!hayBusqueda?`
+    <div class="card">
+      <div style="text-align:center;padding:48px 10px;color:var(--gray)">
+        <div style="font-size:40px;margin-bottom:10px">🔍</div>
+        <div style="font-size:15px;font-weight:600">Selecciona un banco y una cuenta</div>
+        <div style="font-size:13px;margin-top:4px">para ver su estado de cuenta</div>
+      </div>
+    </div>`:`
+    <div style="font-size:11px;color:var(--gray);margin-bottom:10px">${desde||hasta?`Movimientos ${desde?'desde '+fmtDate(desde)+' ':''}${hasta?'hasta '+fmtDate(hasta):''}`:'Mostrando todo el historial disponible para esta cuenta.'}</div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
       <div class="card" style="text-align:center;background:var(--green2);margin-bottom:0"><div style="font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.5px">Total Entradas</div><div style="font-size:20px;font-weight:900;color:var(--green)">${fV(entradas)}</div></div>
       <div class="card" style="text-align:center;background:var(--red2);margin-bottom:0"><div style="font-size:10px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.5px">Total Salidas</div><div style="font-size:20px;font-weight:900;color:var(--red)">${fV(salidas)}</div></div>
@@ -3050,7 +3025,7 @@ function renderConsultaCuentas(){
           <td style="font-weight:700;color:${m.tipo==='ENTRADA'?'var(--green)':'var(--red)'}">${fV(m.monto)}</td>
         </tr>`).join(''):'<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--gray)">Sin movimientos para esta cuenta en el período seleccionado</td></tr>'}</tbody>
       </table></div>
-    </div>`;
+    </div>`}`;
 }
 function exportarConsultaCuentasPDF(){
   const bcs=DB.config.bancoCuentas||[];
