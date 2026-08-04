@@ -4602,13 +4602,18 @@ async function exportarInformeWord(){
   const cxcPendUSD=cxcPend.filter(x=>x.moneda==='USD').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
   const cxcPendCombinado=cxcPendRD+cxcPendUSD*tasa;
 
-  // Resumen ejecutivo — patrimonio (inventario + efectivo/cuentas + activos fijos)
+  // Resumen ejecutivo — patrimonio (inventario + efectivo/cuentas + activos fijos + por cobrar,
+  // porque es dinero que se va a cobrar, cuenta como patrimonio y no como pasivo aparte).
   const totalEfectivoCombinado=totalCuentasRD+totalCuentasUSD*tasa;
-  const totalPatrimonio=totalInvTotal+totalEfectivoCombinado+totalActivoLibros;
+  const totalPatrimonio=totalInvTotal+totalEfectivoCombinado+totalActivoLibros+cxcPendCombinado;
 
-  // Capital Neto — Patrimonio + Cuentas por Cobrar − (Cuentas por Pagar + Préstamos)
-  const totalPorPagarGeneral=totalCXPCombinado+totalSaldoPrestamosRD+totalSaldoPrestamosUSD*tasa;
-  const capitalNeto=totalPatrimonio+cxcPendCombinado-totalPorPagarGeneral;
+  // Cuentas por Pagar aquí = solo gastos de vehículo (CxP manual queda fuera — los préstamos que
+  // antes se llevaban como CxP manual ahora se cuentan una sola vez en Préstamos Pendientes).
+  const totalCXPVehCombinado=totalVehRD+totalVehUSD*tasa;
+
+  // Capital Real / Capital Neto — Patrimonio (ya incluye Cuentas por Cobrar) − (Cuentas por Pagar + Préstamos)
+  const totalPorPagarGeneral=totalCXPVehCombinado+totalSaldoPrestamosRD+totalSaldoPrestamosUSD*tasa;
+  const capitalNeto=totalPatrimonio-totalPorPagarGeneral;
 
   // Tendencia — Enero a Diciembre del año del informe
   const NOMBRES_MES=['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'];
@@ -4699,9 +4704,9 @@ async function exportarInformeWord(){
       <table class="rep-table">
         <thead><tr><th></th><th class="num">Pesos</th><th class="num">Dólar</th><th class="num">Total</th></tr></thead>
         <tbody>
-          <tr><td>Por Cobrar</td><td class="num">${fmt(cxcPendRD)}</td><td class="num">${cxcPendUSD?fmtUSD(cxcPendUSD):'—'}</td><td class="num" style="font-weight:700">${fmt(cxcPendCombinado)}</td></tr>
-          <tr><td>Por Pagar (gastos vehículo + CxP manual)</td><td class="num">${fmt(totalCXPPendRD)}</td><td class="num">${totalCXPPendUSD?fmtUSD(totalCXPPendUSD):'—'}</td><td class="num" style="font-weight:700">${fmt(totalCXPCombinado)}</td></tr>
+          <tr><td>Por Pagar (gastos vehículo)</td><td class="num">${fmt(totalVehRD)}</td><td class="num">${totalVehUSD?fmtUSD(totalVehUSD):'—'}</td><td class="num" style="font-weight:700">${fmt(totalCXPVehCombinado)}</td></tr>
           <tr><td>Préstamos Pendientes</td><td class="num">${fmt(totalSaldoPrestamosRD)}</td><td class="num">${totalSaldoPrestamosUSD?fmtUSD(totalSaldoPrestamosUSD):'—'}</td><td class="num" style="font-weight:700">${fmt(totalSaldoPrestamosRD+totalSaldoPrestamosUSD*tasa)}</td></tr>
+          <tr class="total"><td>Total Cuentas por Pagar</td><td class="num"></td><td class="num"></td><td class="num" style="font-weight:800">${fmt(totalPorPagarGeneral)}</td></tr>
         </tbody>
       </table>
 
@@ -4711,7 +4716,9 @@ async function exportarInformeWord(){
           <tr><td>Inversión en Vehículos</td><td class="num">${fmt(totalInvTotal)}</td></tr>
           <tr><td>Efectivo y Cuentas Bancarias</td><td class="num">${fmt(totalEfectivoCombinado)}</td></tr>
           <tr><td>Activos Fijos (valor en libros)</td><td class="num">${fmt(totalActivoLibros)}</td></tr>
+          <tr><td>Por Cobrar (se va a cobrar)</td><td class="num">${fmt(cxcPendCombinado)}</td></tr>
           <tr class="total"><td>Sub Total Patrimonio</td><td class="num">${fmt(totalPatrimonio)}</td></tr>
+          <tr class="total"><td style="font-weight:800">Capital Real (Patrimonio − Cuentas por Pagar)</td><td class="num ${capitalNeto>=0?'pos':'neg'}" style="font-weight:800">${fmt(capitalNeto)}</td></tr>
         </tbody>
       </table>
 
@@ -4872,16 +4879,16 @@ async function exportarInformeWord(){
 
     <div class="rep-sec">
       <div class="rep-sec-head"><h3>Resumen de Capital Neto</h3><span class="rep-tag close">Al cierre</span></div>
-      <p class="rep-note">Patrimonio (Inventario + Efectivo y Cuentas Bancarias + Activos Fijos) + Cuentas por Cobrar − Cuentas por Pagar (CxP + Préstamos), todo combinado a la tasa de Caja (${fmt(tasa)} por USD).</p>
+      <p class="rep-note">Patrimonio (Inventario + Efectivo y Cuentas Bancarias + Activos Fijos + Cuentas por Cobrar, porque es dinero que se va a cobrar) − Cuentas por Pagar (gastos de vehículo + Préstamos), todo combinado a la tasa de Caja (${fmt(tasa)} por USD).</p>
       ${tieneGraficoCapitalNeto?'<p align="center"><img src="cid:graficoCapitalNeto" width="680" height="220"></p>':''}
       <table class="rep-table">
         <tbody>
           <tr><td>Inversión en Vehículos</td><td class="num pos">${fmt(totalInvTotal)}</td></tr>
           <tr><td>Efectivo y Cuentas Bancarias</td><td class="num ${totalEfectivoCombinado>=0?'pos':'neg'}">${fmt(totalEfectivoCombinado)}</td></tr>
           <tr><td>Activos Fijos (valor en libros)</td><td class="num pos">${fmt(totalActivoLibros)}</td></tr>
-          <tr class="total"><td>Sub Total Patrimonio</td><td class="num">${fmt(totalPatrimonio)}</td></tr>
           <tr><td>Cuentas por Cobrar</td><td class="num pos">${fmt(cxcPendCombinado)}</td></tr>
-          <tr><td>Cuentas por Pagar (CxP + Préstamos)</td><td class="num neg">${fmt(totalPorPagarGeneral)}</td></tr>
+          <tr class="total"><td>Sub Total Patrimonio</td><td class="num">${fmt(totalPatrimonio)}</td></tr>
+          <tr><td>Cuentas por Pagar (gastos vehículo + Préstamos)</td><td class="num neg">${fmt(totalPorPagarGeneral)}</td></tr>
           <tr class="total"><td>Capital Neto</td><td class="num ${capitalNeto>=0?'pos':'neg'}" style="font-weight:800">${fmt(capitalNeto)}</td></tr>
         </tbody>
       </table>
@@ -11058,6 +11065,7 @@ function renderCXP(){
               <div style="display:flex;gap:4px;flex-wrap:wrap">
                 ${parseFloat(g.montoPendiente||0)>0?`<button class="btn btn-sm btn-green" onclick="event.stopPropagation();${g._origen==='manual'?`abonarCXPManual('${g.id}')`:`abonarDesdeCXP('${g.id}')`}" title="Registrar pago">💵 Pagar</button>`:''}
                 ${parseFloat(g.montoPendiente||0)>0&&currentUser?.role==='admin'?`<button class="btn btn-sm" style="background:var(--purple2);color:var(--purple)" onclick="event.stopPropagation();saldarCxpSinCaja('${g.id}','${g._origen}')" title="Marcar saldado sin movimiento de Caja — usar cuando ya se gestiona en Préstamos Bancos">🔀 Migrar</button>`:''}
+                ${g._origen==='manual'&&currentUser?.role==='admin'?`<button class="btn btn-sm btn-red" onclick="event.stopPropagation();eliminarCXPManual('${g.id}')" title="Eliminar esta cuenta de CxP — usar en las que ya se llevan en Préstamos Bancos. No borra el historial de Caja.">🗑 Eliminar</button>`:''}
                 ${(currentUser?.role==='admin'||currentUser?.permisos?.editar||canDo('editar'))?`<button class="btn btn-sm" style="background:var(--blue3);color:var(--blue);padding:4px 8px" onclick="event.stopPropagation();editarCXP('${g.id}','${g._origen}')" title="Editar">✏️</button>`:''}
                 ${(g.pagos||[]).length>0?`<button class="btn btn-sm" style="background:#f1f5f9;color:var(--gray)" onclick="event.stopPropagation();verHistorialCXP('${g.id}')" title="Historial de pagos">📋</button>`:''}
               </div>
@@ -11193,6 +11201,20 @@ function saldarCxpSinCaja(gid,origen){
   sDB(origen==='manual'?'cxp':'gastosVehiculos');
   if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar(origen==='manual'?'cxp':'gastosVehiculos').catch(()=>{});
   toast('Cuenta marcada como saldada (sin Caja) ✓','success');
+  renderCXP();
+}
+
+// Elimina una CxP Manual definitivamente (ej. duplicada porque ya se lleva en Préstamos Bancos).
+// NO borra los movimientos ya registrados en Caja — esos quedan como historial permanente.
+function eliminarCXPManual(gid){
+  const i=(DB.cxp||[]).findIndex(g=>g.id===gid);
+  if(i<0)return;
+  const g=DB.cxp[i];
+  if(!confirm(`¿Eliminar definitivamente "${g.descripcion||g.suplidor||'esta cuenta'}" de Cuentas por Pagar?\n\nNo se borra ningún movimiento ya registrado en Caja, solo se quita este renglón de la lista de CxP.`))return;
+  DB.cxp.splice(i,1);
+  sDB('cxp');
+  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('cxp').catch(()=>{});
+  toast('Cuenta eliminada de CxP ✓','success');
   renderCXP();
 }
 
