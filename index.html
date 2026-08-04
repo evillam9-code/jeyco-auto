@@ -631,7 +631,13 @@ function calcResumenMesJEYCO(mesStr,tasa,interesesCobrados){
   const vm=DB.ventas.filter(v=>v.fecha?.startsWith(mesStr));
   const gm=DB.gastos.filter(g=>g.fecha?.startsWith(mesStr));
   const pm=(DB.nominaPagos||[]).filter(p=>p.mes===mesStr);
-  const beneficio=vm.reduce((a,v)=>a+parseFloat(v.ganancia||0),0);
+  // Beneficio Jeyco: ganancia de venta (en RD$, ver nota de aRD) menos gasto adicional,
+  // dividida entre socios cuando aplica — igual criterio que ventasMesCalc del Informe.
+  const beneficio=vm.reduce((a,v)=>{
+    const ventaRD=aRD(v.precioVenta||0,v.moneda,v.tasaCambio||tasa);
+    const gananciaRD=ventaRD-parseFloat(v.costoVehiculo||0);
+    return a+(gananciaRD-parseFloat(v.gastoAdicional||0))/(parseInt(v.dividirEntre||1)||1);
+  },0);
   const gastosBase=gm.reduce((a,g)=>a+parseFloat(g.monto||0),0);
   const nomina=pm.reduce((a,p)=>a+parseFloat(p.monto||0),0);
   const interesesMes=(DB.prestamos||[]).reduce((a,p)=>{
@@ -4419,9 +4425,9 @@ function renderInformes(){
         <div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">Ventas</div><div style="font-size:18px;font-weight:800;color:#4ade80">${fmt(totalV)}</div></div>
         <div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">Ganancia Bruta</div><div style="font-size:18px;font-weight:800;color:#60a5fa">${fmt(totalG)}</div></div>
         <div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">Gastos</div><div style="font-size:18px;font-weight:800;color:#f87171">${fmt(totalGastos)}</div></div>
-        <div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">Ganancia Neta</div><div style="font-size:18px;font-weight:800;color:${totalG-totalGastos>=0?'#4ade80':'#f87171'}">${fmt(totalG-totalGastos)}</div></div>
+        <div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">Ganancia Neta</div><div style="font-size:18px;font-weight:800;color:${totalBeneficioJeyco-totalGastos>=0?'#4ade80':'#f87171'}">${fmt(totalBeneficioJeyco-totalGastos)}</div></div>
         ${isAdmin?`<div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px;border:1px solid #60a5fa"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">💼 Total Beneficio Jeyco</div><div style="font-size:18px;font-weight:800;color:#60a5fa">${fmt(totalBeneficioJeyco)}</div></div>`:''}
-        ${isAdmin?`<div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px;border:1px solid #fbbf24"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">📈 Ganancia Neta + Intereses</div><div style="font-size:18px;font-weight:800;color:#fbbf24">${fmt(totalG-totalGastos+totalInteresesMes)}</div><div style="font-size:10px;color:#94a3b8;margin-top:2px">+${fmt(totalInteresesMes)} intereses cobrados</div></div>`:''}
+        ${isAdmin?`<div style="text-align:center;padding:12px;background:rgba(255,255,255,.1);border-radius:8px;border:1px solid #fbbf24"><div style="font-size:10px;font-weight:600;text-transform:uppercase;color:#94a3b8">📈 Ganancia Neta + Intereses</div><div style="font-size:18px;font-weight:800;color:#fbbf24">${fmt(totalBeneficioJeyco-totalGastos+totalInteresesMes)}</div><div style="font-size:10px;color:#94a3b8;margin-top:2px">+${fmt(totalInteresesMes)} intereses cobrados</div></div>`:''}
       </div>
     </div>`;
   document.getElementById('inf-mes').value=mes;
@@ -4518,7 +4524,7 @@ async function exportarInformeWord(){
   const totalInteresMesConvertido=totalInteresMesRD+totalInteresMesUSD*tasa;
   const totalGastosConIntereses=totalGastosMes+totalInteresMesConvertido;
   const interesesCobradosMes=isAdmin?totalInteresesCobradosMes(mes):0;
-  const ganNeta=totalGananciaVentas+interesesCobradosMes-totalGastosConIntereses-totalNominaMes;
+  const ganNeta=totalBeneficioJeycoWord+interesesCobradosMes-totalGastosConIntereses-totalNominaMes;
 
   // Inventario — al cierre, con inversión acumulada por vehículo (activos + aduana + EEUU).
   // v.costo YA es la suma acumulada (en RD$) de los gastos del vehículo — se mantiene
@@ -4702,12 +4708,12 @@ async function exportarInformeWord(){
 
       <div class="rep-subhead">Resultado del mes</div>
       <table class="rep-summary"><tr>
-        <td class="first"><div class="l">Beneficio Ventas Mes</div><div class="v pos">${fmt(totalGananciaVentas)}</div></td>
+        <td class="first"><div class="l">Beneficio Jeyco</div><div class="v pos">${fmt(totalBeneficioJeycoWord)}</div></td>
         <td><div class="l">Intereses Pagados</div><div class="v neg">${fmt(totalInteresMesConvertido)}</div></td>
         ${isAdmin?`<td><div class="l">Intereses Cobrados</div><div class="v pos">${fmt(interesesCobradosMes)}</div></td>`:''}
         <td><div class="l">Beneficio Neto Mes</div><div class="v ${ganNeta>=0?'pos':'neg'}">${fmt(ganNeta)}</div></td>
       </tr></table>
-      <p class="rep-note" style="margin-top:8px">Beneficio de ventas del mes${isAdmin?' + intereses cobrados':''}, menos gastos del mes (incluye intereses pagados de préstamos), menos nómina pagada.</p>
+      <p class="rep-note" style="margin-top:8px">Beneficio Jeyco (ganancia de ventas ya dividida entre socios cuando aplica)${isAdmin?' + intereses cobrados':''}, menos gastos del mes (incluye intereses pagados de préstamos), menos nómina pagada.</p>
     </div>
   </div>
 
