@@ -5995,11 +5995,12 @@ function renderPrestamos(){
       <p style="font-size:11px;color:var(--gray);margin-top:8px">Total General combina Pesos + Dólares a la tasa de Caja (${fmt(tasa)} por USD). Cuadra con el Informe Mensual y Consultas a la misma fecha.</p>
     </div>
     <div class="card" style="margin-bottom:16px">
-      <div class="card-title">📄 Exportar por Mes</div>
+      <div class="card-title">📄 Mes a mostrar / exportar</div>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <input type="month" id="prest-export-mes" value="${mesExport}" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
+        <input type="month" id="prest-export-mes" value="${mesExport}" onchange="renderPrestamos()" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
         <button class="btn btn-secondary btn-sm" onclick="exportarPrestamosMesWord()">📝 Exportar a Word</button>
       </div>
+      <p style="font-size:11px;color:var(--gray);margin-top:8px">Las columnas "(mes)" de la lista de abajo y el export a Word muestran los pagos de este mes seleccionado.</p>
     </div>
     <div class="card">
       <div class="search-wrap"><input class="search-input" placeholder="Buscar por nombre, descripción..." oninput="filterTable('prest-tbl',this.value)"></div>
@@ -6015,7 +6016,7 @@ function renderPrestamos(){
           ${prestamos.length?prestamos.map(p=>{
             const sc={ACTIVO:'badge-blue',PAGADO:'badge-green',VENCIDO:'badge-red'};
             const esBancario=p.categoria==='BANCARIO';
-            const mp=pagosMesPrestamo(p,mesActual);
+            const mp=pagosMesPrestamo(p,mesExport);
             return`<tr onclick="selPrestamo('${p.id}',this)" style="cursor:pointer">
               <td style="text-align:center"><input type="radio" name="prest-sel" onclick="event.stopPropagation();selPrestamo('${p.id}',this.closest('tr'))" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blue)"></td>
               <td><span class="badge ${esBancario?'badge-blue':'badge-amber'}">${labelCategoriaPrestamo(p.categoria)}</span></td>
