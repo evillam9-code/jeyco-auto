@@ -206,6 +206,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
 (function(){
   var VERSION='dealer_v14';
   var APP_BUILD='20260517-fayre';
+  window._APP_BUILD=APP_BUILD;
   var storedBuild=localStorage.getItem('fayre_build');
   if(storedBuild&&storedBuild!==APP_BUILD){
     var savedUsers=localStorage.getItem('fayre_users');
@@ -227,11 +228,34 @@ select:focus,input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
 })();
 </script>
 <script>
-// AUTO VERSION CHECKER VIA FIREBASE
+// AUTO VERSION CHECKER \u2014 se actualiza SOLO, sin banner ni bot\u00F3n, cuando detecta una versi\u00F3n
+// m\u00E1s nueva. Dos se\u00F1ales, cualquiera dispara la actualizaci\u00F3n:
+// 1) El propio archivo index.html en el servidor cambi\u00F3 (compara APP_BUILD embebido en el
+//    HTML descargado en ese momento contra el que est\u00E1 corriendo) \u2014 se\u00F1al real, no depende
+//    de que un admin "publique" nada, as\u00ED que un cliente nunca se queda pegado en una
+//    versi\u00F3n vieja solo porque se subi\u00F3 el archivo nuevo y nadie avis\u00F3.
+// 2) Un admin forz\u00F3 una actualizaci\u00F3n con publicarNuevaVersion() (v\u00EDa Firestore).
+// Si hay un modal/formulario abierto no recarga (perder\u00EDa lo que el usuario est\u00E1 escribiendo);
+// simplemente lo reintenta en el siguiente ciclo.
 window._versionCheckInterval=null;
+function _actualizarSiEsSeguro(){
+  if(document.getElementById('modal-overlay')&&document.getElementById('modal-overlay').classList.contains('open'))return false;
+  location.href=location.pathname+'?_v='+Date.now();
+  return true;
+}
+async function _hayVersionNuevaEnServidor(){
+  try{
+    const resp=await fetch(location.pathname+'?_chk='+Date.now(),{cache:'no-store'});
+    if(!resp.ok)return false;
+    const text=await resp.text();
+    const m=text.match(/APP_BUILD='([^']+)'/);
+    return !!(m&&m[1]&&m[1]!==window._APP_BUILD);
+  }catch(e){return false;}
+}
 function iniciarVerificadorVersion(){
   if(window._versionCheckInterval)return;
   window._versionCheckInterval=setInterval(async function(){
+    if(await _hayVersionNuevaEnServidor()){_actualizarSiEsSeguro();return;}
     if(!window._fbActivo||!window._fbDB||!window._fbCol)return;
     try{
       const snap=await window._fbDB.collection(window._fbCol).doc('system_version').get();
@@ -241,16 +265,7 @@ function iniciarVerificadorVersion(){
       if(!remoteVersion)return;
       const localVersion=localStorage.getItem('fayre_version')||window._APP_VERSION;
       if(remoteVersion!==localVersion){
-        if(document.getElementById('_version-update-banner'))return;
-        const banner=document.createElement('div');
-        banner.id='_version-update-banner';
-        banner.style.cssText='position:fixed;bottom:0;left:0;right:0;z-index:999998;background:linear-gradient(135deg,#1d4ed8,#2563eb);color:#fff;padding:14px 20px;display:flex;align-items:center;justify-content:space-between;gap:16px;box-shadow:0 -4px 20px rgba(0,0,0,.3);font-family:Outfit,sans-serif;';
-        banner.innerHTML='<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:22px">\uD83D\uDD04</span><div><div style="font-weight:800;font-size:14px;">Nueva versi\u00F3n disponible</div><div style="font-size:12px;opacity:.85;">El administrador public\u00F3 una actualizaci\u00F3n del sistema.</div></div></div><button onclick="localStorage.setItem(\'fayre_version\',\''+remoteVersion+'\');location.reload(true);" style="background:#fff;color:#1d4ed8;border:none;border-radius:8px;padding:10px 20px;font-size:14px;font-weight:800;cursor:pointer;font-family:Outfit,sans-serif;white-space:nowrap;flex-shrink:0;">\u26A1 Actualizar ahora</button>';
-        document.body.appendChild(banner);
-        setTimeout(function(){
-          localStorage.setItem('fayre_version',remoteVersion);
-          location.reload(true);
-        },30000);
+        if(_actualizarSiEsSeguro())localStorage.setItem('fayre_version',remoteVersion);
       }
     }catch(e){}
   },30000);
