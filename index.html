@@ -6528,6 +6528,10 @@ function _findPagoPrestamo(pid,pagoId){
 }
 function editarPagoPrestamoModal(pid,pagoId){
   const{p,pago}=_findPagoPrestamo(pid,pagoId);if(!pago)return;
+  // Misma base que en "Pagar": Fijo sobre monto original, Amortizable sobre saldo pendiente.
+  const esFijo=['CAP_INT_FIJO','CAPITAL_FIJO','SOLO_INT_FIJO','LINEA_CREDITO'].includes(p.tipo);
+  const baseInteres=esFijo?parseFloat(p.monto||0):parseFloat(p.saldo||0);
+  const interesSugerido=p.tasaMensual?(baseInteres*p.tasaMensual/100):0;
   openModal('✏️ Editar Pago del Mes',`
     <div class="form-row c2">
       <div class="form-field"><label>Fecha</label><input type="date" id="epp-fecha" value="${pago.fecha||today()}"></div>
@@ -6538,10 +6542,13 @@ function editarPagoPrestamoModal(pid,pagoId){
         <input type="text" id="epp-capital" value="${fmtMoneyDisplay(pago.capital||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
       </div>
       <div class="form-field"><label>Interés</label>
-        <input type="text" id="epp-interes" value="${fmtMoneyDisplay(pago.interes||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)">
+        <div style="display:flex;gap:6px">
+          <input type="text" id="epp-interes" value="${fmtMoneyDisplay(pago.interes||0)}" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" style="flex:1">
+          ${interesSugerido?`<button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('epp-interes').value=fmtMoneyDisplay(${interesSugerido})" title="Llenar con ${esFijo?'monto original':'saldo'} × tasa mensual">Sugerir</button>`:''}
+        </div>
       </div>
     </div>
-    <div style="font-size:11px;color:var(--gray)">El saldo del préstamo se ajusta según la diferencia de capital. Este pago no genera movimiento de Caja.</div>`,
+    <div style="font-size:11px;color:var(--gray)">El saldo del préstamo se ajusta según la diferencia de capital. Este pago no genera movimiento de Caja. Los cambios se reflejan de inmediato en la lista de Préstamos, el export a Word y el Informe Mensual.</div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
      <button class="btn btn-primary" onclick="guardarEditarPagoPrestamo('${pid}','${pagoId}')">💾 Guardar</button>`);
 }
