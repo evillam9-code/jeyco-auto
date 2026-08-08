@@ -6434,16 +6434,21 @@ function verAmortizacion(pid){
 
 function modalPagarCuota(pid){
   const p=DB.prestamos.find(x=>x.id===pid);if(!p)return;
-  const interesSugerido=p.tasaMensual?(p.saldo*p.tasaMensual/100):0;
+  // Base del interés según modalidad: "Fijo" siempre sobre el monto original,
+  // "Amortizable" sobre el saldo pendiente (baja cada mes) — igual criterio que calcTablaAmortizacion.
+  const esFijo=['CAP_INT_FIJO','CAPITAL_FIJO','SOLO_INT_FIJO','LINEA_CREDITO'].includes(p.tipo);
+  const baseInteres=esFijo?parseFloat(p.monto||0):parseFloat(p.saldo||0);
+  const interesSugerido=p.tasaMensual?(baseInteres*p.tasaMensual/100):0;
   openModal(`💳 Registrar Pago del Mes — ${escHtml(p.banco)}`,`
     <div style="background:var(--blue3);border-radius:8px;padding:10px;margin-bottom:12px;font-size:13px">
       <strong>Saldo pendiente:</strong> ${fmtMon(p.saldo||0,p.moneda)} &nbsp;|&nbsp; <strong>Pago mensual de referencia:</strong> ${fmtMon(p.cuotaMensual||0,p.moneda)}
     </div>
+    ${!p.tasaMensual?`<div style="background:var(--amber2);color:var(--amber);border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px">⚠️ Este préstamo no tiene Tasa de Interés Mensual configurada, así que el interés no se puede sugerir automáticamente — ingrésalo a mano o configúrala en "✏️ Editar".</div>`:''}
     <div class="form-row c2">
       <div class="form-field"><label class="required">Interés</label>
         <div style="display:flex;gap:6px">
           <input type="text" id="pc-interes" value="${interesSugerido?fmtMoneyDisplay(interesSugerido):''}" placeholder="0.00" oninput="fmtMoneyInput(this)" onblur="fmtMoneyBlur(this)" onfocus="fmtMoneyFocus(this)" style="flex:1">
-          <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('pc-interes').value=fmtMoneyDisplay(${interesSugerido})" title="Llenar con saldo × tasa mensual">Saldar</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('pc-interes').value=fmtMoneyDisplay(${interesSugerido})" title="Llenar con ${esFijo?'monto original':'saldo'} × tasa mensual">Saldar</button>
         </div>
       </div>
       <div class="form-field"><label class="required">Capital</label>
