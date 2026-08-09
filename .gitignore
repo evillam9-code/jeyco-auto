@@ -1,9 +1,0 @@
-node_modules/
-.git/
-.DS_Store
-dist/
-build/
-*.log
-*.tmp
-.claude/
-CLAUDE.md
