@@ -71,7 +71,7 @@ tr:hover td{background:#e8f0fe}
 .badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
 .badge-green{background:var(--green2);color:var(--green)}.badge-red{background:var(--red2);color:var(--red)}.badge-amber{background:var(--amber2);color:var(--amber)}.badge-blue{background:var(--blue3);color:var(--blue)}.badge-purple{background:var(--purple2);color:var(--purple)}.badge-gray{background:var(--gray2);color:var(--gray)}
 .form-row{display:grid;gap:14px;margin-bottom:14px}
-.form-row.c2{grid-template-columns:1fr 1fr}.form-row.c3{grid-template-columns:1fr 1fr 1fr}.form-row.c4{grid-template-columns:1fr 1fr 1fr 1fr}
+.form-row.c2{grid-template-columns:1fr 1fr}.form-row.c3{grid-template-columns:1fr 1fr 1fr}.form-row.c4{grid-template-columns:1fr 1fr 1fr 1fr}.form-row.c5{grid-template-columns:1fr 1fr 1fr 1fr 1fr}
 .form-field{margin-bottom:12px}
 .form-field label{display:block;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--gray);margin-bottom:6px}
 .required::after{content:" *";color:var(--red)}
@@ -136,7 +136,7 @@ select:focus,input:focus,textarea:focus{border-color:var(--blue);box-shadow:0 0 
   .card{padding:12px;margin-bottom:14px}
   .card-title{font-size:14px}
   .two-col{grid-template-columns:1fr!important}
-  .form-row.c2,.form-row.c3,.form-row.c4{grid-template-columns:1fr!important}
+  .form-row.c2,.form-row.c3,.form-row.c4,.form-row.c5{grid-template-columns:1fr!important}
   .form-field{margin-bottom:14px}
   select,input[type=text],input[type=number],input[type=date],input[type=email],input[type=password],input[type=month],input[type=color],textarea{font-size:16px!important;padding:12px 14px!important;min-height:46px!important;border-radius:8px!important}
   textarea{min-height:80px!important}
@@ -2970,6 +2970,18 @@ function calcResumenCuentasGeneral(desde,hasta){
   });
   return Object.values(map);
 }
+// Fija Desde/Hasta para tomar el saldo acumulado al cierre del mes elegido
+// (todo el historial hasta el último día de ese mes), igual que Caja/Informe Mensual.
+function aplicarMesCierreCuentas(){
+  const mes=document.getElementById('cc-mes')?.value||'';
+  if(mes){
+    const [y,m]=mes.split('-').map(Number);
+    const finMes=new Date(y,m,0).toISOString().split('T')[0];
+    document.getElementById('cc-desde').value='';
+    document.getElementById('cc-hasta').value=finMes;
+  }
+  renderConsultaCuentas();
+}
 function renderConsultaCuentas(){
   const bcs=DB.config.bancoCuentas||[];
   const bancoSel=document.getElementById('cc-banco')?.value||'';
@@ -3006,13 +3018,15 @@ function renderConsultaCuentas(){
       </div>
     </div>
     <div class="card" style="margin-bottom:14px">
-      <div class="form-row c4">
+      <div class="form-row c5">
         <div class="form-field"><label>🔍 Banco</label><select id="cc-banco" onchange="document.getElementById('cc-cuenta').value='';renderConsultaCuentas()">${bancoOpts}</select></div>
         <div class="form-field"><label>Cuenta</label><select id="cc-cuenta" onchange="renderConsultaCuentas()">${cuentaOpts}</select></div>
-        <div class="form-field"><label>Desde</label><input type="date" id="cc-desde" value="${desde}" onchange="renderConsultaCuentas()"></div>
-        <div class="form-field"><label>Hasta</label><input type="date" id="cc-hasta" value="${hasta}" onchange="renderConsultaCuentas()"></div>
+        <div class="form-field"><label>📅 Mes de cierre</label><input type="month" id="cc-mes" onchange="aplicarMesCierreCuentas()"></div>
+        <div class="form-field"><label>Desde</label><input type="date" id="cc-desde" value="${desde}" onchange="document.getElementById('cc-mes').value='';renderConsultaCuentas()"></div>
+        <div class="form-field"><label>Hasta</label><input type="date" id="cc-hasta" value="${hasta}" onchange="document.getElementById('cc-mes').value='';renderConsultaCuentas()"></div>
       </div>
-      <button class="btn btn-secondary btn-sm" style="margin-top:8px" onclick="document.getElementById('cc-banco').value='';document.getElementById('cc-cuenta').value='';document.getElementById('cc-desde').value='';document.getElementById('cc-hasta').value='';renderConsultaCuentas()">🔄 Limpiar</button>
+      <div style="font-size:11px;color:var(--gray);margin-top:-4px;margin-bottom:8px">📅 "Mes de cierre" trae el saldo acumulado de toda la cuenta hasta el último día de ese mes (mismo criterio que Caja/Informe Mensual).</div>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('cc-banco').value='';document.getElementById('cc-cuenta').value='';document.getElementById('cc-mes').value='';document.getElementById('cc-desde').value='';document.getElementById('cc-hasta').value='';renderConsultaCuentas()">🔄 Limpiar</button>
     </div>
     ${!hayBusqueda?`
     <div class="card">
@@ -3120,6 +3134,10 @@ function imprimirResumenCuentasGeneral(){
   const periodoLabel=desde||hasta?`${desde?fmtDate(desde):'Inicio'} al ${hasta?fmtDate(hasta):'Hoy'}`:'Todo el historial';
   const fmtUSD=n=>'USD '+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   const resumenRows=calcResumenCuentasGeneral(desde,hasta);
+  const tasa=parseFloat(DB.config.tasaCambio||60);
+  const totRDGeneral=resumenRows.filter(r=>r.moneda==='RD$').reduce((a,r)=>a+(r.entradas-r.salidas),0);
+  const totUSDGeneral=resumenRows.filter(r=>r.moneda==='USD').reduce((a,r)=>a+(r.entradas-r.salidas),0);
+  const totalGeneralRD=totRDGeneral+totUSDGeneral*tasa;
 
   const bloquesMoneda=['RD$','USD'].filter(m=>resumenRows.some(r=>r.moneda===m)).map(moneda=>{
     const esUSD=moneda==='USD';
@@ -3147,6 +3165,15 @@ function imprimirResumenCuentasGeneral(){
         <tr class="tot"><td>GRAN TOTAL ${moneda}</td><td class="amt" style="color:#fff">${fV(totEnt)}</td><td class="amt" style="color:#fff">${fV(totSal)}</td><td class="amt" style="color:#fff">${fV(totEnt-totSal)}</td></tr>
       </tbody></table>`;
   }).join('')||'<p style="text-align:center;padding:20px;color:#94a3b8">Sin cuentas configuradas</p>';
+
+  const totalGeneralHTML=resumenRows.length?`
+  <div style="background:#0f172a;border-radius:8px;padding:14px 18px;margin-top:4px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+    <div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#94a3b8;letter-spacing:.5px">🏦 Total General en Pesos</div>
+      <div style="font-size:9px;color:#94a3b8;margin-top:2px">${fmt(totRDGeneral)} + (${fmtUSD(totUSDGeneral)} × ${tasa.toLocaleString('es-DO',{minimumFractionDigits:2})})</div>
+    </div>
+    <div style="font-size:22px;font-weight:900;color:#fff">${fmt(totalGeneralRD)}</div>
+  </div>`:'';
 
   const win=window.open('','_blank','width=900,height=700');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
@@ -3189,6 +3216,8 @@ function imprimirResumenCuentasGeneral(){
   </div>
 
   ${bloquesMoneda}
+
+  ${totalGeneralHTML}
 
   <div class="noprint" style="margin-top:14px;text-align:center">
     <button onclick="window.print()" style="padding:8px 28px;background:#0f172a;color:#fff;border:none;border-radius:5px;font-size:12px;cursor:pointer;font-family:Arial">🖨️ Imprimir / Guardar PDF</button>
