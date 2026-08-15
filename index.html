@@ -4401,7 +4401,10 @@ function renderInformes(){
   // que usan CxC/CxP/Préstamos y Consultas, para que este resumen cuadre 1 a 1 con esos módulos.
   const [_ay,_am]=mes.split('-').map(Number);
   const finMes=new Date(_ay,_am,0).toISOString().split('T')[0];
-  const cxcPendItems=(DB.cxc||[]).filter(x=>x.fecha&&x.fecha<=finMes).map(x=>({...x,saldo:saldoCXCAFecha(x,finMes)})).filter(x=>x.saldo>0.01);
+  // Por Cobrar SIEMPRE es el saldo actual real (igual que en CxC), sin importar el mes
+  // seleccionado aquí — no tiene sentido mostrar una deuda de un cliente como pendiente
+  // si ya la pagó, aunque el pago haya sido después del mes que se está consultando.
+  const cxcPendItems=(DB.cxc||[]).filter(x=>parseFloat(x.saldo||0)>0.01);
   const cxcPendRD=cxcPendItems.filter(x=>(x.moneda||'RD$')==='RD$').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
   const cxcPendUSD=cxcPendItems.filter(x=>x.moneda==='USD').reduce((a,x)=>a+parseFloat(x.saldo||0),0);
   const cxcPendCombinado=cxcPendRD+cxcPendUSD*tasa;
@@ -4536,7 +4539,10 @@ async function exportarInformeWord(){
   const totalNominaMes=pagosMes.reduce((a,p)=>a+parseFloat(p.monto||0),0);
 
   // ── AL CIERRE (misma fecha de corte que CxC/CxP/Préstamos/Consultas) ──
-  const cxcPend=(DB.cxc||[]).filter(x=>x.fecha&&x.fecha<=finMes).map(x=>({...x,saldo:saldoCXCAFecha(x,finMes)})).filter(x=>x.saldo>0.01);
+  // Por Cobrar es la excepción: siempre es el saldo actual real (igual que en CxC),
+  // sin importar el mes del informe — no tiene sentido reportar como pendiente una
+  // deuda que el cliente ya pagó, aunque el pago haya sido después de ese mes.
+  const cxcPend=(DB.cxc||[]).filter(x=>parseFloat(x.saldo||0)>0.01);
   const cxpPend=[
     ...(DB.gastosVehiculos||[]).map(g=>({...g,_origen:'auto'})),
     ...(DB.cxp||[]).map(g=>({...g,_origen:'manual'}))
