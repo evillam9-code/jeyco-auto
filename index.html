@@ -11844,6 +11844,7 @@ function imprimirCXP(){
 
 // ══ CUENTAS POR COBRAR (CxC) ══
 let cxcSelectedId=null;
+let cxcSelectedGroup=null; // {ventaId,traspId} cuando la fila mostrada es Venta+Traspaso unificada
 function renderCXC(){
   repararCxCVentaSiFalta();
   repararCxCTraspasoSiFalta();
@@ -11975,19 +11976,66 @@ function renderCXC(){
           <th>Pendiente Venta</th><th>Pendiente Traspaso</th><th>Total a Pagar</th>
           <th>Vence</th><th>Estado</th>
         </tr></thead>
-        <tbody>${items.length?items.slice().reverse().map(x=>{
-          const tipoBadge=x.esTraspaso?'<span style="background:#fef3c7;color:#d97706;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">🔄 TRASPASO</span>':x.esEndoso?'<span style="background:#ede9fe;color:#7c3aed;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">📋 ENDOSO</span>':'<span style="background:#dbeafe;color:#2563eb;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">💰 VENTA</span>';
-          // Desglose Venta / Traspaso / Total a pagar del vehículo relacionado (misma venta), sin importar si esta fila es la de venta o la de traspaso
-          const ventaRel=x.ventaId?DB.ventas.find(vv=>vv.id===x.ventaId):null;
-          const esUSDrow=(ventaRel?.moneda||(x.esTraspaso?'RD$':x.moneda)||'RD$')==='USD';
-          const tcRow=parseFloat(ventaRel?.tasaCambio||tasa);
-          const cxcVentaRel=x.ventaId?(DB.cxc||[]).find(c=>c.ventaId===x.ventaId&&!c.esTraspaso):(!x.esTraspaso?x:null);
-          const cxcTraspRel=x.ventaId?(DB.cxc||[]).find(c=>c.ventaId===x.ventaId&&c.esTraspaso):(x.esTraspaso?x:null);
-          const pendVenta=cxcVentaRel?parseFloat(cxcVentaRel.saldo||0):0;
-          const pendTrasp=cxcTraspRel?parseFloat(cxcTraspRel.saldo||0):0; // el traspaso siempre se registra en RD$
-          const totalPagar=esUSDrow?pendVenta+(pendTrasp/tcRow):pendVenta+pendTrasp;
-          const fVrow=(n)=>esUSDrow?'$'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(n);
-          return`<tr onclick="selCXC('${x.id}',this)" style="cursor:pointer">
+        <tbody>${(()=>{
+          // Agrupar en una sola fila la CxC de Venta + la de Traspaso del mismo vehículo (mismo ventaId),
+          // para no mostrar el mismo vehículo dos veces. Al cobrar/editar/ver historial se pregunta
+          // a cuál de las dos cuentas aplica, sin tocar la lógica de cada cuenta por separado.
+          const porVenta={};
+          items.forEach(x=>{if(x.ventaId)(porVenta[x.ventaId]=porVenta[x.ventaId]||[]).push(x);});
+          const yaAgrupado=new Set();
+          const filas=[];
+          items.forEach(x=>{
+            if(x.ventaId&&porVenta[x.ventaId].length===2){
+              if(yaAgrupado.has(x.ventaId))return;
+              yaAgrupado.add(x.ventaId);
+              const venta=porVenta[x.ventaId].find(p=>!p.esTraspaso);
+              const trasp=porVenta[x.ventaId].find(p=>p.esTraspaso);
+              filas.push({tipo:'grupo',venta,trasp});
+            } else {
+              filas.push({tipo:'single',x});
+            }
+          });
+          if(!filas.length)return`<tr><td colspan="13" style="text-align:center;padding:24px;color:var(--gray)">Sin cuentas por cobrar en ${filtroMoneda}</td></tr>`;
+          return filas.slice().reverse().map(f=>{
+            if(f.tipo==='grupo'){
+              const{venta,trasp}=f;
+              const vCxC=DB.vehiculos.find(vv=>vv.id===venta.vehiculoId);
+              const nm=vCxC?(vCxC.marca+' '+vCxC.modelo+(vCxC.anio?' '+vCxC.anio:'')):(venta.vehiculo||'');
+              const vi=vCxC?vCxC.vin||'':'';
+              const total=parseFloat(venta.total||0)+parseFloat(trasp.total||0);
+              const cobrado=parseFloat(venta.abonado||0)+parseFloat(trasp.abonado||0);
+              const saldo=parseFloat(venta.saldo||0)+parseFloat(trasp.saldo||0);
+              const estado=(venta.status==='PARCIAL'||trasp.status==='PARCIAL')?'PARCIAL':(venta.status==='SALDADO'&&trasp.status==='SALDADO'?'SALDADO':'PENDIENTE');
+              const vence=venta.fechaVence||trasp.fechaVence||'';
+              return`<tr onclick="selCXCGrupo('${venta.id}','${trasp.id}',this)" style="cursor:pointer;background:#f8fafc">
+              <td style="text-align:center"><input type="radio" name="cxc-sel" onclick="event.stopPropagation();selCXCGrupo('${venta.id}','${trasp.id}',this.closest('tr'))" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blue)"></td>
+              <td><div style="font-family:monospace;font-size:11px;font-weight:700;color:var(--blue)">${escHtml(venta.factura||'—')}</div></td>
+              <td><div style="font-weight:700">${escHtml(venta.cliente||'—')}</div></td>
+              <td style="min-width:120px">${nm?`<div style="font-weight:700;font-size:12px">${escHtml(nm)}</div><div style="font-family:monospace;font-size:10px;color:var(--blue);margin-top:2px">${escHtml(vi||'Sin VIN')}</div>`:'<span style="color:var(--gray)">—</span>'}</td>
+              <td><span style="background:#dbeafe;color:#2563eb;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">💰 VENTA</span> <span style="background:#fef3c7;color:#d97706;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">🔄 TRASPASO</span><div style="font-size:11px;color:var(--gray);margin-top:2px">Venta + Traspaso/Matrícula</div></td>
+              <td style="font-weight:600">${fmt(total)}</td>
+              <td style="color:var(--green);font-weight:600">${fmt(cobrado)}</td>
+              <td style="font-weight:800;color:${saldo>0?'var(--red)':'var(--green)'}">${fmt(saldo)}</td>
+              <td style="font-weight:700;color:${parseFloat(venta.saldo||0)>0?'var(--red)':'var(--gray)'}">${parseFloat(venta.saldo||0)>0?fmt(venta.saldo):'—'}</td>
+              <td style="font-weight:700;color:${parseFloat(trasp.saldo||0)>0?'#c2410c':'var(--gray)'}">${parseFloat(trasp.saldo||0)>0?fmt(trasp.saldo):'—'}</td>
+              <td style="font-weight:800;color:${saldo>0?'var(--red)':'var(--green)'}">${saldo>0?fmt(saldo):'✅ Al día'}</td>
+              <td style="font-size:12px;color:${vence&&vence<=today()?'var(--red)':'var(--gray)'}">${fmtDate(vence)||'—'}</td>
+              <td><span class="badge ${estado==='SALDADO'?'badge-green':estado==='PARCIAL'?'badge-amber':'badge-red'}">${estado}</span></td>
+            </tr>`;
+            }
+            const x=f.x;
+            const tipoBadge=x.esTraspaso?'<span style="background:#fef3c7;color:#d97706;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">🔄 TRASPASO</span>':x.esEndoso?'<span style="background:#ede9fe;color:#7c3aed;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">📋 ENDOSO</span>':'<span style="background:#dbeafe;color:#2563eb;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">💰 VENTA</span>';
+            // Desglose Venta / Traspaso / Total a pagar del vehículo relacionado (misma venta), sin importar si esta fila es la de venta o la de traspaso
+            const ventaRel=x.ventaId?DB.ventas.find(vv=>vv.id===x.ventaId):null;
+            const esUSDrow=(ventaRel?.moneda||(x.esTraspaso?'RD$':x.moneda)||'RD$')==='USD';
+            const tcRow=parseFloat(ventaRel?.tasaCambio||tasa);
+            const cxcVentaRel=x.ventaId?(DB.cxc||[]).find(c=>c.ventaId===x.ventaId&&!c.esTraspaso):(!x.esTraspaso?x:null);
+            const cxcTraspRel=x.ventaId?(DB.cxc||[]).find(c=>c.ventaId===x.ventaId&&c.esTraspaso):(x.esTraspaso?x:null);
+            const pendVenta=cxcVentaRel?parseFloat(cxcVentaRel.saldo||0):0;
+            const pendTrasp=cxcTraspRel?parseFloat(cxcTraspRel.saldo||0):0; // el traspaso siempre se registra en RD$
+            const totalPagar=esUSDrow?pendVenta+(pendTrasp/tcRow):pendVenta+pendTrasp;
+            const fVrow=(n)=>esUSDrow?'$'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(n);
+            return`<tr onclick="selCXC('${x.id}',this)" style="cursor:pointer">
           <td style="text-align:center"><input type="radio" name="cxc-sel" onclick="event.stopPropagation();selCXC('${x.id}',this.closest('tr'))" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blue)"></td>
           <td><div style="font-family:monospace;font-size:11px;font-weight:700;color:var(--blue)">${escHtml(x.factura||'—')}</div></td>
           <td><div style="font-weight:700">${escHtml(x.cliente||'—')}</div></td>
@@ -12001,7 +12049,9 @@ function renderCXC(){
           <td style="font-weight:800;color:${totalPagar>0?'var(--red)':'var(--green)'}">${totalPagar>0?fVrow(totalPagar):'✅ Al día'}</td>
           <td style="font-size:12px;color:${x.fechaVence&&x.fechaVence<=today()?'var(--red)':'var(--gray)'}">${fmtDate(x.fechaVence)||'—'}</td>
           <td><span class="badge ${x.status==='SALDADO'?'badge-green':x.status==='PARCIAL'?'badge-amber':'badge-red'}">${x.status||'—'}</span></td>
-        </tr>`;}).join(''):`<tr><td colspan="13" style="text-align:center;padding:24px;color:var(--gray)">Sin cuentas por cobrar en ${filtroMoneda}</td></tr>`}
+        </tr>`;
+          }).join('');
+        })()}
         </tbody>
       </table></div>
     </div>`;
@@ -12021,6 +12071,7 @@ function aplicarMesCierreCXC(){
 
 function selCXC(id,tr){
   cxcSelectedId=id;
+  cxcSelectedGroup=null;
   document.querySelectorAll('#cxc-tbl tbody tr').forEach(r=>r.style.background='');
   if(tr)tr.style.background='#e8f0fe';
   const x=DB.cxc.find(c=>c.id===id);
@@ -12030,6 +12081,44 @@ function selCXC(id,tr){
   if(currentUser?.role==='admin'||canDo('editar'))actB('cxc-btn-editar','#7c3aed','#fff');
   if(currentUser?.role==='admin'||canDo('eliminar'))actB('cxc-btn-eliminar','#dc2626','#fff');
 
+}
+// Fila unificada Venta+Traspaso: guarda ambos ids y deja que cxcAccion pregunte a cuál aplica cada acción
+function selCXCGrupo(ventaId,traspId,tr){
+  cxcSelectedId=null;
+  cxcSelectedGroup={ventaId,traspId};
+  document.querySelectorAll('#cxc-tbl tbody tr').forEach(r=>r.style.background='');
+  if(tr)tr.style.background='#e8f0fe';
+  const venta=DB.cxc.find(c=>c.id===ventaId);
+  const trasp=DB.cxc.find(c=>c.id===traspId);
+  const actB=(bid,bg,c)=>{const b=document.getElementById(bid);if(b){b.disabled=false;b.style.cssText='background:'+bg+';color:'+c+';cursor:pointer;border:none;';}};
+  if(venta?.status!=='SALDADO'||trasp?.status!=='SALDADO')actB('cxc-btn-cobrar','#16a34a','#fff');
+  actB('cxc-btn-historial','#475569','#fff');
+  if(currentUser?.role==='admin'||canDo('editar'))actB('cxc-btn-editar','#7c3aed','#fff');
+  if(currentUser?.role==='admin'||canDo('eliminar'))actB('cxc-btn-eliminar','#dc2626','#fff');
+}
+// Cuando la selección es un grupo (Venta+Traspaso), pregunta a cuál de las dos cuentas aplica la acción
+// y luego reutiliza exactamente las mismas funciones que ya existen para una CxC individual.
+function elegirCuentaCXCGrupo(accion){
+  const{ventaId,traspId}=cxcSelectedGroup;
+  const venta=DB.cxc.find(c=>c.id===ventaId);
+  const trasp=DB.cxc.find(c=>c.id===traspId);
+  const accionFn={cobrar:'abonarCXC',historial:'verAbonosCXC',editar:'editarCXCManual'};
+  const titulos={cobrar:'💵 ¿A cuál cuenta aplica este cobro?',historial:'👁 ¿De cuál cuenta ver el historial?',editar:'✏️ ¿Cuál cuenta editar?',eliminar:'🗑 ¿Cuál cuenta eliminar?'};
+  const opcion=(cxc,label,color)=>`
+    <button class="btn" style="width:100%;text-align:left;margin-bottom:8px;padding:12px 14px;border:1.5px solid ${color};background:#fff;border-radius:8px;cursor:pointer" onclick="closeModal();${accion==='eliminar'?`cxcEliminarDirecto('${cxc.id}')`:`${accionFn[accion]}('${cxc.id}')`}">
+      <div style="font-weight:800;color:${color}">${label}</div>
+      <div style="font-size:12px;color:var(--gray);margin-top:2px">${escHtml(cxc.concepto||cxc.factura||'')} — Saldo: <strong>${fmt(cxc.saldo||0)}</strong></div>
+    </button>`;
+  openModal(titulos[accion],`
+    ${opcion(venta,'💰 Venta del vehículo','#2563eb')}
+    ${opcion(trasp,'🔄 Traspaso / Matrícula','#d97706')}
+  `,`<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>`);
+}
+function cxcEliminarDirecto(id){
+  const x=DB.cxc.find(c=>c.id===id);
+  openModal('🗑 Eliminar CxC',`<p>¿Eliminar la cuenta de <strong>${escHtml(x?.cliente||'')}</strong> — ${escHtml(x?.concepto||'')}?</p>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-red" onclick="DB.cxc=DB.cxc.filter(c=>c.id!=='${id}');sDB('cxc');closeModal();toast('Eliminado','success');renderCXC()">🗑 Eliminar</button>`);
 }
 
 function nuevaCXCManual(){
@@ -12174,6 +12263,13 @@ function guardarCXCManual(){
   toast('Cuenta por cobrar creada ✓','success');renderCXC();
 }
 function cxcAccion(accion){
+  if(cxcSelectedGroup){
+    if(accion==='cobrar'&&!canDo('editar')){toast('No tienes permiso para registrar cobros','error');return;}
+    if((accion==='editar')&&!(currentUser?.role==='admin'||canDo('editar'))){toast('No tienes permiso para editar','error');return;}
+    if(accion==='eliminar'&&!canDo('eliminar')){toast('No tienes permiso para eliminar','error');return;}
+    elegirCuentaCXCGrupo(accion);
+    return;
+  }
   if(!cxcSelectedId)return;
   if(accion==='cobrar'){if(!canDo('editar')){toast('No tienes permiso para registrar cobros','error');return;}abonarCXC(cxcSelectedId);}
   else if(accion==='historial')verAbonosCXC(cxcSelectedId);
