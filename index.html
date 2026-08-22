@@ -12109,10 +12109,84 @@ function elegirCuentaCXCGrupo(accion){
       <div style="font-weight:800;color:${color}">${label}</div>
       <div style="font-size:12px;color:var(--gray);margin-top:2px">${escHtml(cxc.concepto||cxc.factura||'')} — Saldo: <strong>${fmt(cxc.saldo||0)}</strong></div>
     </button>`;
+  const totalSaldo=parseFloat(venta?.saldo||0)+parseFloat(trasp?.saldo||0);
+  const opcionSaldarTodo=accion==='cobrar'&&totalSaldo>0?`
+    <button class="btn" style="width:100%;text-align:left;margin-bottom:10px;padding:12px 14px;border:2px solid #16a34a;background:#f0fdf4;border-radius:8px;cursor:pointer" onclick="closeModal();abrirSaldarGrupoCXC()">
+      <div style="font-weight:900;color:#16a34a">✅ Saldar TODO (Venta + Traspaso)</div>
+      <div style="font-size:12px;color:var(--gray);margin-top:2px">Paga ambas cuentas de una sola vez — Total: <strong>${fmt(totalSaldo)}</strong></div>
+    </button>
+    <div style="font-size:11px;color:var(--gray);margin:2px 0 10px;text-align:center">— o paga solo una de las dos —</div>`:'';
   openModal(titulos[accion],`
+    ${opcionSaldarTodo}
     ${opcion(venta,'💰 Venta del vehículo','#2563eb')}
     ${opcion(trasp,'🔄 Traspaso / Matrícula','#d97706')}
   `,`<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>`);
+}
+function abrirSaldarGrupoCXC(){
+  if(!cxcSelectedGroup)return;
+  const{ventaId,traspId}=cxcSelectedGroup;
+  const venta=DB.cxc.find(c=>c.id===ventaId);
+  const trasp=DB.cxc.find(c=>c.id===traspId);
+  const saldoVenta=parseFloat(venta?.saldo||0);
+  const saldoTrasp=parseFloat(trasp?.saldo||0);
+  const total=saldoVenta+saldoTrasp;
+  if(total<=0){toast('Esta cuenta ya está saldada','warning');return;}
+  openModal('✅ Saldar Todo — '+escHtml(venta?.cliente||trasp?.cliente||''),`
+    <div style="background:var(--blue3);border-radius:8px;padding:12px;margin-bottom:12px;font-size:13px">
+      <div style="display:flex;justify-content:space-between;padding:3px 0"><span>💰 Venta pendiente</span><strong>${fmt(saldoVenta)}</strong></div>
+      <div style="display:flex;justify-content:space-between;padding:3px 0"><span>🔄 Traspaso pendiente</span><strong>${fmt(saldoTrasp)}</strong></div>
+      <div style="display:flex;justify-content:space-between;padding-top:6px;margin-top:6px;border-top:1px solid #cbd5e1;font-weight:900;color:var(--green)"><span>TOTAL A PAGAR</span><span>${fmt(total)}</span></div>
+    </div>
+    <div class="form-row c2">
+      <div class="form-field"><label>Fecha</label><input type="date" id="sgc-fecha" value="${today()}"></div>
+    </div>
+    <div class="form-row c3">
+      ${htmlMonedaBancoCuenta('sgc','RD$',undefined,undefined)}
+    </div>
+    <div class="form-field"><label>Nota</label><input type="text" id="sgc-nota" placeholder="Descripción del cobro"></div>
+    <div style="font-size:11px;color:var(--gray)">Se generarán dos recibos por separado (Venta y Traspaso) con el mismo método de pago.</div>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-green" onclick="confirmarSaldarGrupoCXC('${ventaId}','${traspId}')">✅ Confirmar y Saldar Todo</button>`);
+}
+function confirmarSaldarGrupoCXC(ventaId,traspId){
+  const fecha=document.getElementById('sgc-fecha').value||today();
+  const banco=document.getElementById('sgc-banco')?.value||'';
+  const cuenta=document.getElementById('sgc-cuenta')?.value||'Caja General';
+  const nota=document.getElementById('sgc-nota')?.value||'';
+  [ventaId,traspId].forEach(id=>{
+    const i=DB.cxc.findIndex(c=>c.id===id);if(i<0)return;
+    const monto=parseFloat(DB.cxc[i].saldo||0);
+    if(monto<=0)return;
+    DB.cxc[i].abonado=(DB.cxc[i].abonado||0)+monto;
+    DB.cxc[i].saldo=0;
+    DB.cxc[i].status='SALDADO';
+    if(!DB.cxc[i].pagos)DB.cxc[i].pagos=[];
+    const pagoId=uid();
+    const pagoObj={id:pagoId,fecha,monto,moneda:DB.cxc[i].moneda||'RD$',banco,cuenta,nota,saldado:true};
+    DB.cxc[i].pagos.push(pagoObj);
+    if(DB.cxc[i].ventaId&&!DB.cxc[i].esTraspaso){
+      const vi=DB.ventas.findIndex(v=>v.id===DB.cxc[i].ventaId);
+      if(vi>=0){
+        DB.ventas[vi].pendiente=0;
+        DB.ventas[vi].inicial=(DB.ventas[vi].inicial||0)+monto;
+        if(DB.ventas[vi].fechaEntrega){DB.ventas[vi].estadoVenta='VENDIDO';}else{DB.ventas[vi].estadoVenta='TRÁNSITO';}
+        DB.ventas[vi].docsPendientes=!DB.ventas[vi].fechaEntrega;
+        sDB('ventas');
+      }
+    } else if(DB.cxc[i].esTraspaso&&DB.cxc[i].ventaId){
+      const vi=DB.ventas.findIndex(v=>v.id===DB.cxc[i].ventaId);
+      if(vi>=0){DB.ventas[vi].traspasoPagado='si';sDB('ventas');}
+    }
+    DB.caja.push({id:uid(),fecha,tipo:'ENTRADA',categoria:'Cobro CxC',
+      descripcion:`Cobro CxC: ${DB.cxc[i].cliente} — ${DB.cxc[i].factura}`,
+      monto,moneda:DB.cxc[i].moneda||'RD$',banco,cuenta,
+      referencia:DB.cxc[i].factura||'',responsable:currentUser.nombre,origenModulo:'cxc',origenId:DB.cxc[i].id,pagoId});
+  });
+  sDB('cxc');sDB('caja');
+  closeModal();
+  toast('✅ Cuenta saldada por completo (Venta + Traspaso)','success');
+  cxcSelectedGroup=null;
+  renderCXC();
 }
 function cxcEliminarDirecto(id){
   const x=DB.cxc.find(c=>c.id===id);
@@ -12480,7 +12554,7 @@ function confirmarAbonarCXC(id){
     ...(esUSD&&tasa?{tasa,equivRD}:{})
   };
   DB.cxc[i].pagos.push(pagoObj);
-  if(DB.cxc[i].ventaId){
+  if(DB.cxc[i].ventaId&&!DB.cxc[i].esTraspaso){
     const vi=DB.ventas.findIndex(v=>v.id===DB.cxc[i].ventaId);
     if(vi>=0){
       DB.ventas[vi].pendiente=DB.cxc[i].saldo;
@@ -12488,6 +12562,9 @@ function confirmarAbonarCXC(id){
       if(saldado){if(DB.ventas[vi].fechaEntrega){DB.ventas[vi].estadoVenta='VENDIDO';}else{DB.ventas[vi].estadoVenta='TRÁNSITO';}DB.ventas[vi].docsPendientes=!DB.ventas[vi].fechaEntrega;}
       sDB('ventas');
     }
+  } else if(DB.cxc[i].esTraspaso&&DB.cxc[i].ventaId&&saldado){
+    const vi=DB.ventas.findIndex(v=>v.id===DB.cxc[i].ventaId);
+    if(vi>=0){DB.ventas[vi].traspasoPagado='si';sDB('ventas');}
   }
   // Movimiento de Caja en la moneda real del cobro (ya no se fuerza la conversión a RD$)
   DB.caja.push({id:uid(),fecha:fechaCobro,tipo:'ENTRADA',categoria:'Cobro CxC',
