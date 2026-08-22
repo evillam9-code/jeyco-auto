@@ -8686,7 +8686,46 @@ function generarResumenPorVehiculo(){
 }
 
 // ══ VENTAS ══
+// Repara ventas con saldo pendiente que se quedaron sin su CxC (por edición vieja o borrado manual).
+// Se llama cada vez que se abren Ventas o CxC para que se autocorrija sin depender del momento de login.
+function repararCxCVentaSiFalta(){
+  let changed=false;
+  (DB.ventas||[]).forEach(venta=>{
+    const pend=parseFloat(venta.pendiente||0);
+    if(pend<=0)return;
+    const yaExiste=DB.cxc.find(c=>c.ventaId===venta.id&&!c.esTraspaso);
+    if(yaExiste)return;
+    const inicialVenta=parseFloat(venta.inicial||0);
+    const pagosIniciales=inicialVenta>0?[{id:uid(),fecha:venta.fecha,monto:inicialVenta,moneda:venta.moneda||'RD$',banco:venta.banco||'',cuenta:venta.cuenta||'Caja General',nota:'Pago registrado — reconciliado automáticamente'}]:[];
+    DB.cxc.push({id:uid(),ventaId:venta.id,factura:venta.factura,cliente:venta.cliente,clienteId:venta.clienteId,vehiculo:`${venta.codigo||''} ${venta.vehiculo||''}`.trim(),concepto:'Pendiente de venta',moneda:venta.moneda||'RD$',total:parseFloat(venta.precioVenta||0),abonado:inicialVenta,saldo:pend,fecha:venta.fecha,fechaVence:'',status:inicialVenta>0?'PARCIAL':'PENDIENTE',pagos:pagosIniciales});
+    changed=true;
+    console.log('✅ CxC recreada para venta con pendiente huérfano:',venta.factura);
+  });
+  if(changed)sDB('cxc');
+  return changed;
+}
+// Repara ventas de tipo Traspaso marcadas "cliente no pagó" que se quedaron sin la CxC al cliente
+// (ej. porque no se había asignado gestor/tramitador al momento de crear la venta).
+function repararCxCTraspasoSiFalta(){
+  let changed=false;
+  (DB.ventas||[]).forEach(venta=>{
+    if(venta.tipoTransferencia!=='traspaso')return;
+    const montoTr=parseFloat(venta.traspasoMonto||venta.montoTraspaso||0);
+    if(montoTr<=0)return;
+    const noPago=venta.traspasoPagadoCliente===false||venta.traspasoPagado==='no';
+    if(!noPago)return;
+    const yaExiste=DB.cxc.find(c=>c.ventaId===venta.id&&c.esTraspaso);
+    if(yaExiste)return;
+    DB.cxc.push({id:uid(),ventaId:venta.id,factura:venta.factura,cliente:venta.cliente,clienteId:venta.clienteId,vehiculo:`${venta.codigo||''} ${venta.vehiculo||''}`.trim(),concepto:'Traspaso/Matrícula pendiente — '+(venta.codigo||''),moneda:'RD$',total:montoTr,abonado:0,saldo:montoTr,fecha:venta.fecha,fechaVence:'',status:'PENDIENTE',pagos:[],esTraspaso:true});
+    changed=true;
+    console.log('✅ CxC de traspaso recreada para venta:',venta.factura);
+  });
+  if(changed)sDB('cxc');
+  return changed;
+}
 function renderVentas(){
+  repararCxCVentaSiFalta();
+  repararCxCTraspasoSiFalta();
   const mes=document.getElementById('ventas-mes')?.value||'';
   const ventasFilt=mes?DB.ventas.filter(v=>v.fecha?.startsWith(mes)):DB.ventas;
   const tasa=parseFloat(DB.config.tasaCambio||60);
@@ -11806,6 +11845,8 @@ function imprimirCXP(){
 // ══ CUENTAS POR COBRAR (CxC) ══
 let cxcSelectedId=null;
 function renderCXC(){
+  repararCxCVentaSiFalta();
+  repararCxCTraspasoSiFalta();
   // Migrar CxC — corregir moneda y abonado
   let cambio=false;
   (DB.cxc||[]).forEach((x,i)=>{
@@ -15036,40 +15077,10 @@ window.fbIniciar = async function(){
         }
       });
       if(_traspSyncChanged){sDB('cxc');}
-      // ══ REPARAR VENTAS CON PENDIENTE SIN CxC ASOCIADA (ej. J-00042) ══
-      // Si una venta quedó con saldo pendiente pero perdió su registro de CxC (por edición
-      // antigua o eliminación manual de la CxC), se recrea aquí con el estado actual para
-      // que vuelva a aparecer en Cuentas por Cobrar y en el Historial de la venta.
-      let _cxcVentaRepair=false;
-      (DB.ventas||[]).forEach(venta=>{
-        const pend=parseFloat(venta.pendiente||0);
-        if(pend<=0)return;
-        const yaExiste=DB.cxc.find(c=>c.ventaId===venta.id&&!c.esTraspaso);
-        if(yaExiste)return;
-        const inicialVenta=parseFloat(venta.inicial||0);
-        const pagosIniciales=inicialVenta>0?[{id:uid(),fecha:venta.fecha,monto:inicialVenta,moneda:venta.moneda||'RD$',banco:venta.banco||'',cuenta:venta.cuenta||'Caja General',nota:'Pago registrado — reconciliado automáticamente'}]:[];
-        DB.cxc.push({id:uid(),ventaId:venta.id,factura:venta.factura,cliente:venta.cliente,clienteId:venta.clienteId,vehiculo:`${venta.codigo||''} ${venta.vehiculo||''}`.trim(),concepto:'Pendiente de venta',moneda:venta.moneda||'RD$',total:parseFloat(venta.precioVenta||0),abonado:inicialVenta,saldo:pend,fecha:venta.fecha,fechaVence:'',status:inicialVenta>0?'PARCIAL':'PENDIENTE',pagos:pagosIniciales});
-        _cxcVentaRepair=true;
-        console.log('✅ CxC recreada para venta con pendiente huérfano:',venta.factura);
-      });
-      if(_cxcVentaRepair)sDB('cxc');
-      // ══ REPARAR TRASPASOS PENDIENTES SIN CxC ASOCIADA (ej. J-00042) ══
-      // Ventas marcadas como "Traspaso, cliente no pagó" que se quedaron sin CxC al cliente
-      // porque al momento de crearlas no se había asignado gestor/tramitador.
-      let _cxcTraspRepair=false;
-      (DB.ventas||[]).forEach(venta=>{
-        if(venta.tipoTransferencia!=='traspaso')return;
-        const montoTr=parseFloat(venta.traspasoMonto||venta.montoTraspaso||0);
-        if(montoTr<=0)return;
-        const noPago=venta.traspasoPagadoCliente===false||venta.traspasoPagado==='no';
-        if(!noPago)return;
-        const yaExiste=DB.cxc.find(c=>c.ventaId===venta.id&&c.esTraspaso);
-        if(yaExiste)return;
-        DB.cxc.push({id:uid(),ventaId:venta.id,factura:venta.factura,cliente:venta.cliente,clienteId:venta.clienteId,vehiculo:`${venta.codigo||''} ${venta.vehiculo||''}`.trim(),concepto:'Traspaso/Matrícula pendiente — '+(venta.codigo||''),moneda:'RD$',total:montoTr,abonado:0,saldo:montoTr,fecha:venta.fecha,fechaVence:'',status:'PENDIENTE',pagos:[],esTraspaso:true});
-        _cxcTraspRepair=true;
-        console.log('✅ CxC de traspaso recreada para venta:',venta.factura);
-      });
-      if(_cxcTraspRepair)sDB('cxc');
+      // Reparar ventas/traspasos huérfanos sin su CxC (ej. J-00042). Estas mismas funciones
+      // también se ejecutan cada vez que se abre Ventas o CxC, así no dependen de este momento.
+      repararCxCVentaSiFalta();
+      repararCxCTraspasoSiFalta();
     } else {
       const keys=['config','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
         'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos','intereses','log'];
