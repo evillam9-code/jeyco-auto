@@ -11917,8 +11917,6 @@ function renderCXC(){
           <option value="PENDIENTE" ${filtroStatus==='PENDIENTE'?'selected':''}>Pendiente / Parcial</option>
           <option value="SALDADO" ${filtroStatus==='SALDADO'?'selected':''}>Saldado</option>
           <option value="TODOS" ${filtroStatus==='TODOS'?'selected':''}>Todos</option>
-          <option value="SALDADO" ${filtroStatus==='SALDADO'?'selected':''}>Saldado</option>
-          <option value="TODOS" ${filtroStatus==='TODOS'?'selected':''}>Todos</option>
         </select>
         <input type="month" id="cxc-filtro-mes" value="${filtroMes}" onchange="aplicarMesCierreCXC()" title="Saldo pendiente al cierre del mes seleccionado" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
         <input type="date" id="cxc-filtro-hasta" value="${filtroHasta}" onchange="document.getElementById('cxc-filtro-mes').value='';renderCXC()" title="Saldo al (fecha de corte) — un pago después de esta fecha no reduce el pendiente mostrado. Vacío = saldo actual." style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
