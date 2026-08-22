@@ -8768,6 +8768,7 @@ function renderVentas(){
           <th style="width:36px"></th>
           <th>Factura</th><th>Fecha</th><th>Vehículo</th><th>Chasis</th>
           <th>Cliente</th><th>Precio</th><th>Inicial</th><th>Pendiente</th>
+          <th>Traspaso Pend.</th><th>Total a Pagar</th>
           <th>Método</th><th>Estado</th>
         </tr></thead>
         <tbody>${ventasFilt.length?ventasFilt.slice().reverse().map(v=>{
@@ -8817,10 +8818,36 @@ function renderVentas(){
                   :`<div style="font-weight:700;color:${color}">${fmt(pend)}</div>`;
               })()}
             </td>
+            <td>
+              ${(()=>{
+                const esUSD=v.moneda==='USD';
+                const tc=parseFloat(v.tasaCambio||tasa);
+                const cxcT=(DB.cxc||[]).find(c=>c.ventaId===v.id&&c.esTraspaso&&parseFloat(c.saldo||0)>0);
+                if(!cxcT)return'<span style="color:var(--gray)">—</span>';
+                const saldoRD=parseFloat(cxcT.saldo||0);
+                return esUSD
+                  ?`<div style="font-weight:700;color:#c2410c">$${(saldoRD/tc).toLocaleString('en-US',{minimumFractionDigits:2})} USD</div><div style="font-size:10px;color:var(--gray)">${fmt(saldoRD)}</div>`
+                  :`<div style="font-weight:700;color:#c2410c">${fmt(saldoRD)}</div>`;
+              })()}
+            </td>
+            <td>
+              ${(()=>{
+                const esUSD=v.moneda==='USD';
+                const tc=parseFloat(v.tasaCambio||tasa);
+                const pend=parseFloat(v.pendiente||0);
+                const cxcT=(DB.cxc||[]).find(c=>c.ventaId===v.id&&c.esTraspaso&&parseFloat(c.saldo||0)>0);
+                const traspRD=cxcT?parseFloat(cxcT.saldo||0):0;
+                const total=esUSD?pend+(traspRD/tc):pend+traspRD;
+                if(total<=0)return'<span style="color:var(--green);font-weight:700">✅ Al día</span>';
+                return esUSD
+                  ?`<div style="font-weight:800;color:var(--red)">$${total.toLocaleString('en-US',{minimumFractionDigits:2})} USD</div>`
+                  :`<div style="font-weight:800;color:var(--red)">${fmt(total)}</div>`;
+              })()}
+            </td>
             <td style="font-size:11px">${escHtml(v.metodoPago||'—')}</td>
             <td><span class="badge ${estColor[v.estadoVenta||'VENDIDO']||'badge-gray'}">${v.estadoVenta||'VENDIDO'}</span></td>
           </tr>`;
-        }).join(''):'<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--gray)">Sin ventas registradas</td></tr>'}
+        }).join(''):'<tr><td colspan="13" style="text-align:center;padding:24px;color:var(--gray)">Sin ventas registradas</td></tr>'}
         </tbody>
       </table></div>
     </div>
@@ -9607,7 +9634,8 @@ function confirmarVenta(nf){
   // Si hay pendiente → CxC automática
   if(pendiente>0){
     const abonadoInicial=inicial;
-    DB.cxc.push({id:uid(),ventaId:venta.id,factura:nf,cliente:cliNombre,clienteId:cliId,vehiculo:`${v.codigo} ${v.marca} ${v.modelo}`,concepto:'Pendiente de venta',moneda:monedaVenta,total:precio,abonado:abonadoInicial,saldo:pendiente,fecha:venta.fecha,fechaVence:'',status:pendiente<=0?'SALDADO':abonadoInicial>0?'PARCIAL':'PENDIENTE',pagos:[]});
+    const pagosIniciales=abonadoInicial>0?[{id:uid(),fecha:venta.fecha,monto:abonadoInicial,moneda:monedaVenta,banco,cuenta,nota:'Inicial de la venta'}]:[];
+    DB.cxc.push({id:uid(),ventaId:venta.id,factura:nf,cliente:cliNombre,clienteId:cliId,vehiculo:`${v.codigo} ${v.marca} ${v.modelo}`,concepto:'Pendiente de venta',moneda:monedaVenta,total:precio,abonado:abonadoInicial,saldo:pendiente,fecha:venta.fecha,fechaVence:'',status:pendiente<=0?'SALDADO':abonadoInicial>0?'PARCIAL':'PENDIENTE',pagos:pagosIniciales});
     sDB('cxc');
   }
   // ═══ ENDOSO → CXP al gestor (empresa lo paga) ═══
@@ -9720,6 +9748,15 @@ function confirmarAbVenta(vid){
   const cuenta=document.getElementById('ab-cuenta')?.value||'Caja General';
   const fecha=document.getElementById('ab-fecha').value;
   const nota=document.getElementById('ab-nota')?.value||'';
+  const v=DB.ventas[i];
+  // Asegurar que exista la CxC de esta venta (excluyendo la de traspaso) antes de aplicar el pago.
+  // Si se perdió o nunca se creó, se recrea aquí con el estado actual para no perder el rastro del pago.
+  let ci=DB.cxc.findIndex(x=>x.ventaId===vid&&!x.esTraspaso);
+  if(ci<0){
+    DB.cxc.push({id:uid(),ventaId:v.id,factura:v.factura,cliente:v.cliente,clienteId:v.clienteId,vehiculo:`${v.codigo||''} ${v.vehiculo||''}`.trim(),concepto:'Pendiente de venta',moneda:v.moneda||'RD$',total:parseFloat(v.precioVenta||0),abonado:parseFloat(v.inicial||0),saldo:parseFloat(v.pendiente||0),fecha:v.fecha,fechaVence:'',status:parseFloat(v.pendiente||0)<=0?'SALDADO':parseFloat(v.inicial||0)>0?'PARCIAL':'PENDIENTE',pagos:[]});
+    ci=DB.cxc.length-1;
+    console.log('✅ CxC recreada automáticamente para venta',v.factura);
+  }
   DB.ventas[i].inicial=(DB.ventas[i].inicial||0)+monto;
   DB.ventas[i].pendiente=Math.max(0,(DB.ventas[i].pendiente||0)-monto);
   if(DB.ventas[i].pendiente<=0){
@@ -9731,17 +9768,14 @@ function confirmarAbVenta(vid){
     if(vi2>=0){DB.vehiculos[vi2].status='VENDIDO';sDB('vehiculos');}
     toast('✅ Pago completado — Vehículo queda pendiente de entrega de documentos (plazo: 1 mes)','warning');
   }
-  const ci=DB.cxc.findIndex(x=>x.ventaId===vid);
   const pagoId=uid();
-  if(ci>=0){
-    DB.cxc[ci].abonado=(DB.cxc[ci].abonado||0)+monto;
-    DB.cxc[ci].saldo=Math.max(0,(DB.cxc[ci].saldo||0)-monto);
-    DB.cxc[ci].status=DB.cxc[ci].saldo<=0?'SALDADO':'PARCIAL';
-    if(!DB.cxc[ci].pagos)DB.cxc[ci].pagos=[];
-    DB.cxc[ci].pagos.push({id:pagoId,fecha,monto,moneda,banco,cuenta,nota});
-    sDB('cxc');
-  }
-  DB.caja.push({id:uid(),fecha,tipo:'ENTRADA',categoria:'Cobro de Venta',descripcion:`Cobro ${DB.ventas[i].factura}: ${DB.ventas[i].cliente}`,monto,moneda,banco,cuenta,referencia:DB.ventas[i].factura,responsable:currentUser.nombre,origenModulo:'cxc',origenId:ci>=0?DB.cxc[ci].id:'',pagoId});
+  DB.cxc[ci].abonado=(DB.cxc[ci].abonado||0)+monto;
+  DB.cxc[ci].saldo=Math.max(0,(DB.cxc[ci].saldo||0)-monto);
+  DB.cxc[ci].status=DB.cxc[ci].saldo<=0?'SALDADO':'PARCIAL';
+  if(!DB.cxc[ci].pagos)DB.cxc[ci].pagos=[];
+  DB.cxc[ci].pagos.push({id:pagoId,fecha,monto,moneda,banco,cuenta,nota});
+  sDB('cxc');
+  DB.caja.push({id:uid(),fecha,tipo:'ENTRADA',categoria:'Cobro de Venta',descripcion:`Cobro ${DB.ventas[i].factura}: ${DB.ventas[i].cliente}`,monto,moneda,banco,cuenta,referencia:DB.ventas[i].factura,responsable:currentUser.nombre,origenModulo:'cxc',origenId:DB.cxc[ci].id,pagoId});
   sDB('ventas');sDB('caja');
   closeModal();
   logBit('ventas','Registró cobro','');toast('Cobro registrado ✓','success');
@@ -9986,6 +10020,12 @@ function guardarEditarVenta(vid){
   // Actualizar CXC de venta
   const ci=DB.cxc.findIndex(x=>x.ventaId===vid&&!x.esTraspaso);
   if(ci>=0){DB.cxc[ci].total=precio;DB.cxc[ci].moneda=moneda;DB.cxc[ci].tasaCambio=tasa;DB.cxc[ci].saldo=pendiente;DB.cxc[ci].abonado=inicial;DB.cxc[ci].status=pendiente<=0?'SALDADO':inicial>0?'PARCIAL':'PENDIENTE';DB.cxc[ci].cliente=cli?.nombre||DB.cxc[ci].cliente;sDB('cxc');}
+  else if(pendiente>0){
+    // La venta no tenía CxC (nunca se creó o se eliminó) — se crea ahora para no perder el rastro del saldo
+    DB.cxc.push({id:uid(),ventaId:vid,factura:DB.ventas[i].factura,cliente:cli?.nombre||DB.ventas[i].cliente,clienteId:cliId,vehiculo:`${DB.ventas[i].codigo||''} ${DB.ventas[i].vehiculo||''}`.trim(),concepto:'Pendiente de venta',moneda,total:precio,abonado:inicial,saldo:pendiente,fecha:DB.ventas[i].fecha,fechaVence:'',status:inicial>0?'PARCIAL':'PENDIENTE',pagos:[]});
+    sDB('cxc');
+    console.log('✅ CxC creada automáticamente al editar venta',DB.ventas[i].factura);
+  }
   // Actualizar CXC de traspaso si existe y el monto cambió
   const ciTrasp=DB.cxc.findIndex(x=>x.ventaId===vid&&x.esTraspaso);
   if(ciTrasp>=0&&traspasoMonto>0){
@@ -10142,17 +10182,27 @@ function imprimirFactura(vid){
     <table class="fin-tabla">
       ${(()=>{
         const esUSD=v.moneda==='USD';
+        const tc=parseFloat(v.tasaCambio||DB.config.tasaCambio||60);
         const fV=(n)=>esUSD?'USD $'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2}):'RD$ '+parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2});
-        const montoTraspp=(()=>{const cxcT=(DB.cxc||[]).find(x=>x.ventaId===v.id&&x.esTraspaso);return cxcT?parseFloat(cxcT.total||0):parseFloat(v.traspasoMonto||v.montoTraspaso||0);})();
-        const traspNoPagado=v.tipoTransferencia==='traspaso'&&montoTraspp>0&&(v.traspasoPagadoCliente===false||v.traspasoPagado==='no');
-        const totalPendiente=parseFloat(v.pendiente||0)+(traspNoPagado?montoTraspp:0);
+        const aMonedaVenta=(rd)=>esUSD?rd/tc:rd; // el traspaso siempre se registra en RD$
+        // Traspaso: si la venta es en USD, mostrar en pesos y dólares (solo para las filas de traspaso)
+        const fTrasp=(rd)=>esUSD?`${fV(rd/tc)}<div style="font-size:10px;font-weight:400;color:#92400e">${fmt(rd)}</div>`:fV(rd);
+        // Traspaso de ESTA venta (si aplica), por el saldo real (baja cuando el cliente abona)
+        const cxcTraspPropio=(DB.cxc||[]).find(x=>x.ventaId===v.id&&x.esTraspaso);
+        const traspPropioSaldoRD=cxcTraspPropio?parseFloat(cxcTraspPropio.saldo||0):0;
+        // Otras deudas de traspaso pendientes del mismo cliente (de otros vehículos/ventas)
+        const otrosTrasp=(DB.cxc||[]).filter(x=>x.esTraspaso&&x.clienteId===v.clienteId&&x.ventaId!==v.id&&parseFloat(x.saldo||0)>0);
+        const totalOtrosTraspRD=otrosTrasp.reduce((a,x)=>a+parseFloat(x.saldo||0),0);
+        const totalPendienteVenta=parseFloat(v.pendiente||0)+aMonedaVenta(traspPropioSaldoRD);
+        const granTotal=totalPendienteVenta+aMonedaVenta(totalOtrosTraspRD);
         return`
         <tr><td class="lbl">Precio de Venta</td><td class="val">${fV(v.precioVenta)}</td></tr>
         <tr><td class="lbl">Inicial Recibido</td><td class="val" style="color:#16a34a">${fV(v.inicial||0)}</td></tr>
         ${rec?.vehiculo?`<tr><td class="lbl">Vehículo Recibido</td><td class="val">${escHtml(rec.vehiculo)}${rec.placa?' — Placa '+escHtml(rec.placa):''}</td></tr>`:''}
         ${parseFloat(v.pendiente||0)>0?`<tr class="fin-pend"><td>⚠️ PENDIENTE VENTA</td><td class="val">${fV(v.pendiente)}</td></tr>`:''}
-        ${traspNoPagado?`<tr style="background:#fff7ed"><td style="color:#c2410c;font-weight:700">🔄 TRASPASO/MATRÍCULA PENDIENTE</td><td class="val" style="color:#c2410c">${fV(montoTraspp)}</td></tr>`:''}
-        ${totalPendiente>0?`<tr style="background:#fef2f2"><td style="font-weight:900;color:#dc2626">⚠️ TOTAL A DEBER</td><td style="text-align:right;font-weight:900;font-size:15px;color:#dc2626">${fV(totalPendiente)}</td></tr>`:''}`;
+        ${traspPropioSaldoRD>0?`<tr style="background:#fff7ed"><td style="color:#c2410c;font-weight:700">🔄 TRASPASO/MATRÍCULA PENDIENTE</td><td class="val" style="color:#c2410c">${fTrasp(traspPropioSaldoRD)}</td></tr>`:''}
+        ${otrosTrasp.map(o=>`<tr style="background:#fff7ed"><td style="color:#c2410c">🔄 Traspaso/Matrícula pendiente — ${escHtml(o.vehiculo||o.concepto||'otro vehículo')}</td><td class="val" style="color:#c2410c">${fTrasp(parseFloat(o.saldo||0))}</td></tr>`).join('')}
+        ${granTotal>0?`<tr style="background:#fef2f2"><td style="font-weight:900;color:#dc2626">⚠️ TOTAL A DEBER</td><td style="text-align:right;font-weight:900;font-size:15px;color:#dc2626">${fV(granTotal)}</td></tr>`:''}`;
       })()}
     </table>
   </div>
@@ -12424,6 +12474,7 @@ function imprimirReciboCobro(cxc, pago){
       <div style="font-size:11px;font-family:monospace;font-weight:700;color:#2563eb;margin-top:4px">${escHtml(cxc.factura||'')}</div>
       <div style="font-size:11px;color:#6b7280;margin-top:2px">Fecha: ${fmtDate(pago.fecha)}</div>
       <div class="badge-tipo">${esSaldado?'✅ CUENTA SALDADA':'💵 ABONO PARCIAL'}</div>
+      <div class="badge-tipo" style="margin-top:4px;background:${cxc.esTraspaso?'#fef3c7':'#dbeafe'};color:${cxc.esTraspaso?'#d97706':'#2563eb'}">${cxc.esTraspaso?'🔄 TRASPASO / MATRÍCULA':'💰 VENTA DEL VEHÍCULO'}</div>
     </div>
   </div>
   <div class="sec">
@@ -12438,6 +12489,7 @@ function imprimirReciboCobro(cxc, pago){
   <div class="sec">
     <div class="sec-titulo">💰 Detalle del Cobro</div>
     <div class="resumen">
+      <div class="resumen-row"><span>Concepto</span><span style="font-weight:700">${escHtml(cxc.concepto||(cxc.esTraspaso?'Traspaso/Matrícula':'Venta del vehículo'))}</span></div>
       <div class="resumen-row"><span>Deuda Pendiente</span><span style="font-weight:700">${fV((cxc.saldo||0)+pago.monto)}</span></div>
       <div class="monto-cobro"><span>${esSaldado?'Pago Final Recibido':'Abono Recibido'}</span><span>${fV(pago.monto)}</span></div>
       ${esUSD&&pago.tasa?`<div style="background:#eff6ff;border-radius:6px;padding:8px 12px;margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">
@@ -14962,6 +15014,23 @@ window.fbIniciar = async function(){
         }
       });
       if(_traspSyncChanged){sDB('cxc');}
+      // ══ REPARAR VENTAS CON PENDIENTE SIN CxC ASOCIADA (ej. J-00042) ══
+      // Si una venta quedó con saldo pendiente pero perdió su registro de CxC (por edición
+      // antigua o eliminación manual de la CxC), se recrea aquí con el estado actual para
+      // que vuelva a aparecer en Cuentas por Cobrar y en el Historial de la venta.
+      let _cxcVentaRepair=false;
+      (DB.ventas||[]).forEach(venta=>{
+        const pend=parseFloat(venta.pendiente||0);
+        if(pend<=0)return;
+        const yaExiste=DB.cxc.find(c=>c.ventaId===venta.id&&!c.esTraspaso);
+        if(yaExiste)return;
+        const inicialVenta=parseFloat(venta.inicial||0);
+        const pagosIniciales=inicialVenta>0?[{id:uid(),fecha:venta.fecha,monto:inicialVenta,moneda:venta.moneda||'RD$',banco:venta.banco||'',cuenta:venta.cuenta||'Caja General',nota:'Pago registrado — reconciliado automáticamente'}]:[];
+        DB.cxc.push({id:uid(),ventaId:venta.id,factura:venta.factura,cliente:venta.cliente,clienteId:venta.clienteId,vehiculo:`${venta.codigo||''} ${venta.vehiculo||''}`.trim(),concepto:'Pendiente de venta',moneda:venta.moneda||'RD$',total:parseFloat(venta.precioVenta||0),abonado:inicialVenta,saldo:pend,fecha:venta.fecha,fechaVence:'',status:inicialVenta>0?'PARCIAL':'PENDIENTE',pagos:pagosIniciales});
+        _cxcVentaRepair=true;
+        console.log('✅ CxC recreada para venta con pendiente huérfano:',venta.factura);
+      });
+      if(_cxcVentaRepair)sDB('cxc');
     } else {
       const keys=['config','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
         'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos','intereses','log'];
