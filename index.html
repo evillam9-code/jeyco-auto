@@ -9661,26 +9661,28 @@ function confirmarVenta(nf){
     if(vi2>=0){DB.vehiculos[vi2].costo=(parseFloat(DB.vehiculos[vi2].costo||0)+montoEndoso);sDB('vehiculos');}
     toast('CXP de Endoso creada al gestor: '+gestorTransf,'success');
   }
-  // ═══ TRASPASO → CXP al gestor + CXC al cliente si no pagó ═══
-  if(tipoTransferencia==='traspaso'&&montoTraspaso>0&&gestorTransf){
-    // Siempre CXP al gestor
-    const cxpTraspaso={
-      id:uid(),vehiculoId:vid,
-      tipo:'TRASPASO',
-      suplidor:gestorTransf,
-      descripcion:'Traspaso/Matrícula — Vehículo: '+v.codigo+' '+v.marca+' '+v.modelo,
-      moneda:'RD$',
-      montoFactura:montoTraspaso,montoPagado:0,montoPendiente:montoTraspaso,
-      statusGasto:'PENDIENTE',
-      fecha:venta.fecha,
-      cuenta:'',formaPago:'CREDITO',
-      origenVenta:nf,ventaId:venta.id,
-      esTransferencia:true
-    };
-    if(!DB.gastosVehiculos)DB.gastosVehiculos=[];
-    DB.gastosVehiculos.push(cxpTraspaso);
-    sDB('gastosVehiculos');
-    // Si el cliente NO pagó → CXC al cliente
+  // ═══ TRASPASO → CXP al gestor (si ya hay gestor asignado) + CXC al cliente si no pagó ═══
+  // La deuda del cliente NO depende de si ya se asignó gestor: se crea siempre que quede pendiente.
+  if(tipoTransferencia==='traspaso'&&montoTraspaso>0){
+    if(gestorTransf){
+      const cxpTraspaso={
+        id:uid(),vehiculoId:vid,
+        tipo:'TRASPASO',
+        suplidor:gestorTransf,
+        descripcion:'Traspaso/Matrícula — Vehículo: '+v.codigo+' '+v.marca+' '+v.modelo,
+        moneda:'RD$',
+        montoFactura:montoTraspaso,montoPagado:0,montoPendiente:montoTraspaso,
+        statusGasto:'PENDIENTE',
+        fecha:venta.fecha,
+        cuenta:'',formaPago:'CREDITO',
+        origenVenta:nf,ventaId:venta.id,
+        esTransferencia:true
+      };
+      if(!DB.gastosVehiculos)DB.gastosVehiculos=[];
+      DB.gastosVehiculos.push(cxpTraspaso);
+      sDB('gastosVehiculos');
+    }
+    // Si el cliente NO pagó → CXC al cliente (aunque todavía no se haya asignado gestor)
     if(!traspasoPagadoCliente){
       const cxcTraspaso={
         id:uid(),ventaId:venta.id,factura:nf,
@@ -9696,7 +9698,7 @@ function confirmarVenta(nf){
       DB.cxc.push(cxcTraspaso);
       sDB('cxc');
       toast('CXC de Traspaso creada al cliente: '+cliNombre,'success');
-    } else {
+    } else if(gestorTransf){
       toast('CXP de Traspaso creada al gestor: '+gestorTransf,'success');
     }
   }
@@ -10035,6 +10037,12 @@ function guardarEditarVenta(vid){
     DB.cxc[ciTrasp].saldo=nuevoSaldo;
     DB.cxc[ciTrasp].status=nuevoSaldo<=0?'SALDADO':yaAbonado>0?'PARCIAL':'PENDIENTE';
     sDB('cxc');
+  } else if(ciTrasp<0&&tipoTransferencia==='traspaso'&&traspasoMonto>0&&traspasoPagado==='no'){
+    // La venta quedó marcada como traspaso pendiente pero nunca se creó la CxC al cliente
+    // (ej. porque no se había asignado gestor todavía) — se crea ahora
+    DB.cxc.push({id:uid(),ventaId:vid,factura:DB.ventas[i].factura,cliente:cli?.nombre||DB.ventas[i].cliente,clienteId:cliId,vehiculo:`${DB.ventas[i].codigo||''} ${DB.ventas[i].vehiculo||''}`.trim(),concepto:'Traspaso/Matrícula pendiente — '+(DB.ventas[i].codigo||''),moneda:'RD$',total:traspasoMonto,abonado:0,saldo:traspasoMonto,fecha:DB.ventas[i].fecha,fechaVence:'',status:'PENDIENTE',pagos:[],esTraspaso:true});
+    sDB('cxc');
+    console.log('✅ CxC de traspaso creada automáticamente al editar venta',DB.ventas[i].factura);
   }
   // Actualizar estado del vehículo
   const vi=DB.vehiculos.findIndex(x=>x.id===vehId);
@@ -11923,10 +11931,21 @@ function renderCXC(){
           <th>Factura</th><th>Cliente</th><th>Vehículo</th>
           <th>Concepto</th>
           <th>Total</th><th>Cobrado</th><th>Saldo</th>
+          <th>Pendiente Venta</th><th>Pendiente Traspaso</th><th>Total a Pagar</th>
           <th>Vence</th><th>Estado</th>
         </tr></thead>
         <tbody>${items.length?items.slice().reverse().map(x=>{
           const tipoBadge=x.esTraspaso?'<span style="background:#fef3c7;color:#d97706;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">🔄 TRASPASO</span>':x.esEndoso?'<span style="background:#ede9fe;color:#7c3aed;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">📋 ENDOSO</span>':'<span style="background:#dbeafe;color:#2563eb;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">💰 VENTA</span>';
+          // Desglose Venta / Traspaso / Total a pagar del vehículo relacionado (misma venta), sin importar si esta fila es la de venta o la de traspaso
+          const ventaRel=x.ventaId?DB.ventas.find(vv=>vv.id===x.ventaId):null;
+          const esUSDrow=(ventaRel?.moneda||(x.esTraspaso?'RD$':x.moneda)||'RD$')==='USD';
+          const tcRow=parseFloat(ventaRel?.tasaCambio||tasa);
+          const cxcVentaRel=x.ventaId?(DB.cxc||[]).find(c=>c.ventaId===x.ventaId&&!c.esTraspaso):(!x.esTraspaso?x:null);
+          const cxcTraspRel=x.ventaId?(DB.cxc||[]).find(c=>c.ventaId===x.ventaId&&c.esTraspaso):(x.esTraspaso?x:null);
+          const pendVenta=cxcVentaRel?parseFloat(cxcVentaRel.saldo||0):0;
+          const pendTrasp=cxcTraspRel?parseFloat(cxcTraspRel.saldo||0):0; // el traspaso siempre se registra en RD$
+          const totalPagar=esUSDrow?pendVenta+(pendTrasp/tcRow):pendVenta+pendTrasp;
+          const fVrow=(n)=>esUSDrow?'$'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(n);
           return`<tr onclick="selCXC('${x.id}',this)" style="cursor:pointer">
           <td style="text-align:center"><input type="radio" name="cxc-sel" onclick="event.stopPropagation();selCXC('${x.id}',this.closest('tr'))" style="width:15px;height:15px;cursor:pointer;accent-color:var(--blue)"></td>
           <td><div style="font-family:monospace;font-size:11px;font-weight:700;color:var(--blue)">${escHtml(x.factura||'—')}</div></td>
@@ -11936,9 +11955,12 @@ function renderCXC(){
           <td style="font-weight:600">${fV(x.total)}</td>
           <td style="color:var(--green);font-weight:600">${fV(x.abonado||0)}</td>
           <td style="font-weight:800;color:${parseFloat(x.saldo||0)>0?'var(--red)':'var(--green)'}">${fV(x.saldo||0)}</td>
+          <td style="font-weight:700;color:${pendVenta>0?'var(--red)':'var(--gray)'}">${pendVenta>0?fVrow(pendVenta):'—'}</td>
+          <td style="font-weight:700;color:${pendTrasp>0?'#c2410c':'var(--gray)'}">${pendTrasp>0?fmt(pendTrasp):'—'}</td>
+          <td style="font-weight:800;color:${totalPagar>0?'var(--red)':'var(--green)'}">${totalPagar>0?fVrow(totalPagar):'✅ Al día'}</td>
           <td style="font-size:12px;color:${x.fechaVence&&x.fechaVence<=today()?'var(--red)':'var(--gray)'}">${fmtDate(x.fechaVence)||'—'}</td>
           <td><span class="badge ${x.status==='SALDADO'?'badge-green':x.status==='PARCIAL'?'badge-amber':'badge-red'}">${x.status||'—'}</span></td>
-        </tr>`;}).join(''):`<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--gray)">Sin cuentas por cobrar en ${filtroMoneda}</td></tr>`}
+        </tr>`;}).join(''):`<tr><td colspan="13" style="text-align:center;padding:24px;color:var(--gray)">Sin cuentas por cobrar en ${filtroMoneda}</td></tr>`}
         </tbody>
       </table></div>
     </div>`;
@@ -15031,6 +15053,23 @@ window.fbIniciar = async function(){
         console.log('✅ CxC recreada para venta con pendiente huérfano:',venta.factura);
       });
       if(_cxcVentaRepair)sDB('cxc');
+      // ══ REPARAR TRASPASOS PENDIENTES SIN CxC ASOCIADA (ej. J-00042) ══
+      // Ventas marcadas como "Traspaso, cliente no pagó" que se quedaron sin CxC al cliente
+      // porque al momento de crearlas no se había asignado gestor/tramitador.
+      let _cxcTraspRepair=false;
+      (DB.ventas||[]).forEach(venta=>{
+        if(venta.tipoTransferencia!=='traspaso')return;
+        const montoTr=parseFloat(venta.traspasoMonto||venta.montoTraspaso||0);
+        if(montoTr<=0)return;
+        const noPago=venta.traspasoPagadoCliente===false||venta.traspasoPagado==='no';
+        if(!noPago)return;
+        const yaExiste=DB.cxc.find(c=>c.ventaId===venta.id&&c.esTraspaso);
+        if(yaExiste)return;
+        DB.cxc.push({id:uid(),ventaId:venta.id,factura:venta.factura,cliente:venta.cliente,clienteId:venta.clienteId,vehiculo:`${venta.codigo||''} ${venta.vehiculo||''}`.trim(),concepto:'Traspaso/Matrícula pendiente — '+(venta.codigo||''),moneda:'RD$',total:montoTr,abonado:0,saldo:montoTr,fecha:venta.fecha,fechaVence:'',status:'PENDIENTE',pagos:[],esTraspaso:true});
+        _cxcTraspRepair=true;
+        console.log('✅ CxC de traspaso recreada para venta:',venta.factura);
+      });
+      if(_cxcTraspRepair)sDB('cxc');
     } else {
       const keys=['config','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
         'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos','intereses','log'];
