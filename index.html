@@ -12153,6 +12153,7 @@ function confirmarSaldarGrupoCXC(ventaId,traspId){
   const banco=document.getElementById('sgc-banco')?.value||'';
   const cuenta=document.getElementById('sgc-cuenta')?.value||'Caja General';
   const nota=document.getElementById('sgc-nota')?.value||'';
+  const recibosParaImprimir=[];
   [ventaId,traspId].forEach(id=>{
     const i=DB.cxc.findIndex(c=>c.id===id);if(i<0)return;
     const monto=parseFloat(DB.cxc[i].saldo||0);
@@ -12181,12 +12182,14 @@ function confirmarSaldarGrupoCXC(ventaId,traspId){
       descripcion:`Cobro CxC: ${DB.cxc[i].cliente} — ${DB.cxc[i].factura}`,
       monto,moneda:DB.cxc[i].moneda||'RD$',banco,cuenta,
       referencia:DB.cxc[i].factura||'',responsable:currentUser.nombre,origenModulo:'cxc',origenId:DB.cxc[i].id,pagoId});
+    recibosParaImprimir.push({cxc:{...DB.cxc[i]},pago:pagoObj});
   });
   sDB('cxc');sDB('caja');
   closeModal();
-  toast('✅ Cuenta saldada por completo (Venta + Traspaso)','success');
+  toast('✅ Cuenta saldada por completo (Venta + Traspaso) — Generando recibos...','success');
   cxcSelectedGroup=null;
   renderCXC();
+  recibosParaImprimir.forEach(r=>imprimirReciboCobro(r.cxc,r.pago));
 }
 function cxcEliminarDirecto(id){
   const x=DB.cxc.find(c=>c.id===id);
