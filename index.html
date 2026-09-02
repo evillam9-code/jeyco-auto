@@ -10237,6 +10237,7 @@ function imprimirFactura(vid){
         // Traspaso de ESTA venta (si aplica), por el saldo real (baja cuando el cliente abona)
         const cxcTraspPropio=(DB.cxc||[]).find(x=>x.ventaId===v.id&&x.esTraspaso);
         const traspPropioSaldoRD=cxcTraspPropio?parseFloat(cxcTraspPropio.saldo||0):0;
+        const traspPropioAbonadoRD=cxcTraspPropio?parseFloat(cxcTraspPropio.abonado||0):0;
         // Otras deudas de traspaso pendientes del mismo cliente (de otros vehículos/ventas)
         const otrosTrasp=(DB.cxc||[]).filter(x=>x.esTraspaso&&x.clienteId===v.clienteId&&x.ventaId!==v.id&&parseFloat(x.saldo||0)>0);
         const totalOtrosTraspRD=otrosTrasp.reduce((a,x)=>a+parseFloat(x.saldo||0),0);
@@ -10247,6 +10248,7 @@ function imprimirFactura(vid){
         <tr><td class="lbl">Inicial Recibido</td><td class="val" style="color:#16a34a">${fV(v.inicial||0)}</td></tr>
         ${rec?.vehiculo?`<tr><td class="lbl">Vehículo Recibido</td><td class="val">${escHtml(rec.vehiculo)}${rec.placa?' — Placa '+escHtml(rec.placa):''}</td></tr>`:''}
         ${parseFloat(v.pendiente||0)>0?`<tr class="fin-pend"><td>⚠️ PENDIENTE VENTA</td><td class="val">${fV(v.pendiente)}</td></tr>`:''}
+        ${cxcTraspPropio?`<tr><td class="lbl">🔄 Traspaso/Matrícula — Recibido</td><td class="val" style="color:#16a34a">${fTrasp(traspPropioAbonadoRD)}</td></tr>`:''}
         ${traspPropioSaldoRD>0?`<tr style="background:#fff7ed"><td style="color:#c2410c;font-weight:700">🔄 TRASPASO/MATRÍCULA PENDIENTE</td><td class="val" style="color:#c2410c">${fTrasp(traspPropioSaldoRD)}</td></tr>`:''}
         ${otrosTrasp.map(o=>`<tr style="background:#fff7ed"><td style="color:#c2410c">🔄 Traspaso/Matrícula pendiente — ${escHtml(o.vehiculo||o.concepto||'otro vehículo')}</td><td class="val" style="color:#c2410c">${fTrasp(parseFloat(o.saldo||0))}</td></tr>`).join('')}
         ${granTotal>0?`<tr style="background:#fef2f2"><td style="font-weight:900;color:#dc2626">⚠️ TOTAL A DEBER</td><td style="text-align:right;font-weight:900;font-size:15px;color:#dc2626">${fV(granTotal)}</td></tr>`:''}`;
