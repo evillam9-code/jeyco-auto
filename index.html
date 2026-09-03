@@ -436,8 +436,15 @@ let DB={
   facturasExternas:ls('facturasExternas')||[],
   chat:ls('chat')||{},
   presencia:ls('presencia')||{},
-  bitacora:ls('bitacora')||[]
+  bitacora:ls('bitacora')||[],
+  cierresMensuales:ls('cierresMensuales')||{}
 };
+// Corrección única: julio 2026 ya se cerró y se entregó el informe con estos valores,
+// antes de que existiera el guardado permanente de cierres — se fija una sola vez si falta.
+if(!DB.cierresMensuales['2026-07']){
+  DB.cierresMensuales['2026-07']={beneficio:1223057.00,gastos:819074.47,nomina:201000.00,interesesCobradosMes:196112.00,ganNeta:399094.53,cerradoEl:'2026-08-08T00:00:00.000Z'};
+  ss('cierresMensuales',DB.cierresMensuales);
+}
 function sDB(k){ss(k,DB[k]);}
 
 const _fmtN=(n,loc,opts)=>{try{return n.toLocaleString(loc,opts);}catch(e){return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');}};
@@ -4433,6 +4440,10 @@ function renderInformes(){
       <div><h1>📊 Informe Mensual</h1><p>Período: ${mes}</p></div>
       <div style="display:flex;gap:8px;align-items:center">
         <input type="month" id="inf-mes" value="${mes}" onchange="renderInformes()" style="padding:7px 12px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
+        ${DB.cierresMensuales?.[mes]
+          ?`<span style="font-size:11px;font-weight:700;color:#3f6b4e;background:#e7f3ec;border:1px solid #bfe0cd;padding:6px 10px;border-radius:var(--radius-sm)">🔒 Cerrado el ${fmtDate((DB.cierresMensuales[mes].cerradoEl||'').slice(0,10))} — no se puede modificar</span>`
+          :(isAdmin?`<button class="btn btn-secondary btn-sm" onclick="cerrarMesInforme('${mes}')">🔒 Cerrar Mes</button>`
+                    :`<span style="font-size:11px;font-weight:700;color:#9a7b3f;background:#f5efe0;border:1px solid #e8dfc9;padding:6px 10px;border-radius:var(--radius-sm)">🔓 Mes abierto — aún sin cerrar</span>`)}
         <button class="btn btn-secondary" onclick="window.print()">🖨️ Imprimir</button>
         <button class="btn btn-primary btn-sm" onclick="exportarInformeWord()">📝 Exportar a Word</button>
       </div>
@@ -4507,6 +4518,41 @@ function renderInformes(){
       </div>
     </div>`;
   document.getElementById('inf-mes').value=mes;
+}
+
+// ══ CERRAR MES — congela el resultado real del mes en el Resumen acumulado ══
+// Antes de cerrar se puede seguir corrigiendo datos y exportando informes de prueba
+// (exportarInformeWord nunca escribe nada). Una vez cerrado, el mes queda fijo para
+// siempre y no se puede volver a cerrar desde aquí, aunque después cambien los datos.
+function cerrarMesInforme(mesStr){
+  if(currentUser?.role!=='admin'){toast('Solo el administrador puede cerrar el mes','error');return;}
+  if(!DB.cierresMensuales)DB.cierresMensuales={};
+  if(DB.cierresMensuales[mesStr]){toast('Este mes ya está cerrado desde '+fmtDate((DB.cierresMensuales[mesStr].cerradoEl||'').slice(0,10)),'error');return;}
+  const tasa=parseFloat(DB.config.tasaCambio||60);
+  const r=calcResumenMesJEYCO(mesStr,tasa,true);
+  openModal(`Cerrar ${mesStr}`,
+    `<p>Vas a cerrar <strong>${mesStr}</strong> con este resultado:</p>
+     <table style="width:100%;font-size:13px;margin:12px 0;border-collapse:collapse">
+       <tr><td style="padding:5px 0">Beneficio</td><td style="text-align:right;font-weight:700">${fmt(r.beneficio)}</td></tr>
+       <tr><td style="padding:5px 0">Gastos (incluye nómina)</td><td style="text-align:right;font-weight:700">${fmt(r.gastos+r.nomina)}</td></tr>
+       <tr style="border-top:1px solid var(--gray3)"><td style="padding:5px 0;font-weight:700">Ganancia Neta</td><td style="text-align:right;font-weight:800">${fmt(r.ganNeta)}</td></tr>
+     </table>
+     <p style="color:#9c3b32;font-weight:600;font-size:13px">Una vez cerrado, este resultado queda fijo en el Resumen acumulado por mes y no se podrá modificar, aunque después se edite algo con fecha de ${mesStr}. Esta acción no se puede deshacer.</p>`,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+     <button class="btn btn-red" onclick="confirmarCerrarMes('${mesStr}')">🔒 Confirmar Cierre</button>`);
+}
+function confirmarCerrarMes(mesStr){
+  if(currentUser?.role!=='admin')return;
+  if(!DB.cierresMensuales)DB.cierresMensuales={};
+  if(DB.cierresMensuales[mesStr])return;
+  const tasa=parseFloat(DB.config.tasaCambio||60);
+  const r=calcResumenMesJEYCO(mesStr,tasa,true);
+  DB.cierresMensuales[mesStr]={...r,cerradoEl:new Date().toISOString()};
+  sDB('cierresMensuales');
+  if(typeof fbGuardar==='function'&&window._fbActivo)fbGuardar('cierresMensuales').catch(()=>{});
+  closeModal();
+  toast('Mes '+mesStr+' cerrado ✓','success');
+  renderInformes();
 }
 
 // ══ INFORME MENSUAL — EXPORTAR A WORD (Informe de Cierre) ══
@@ -4679,10 +4725,24 @@ async function exportarInformeWord(){
 
   // Tendencia — Enero a Diciembre del año del informe
   const NOMBRES_MES=['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'];
+  const resumenMesActual={beneficio:totalBeneficioJeycoWord,gastos:totalGastosConIntereses,nomina:totalNominaMes,interesesCobradosMes,ganNeta};
+  // Exportar NUNCA congela nada — solo lee. El mes se congela únicamente con el botón
+  // "Cerrar Mes" (ver cerrarMesInforme), para poder seguir corrigiendo datos antes de cerrar.
+  if(!DB.cierresMensuales)DB.cierresMensuales={};
+  // Detecta si datos de un mes ya cerrado cambiaron después del cierre (p.ej. fecha equivocada)
+  const mesesConCambios=[];
   const tendenciaMeses=NOMBRES_MES.map((nombre,idx)=>{
     const mStr=ay+'-'+String(idx+1).padStart(2,'0');
     if(mStr>mes)return{mes:nombre,futuro:true};
-    if(mStr===mes)return{mes:nombre,beneficio:totalGananciaVentas,gastos:totalGastosConIntereses,nomina:totalNominaMes,interesesCobradosMes,ganNeta};
+    const cerrado=DB.cierresMensuales[mStr];
+    if(cerrado){
+      const actual=mStr===mes?resumenMesActual:calcResumenMesJEYCO(mStr,tasa,isAdmin);
+      if(Math.abs(actual.ganNeta-cerrado.ganNeta)>1){
+        mesesConCambios.push({mes:nombre,guardado:cerrado.ganNeta,actual:actual.ganNeta});
+      }
+      return{mes:nombre,...cerrado};
+    }
+    if(mStr===mes)return{mes:nombre,...resumenMesActual};
     return{mes:nombre,...calcResumenMesJEYCO(mStr,tasa,isAdmin)};
   });
   const totalTendBeneficio=tendenciaMeses.reduce((a,t)=>a+(t.futuro?0:t.beneficio),0);
@@ -4691,6 +4751,9 @@ async function exportarInformeWord(){
 
   // Observaciones y recomendaciones — generadas según los datos del mes
   const observaciones=[];
+  mesesConCambios.forEach(({mes:mNombre,guardado,actual})=>{
+    observaciones.push('⚠ '+mNombre+' ya estaba cerrado con Ganancia Neta '+fmt(guardado)+', pero los datos actuales del sistema para ese mes dan '+fmt(actual)+'. El resumen acumulado muestra el valor original guardado al cierre; revisa si se agregó o editó algo con fecha de '+mNombre.toLowerCase()+' por error.');
+  });
   if(ganNeta<0){
     observaciones.push('La ganancia neta del mes fue negativa ('+fmt(ganNeta)+'). Se recomienda revisar los gastos operativos y la nómina frente al volumen de ventas.');
   } else if(totalGananciaVentas>0&&ganNeta<totalGananciaVentas*0.3){
@@ -14751,7 +14814,7 @@ async function fbGuardar(key){
 
 async function fbCargar(){
   const keys=['config','config_logo','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
-    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos','intereses','presencia','cumpleanosMensajes','log'];
+    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos','intereses','presencia','cumpleanosMensajes','log','cierresMensuales'];
   let loaded=false;
   // Fix 4A — carga en paralelo con Promise.allSettled (si una falla, las demás siguen)
   const resultados=await Promise.allSettled(
@@ -14801,6 +14864,15 @@ async function fbCargar(){
         }
       }
     }catch(e){console.warn('FB load error:',key,e.message);}
+  }
+  // Corrección única: julio 2026 ya se cerró y se entregó el informe con estos valores,
+  // antes de que existiera el guardado permanente de cierres — se fija una sola vez si falta,
+  // para que no se pierda el valor real de ese cierre.
+  if(!DB.cierresMensuales)DB.cierresMensuales={};
+  if(!DB.cierresMensuales['2026-07']){
+    DB.cierresMensuales['2026-07']={beneficio:1223057.00,gastos:819074.47,nomina:201000.00,interesesCobradosMes:196112.00,ganNeta:399094.53,cerradoEl:'2026-08-08T00:00:00.000Z'};
+    sDB('cierresMensuales');
+    fbGuardar('cierresMensuales').catch(()=>{});
   }
   return loaded;
 }
