@@ -10240,7 +10240,6 @@ function imprimirFactura(vid){
         const traspPropioSaldoRD=cxcTraspPropio?parseFloat(cxcTraspPropio.saldo||0):0;
         // Si no hay CxC de traspaso es porque el cliente ya lo pagó completo al momento de la venta
         const traspPropioAbonadoRD=cxcTraspPropio?parseFloat(cxcTraspPropio.abonado||0):traspasoTotalV;
-        const mostrarTraspasoRecibido=cxcTraspPropio?traspPropioAbonadoRD>0:traspasoTotalV>0;
         // Otras deudas de traspaso pendientes del mismo cliente (de otros vehículos/ventas)
         const otrosTrasp=(DB.cxc||[]).filter(x=>x.esTraspaso&&x.clienteId===v.clienteId&&x.ventaId!==v.id&&parseFloat(x.saldo||0)>0);
         const totalOtrosTraspRD=otrosTrasp.reduce((a,x)=>a+parseFloat(x.saldo||0),0);
@@ -10248,11 +10247,16 @@ function imprimirFactura(vid){
         const granTotal=totalPendienteVenta+aMonedaVenta(totalOtrosTraspRD);
         return`
         <tr><td class="lbl">Precio de Venta</td><td class="val">${fV(v.precioVenta)}</td></tr>
-        <tr><td class="lbl">Inicial Recibido</td><td class="val" style="color:#16a34a">${fV(v.inicial||0)}</td></tr>
+        <tr><td class="lbl">Inicial Recibido</td><td class="val" style="color:#16a34a">${fV(v.inicial||0)}${parseFloat(v.pendiente||0)<=0?`<div style="font-size:10px;font-weight:600;color:#16a34a">✓ Venta pagada en su totalidad</div>`:''}</td></tr>
         ${rec?.vehiculo?`<tr><td class="lbl">Vehículo Recibido</td><td class="val">${escHtml(rec.vehiculo)}${rec.placa?' — Placa '+escHtml(rec.placa):''}</td></tr>`:''}
         ${parseFloat(v.pendiente||0)>0?`<tr class="fin-pend"><td>⚠️ PENDIENTE VENTA</td><td class="val">${fV(v.pendiente)}</td></tr>`:''}
-        ${mostrarTraspasoRecibido?`<tr><td class="lbl">🔄 Traspaso/Matrícula — Recibido</td><td class="val" style="color:#16a34a">${fTrasp(traspPropioAbonadoRD)}</td></tr>`:''}
-        ${traspPropioSaldoRD>0?`<tr style="background:#fff7ed"><td style="color:#c2410c;font-weight:700">🔄 TRASPASO/MATRÍCULA PENDIENTE</td><td class="val" style="color:#c2410c">${fTrasp(traspPropioSaldoRD)}</td></tr>`:''}
+        ${(cxcTraspPropio||traspasoTotalV>0)?(()=>{
+          const totalTrasp=cxcTraspPropio?parseFloat(cxcTraspPropio.total||0):traspasoTotalV;
+          const subline=traspPropioSaldoRD>0
+            ?(traspPropioAbonadoRD>0?`<div style="font-size:10px;font-weight:600;color:#c2410c">Recibido ${fTrasp(traspPropioAbonadoRD)} · Pendiente ${fTrasp(traspPropioSaldoRD)}</div>`:`<div style="font-size:10px;font-weight:600;color:#c2410c">Pendiente ${fTrasp(traspPropioSaldoRD)}</div>`)
+            :`<div style="font-size:10px;font-weight:600;color:#16a34a">✓ Pagado</div>`;
+          return`<tr><td class="lbl">🔄 Traspaso/Matrícula</td><td class="val">${fTrasp(totalTrasp)}${subline}</td></tr>`;
+        })():''}
         ${otrosTrasp.map(o=>`<tr style="background:#fff7ed"><td style="color:#c2410c">🔄 Traspaso/Matrícula pendiente — ${escHtml(o.vehiculo||o.concepto||'otro vehículo')}</td><td class="val" style="color:#c2410c">${fTrasp(parseFloat(o.saldo||0))}</td></tr>`).join('')}
         ${granTotal>0?`<tr style="background:#fef2f2"><td style="font-weight:900;color:#dc2626">⚠️ TOTAL A DEBER</td><td style="text-align:right;font-weight:900;font-size:15px;color:#dc2626">${fV(granTotal)}</td></tr>`:''}`;
       })()}
