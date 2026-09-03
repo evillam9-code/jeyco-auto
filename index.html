@@ -10248,7 +10248,6 @@ function imprimirFactura(vid){
         return`
         <tr><td class="lbl">Precio de Venta</td><td class="val">${fV(v.precioVenta)}</td></tr>
         <tr><td class="lbl">Inicial Recibido</td><td class="val" style="color:#16a34a">${fV(v.inicial||0)}${parseFloat(v.pendiente||0)<=0?`<div style="font-size:10px;font-weight:600;color:#16a34a">✓ Venta pagada en su totalidad</div>`:''}</td></tr>
-        ${rec?.vehiculo?`<tr><td class="lbl">Vehículo Recibido</td><td class="val">${escHtml(rec.vehiculo)}${rec.placa?' — Placa '+escHtml(rec.placa):''}</td></tr>`:''}
         ${parseFloat(v.pendiente||0)>0?`<tr class="fin-pend"><td>⚠️ PENDIENTE VENTA</td><td class="val">${fV(v.pendiente)}</td></tr>`:''}
         ${(cxcTraspPropio||traspasoTotalV>0)?(()=>{
           const totalTrasp=cxcTraspPropio?parseFloat(cxcTraspPropio.total||0):traspasoTotalV;
@@ -10258,9 +10257,10 @@ function imprimirFactura(vid){
           return`<tr><td class="lbl">🔄 Traspaso/Matrícula</td><td class="val">${fTrasp(totalTrasp)}${subline}</td></tr>`;
         })():''}
         ${otrosTrasp.map(o=>`<tr style="background:#fff7ed"><td style="color:#c2410c">🔄 Traspaso/Matrícula pendiente — ${escHtml(o.vehiculo||o.concepto||'otro vehículo')}</td><td class="val" style="color:#c2410c">${fTrasp(parseFloat(o.saldo||0))}</td></tr>`).join('')}
-        ${granTotal>0?`<tr style="background:#fef2f2"><td style="font-weight:900;color:#dc2626">⚠️ TOTAL A DEBER</td><td style="text-align:right;font-weight:900;font-size:15px;color:#dc2626">${fV(granTotal)}</td></tr>`:''}`;
+        ${[parseFloat(v.pendiente||0)>0,traspPropioSaldoRD>0,totalOtrosTraspRD>0].filter(Boolean).length>1?`<tr style="background:#fef2f2"><td style="font-weight:900;color:#dc2626">⚠️ TOTAL A DEBER</td><td style="text-align:right;font-weight:900;font-size:15px;color:#dc2626">${fV(granTotal)}</td></tr>`:''}`;
       })()}
     </table>
+    ${rec?.vehiculo?`<div style="margin-top:8px;font-size:12px;color:#475569">🔄 Vehículo recibido como parte de pago: <strong>${escHtml(rec.vehiculo)}</strong>${rec.placa?' — Placa '+escHtml(rec.placa):''}</div>`:''}
   </div>
 
   ${v.comentario?`<div class="obs-box" style="background:#eff6ff;border-color:#93c5fd;color:#1d4ed8;margin-bottom:6px">💬 <strong>Comentario:</strong> ${escHtml(v.comentario)}</div>`:''}
