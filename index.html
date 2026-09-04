@@ -439,12 +439,29 @@ let DB={
   bitacora:ls('bitacora')||[],
   cierresMensuales:ls('cierresMensuales')||{}
 };
-// Corrección única: julio 2026 ya se cerró y se entregó el informe con estos valores,
-// antes de que existiera el guardado permanente de cierres — se fija una sola vez si falta.
-if(!DB.cierresMensuales['2026-07']){
-  DB.cierresMensuales['2026-07']={beneficio:1223057.00,gastos:819074.47,nomina:201000.00,interesesCobradosMes:196112.00,ganNeta:399094.53,cerradoEl:'2026-08-08T00:00:00.000Z'};
-  ss('cierresMensuales',DB.cierresMensuales);
+// Correcciones únicas de meses ya reales que el sistema no tenía guardados de forma
+// permanente (enero-marzo: el sistema aún no llevaba ventas/gastos, valor real dado
+// aparte por el usuario; julio: ya se había entregado el informe antes de existir este
+// guardado). Se fijan una sola vez si faltan y no se vuelven a tocar.
+const CIERRES_MANUALES_INICIALES={
+  '2026-01':{beneficio:479708.68,gastos:0,nomina:0,interesesCobradosMes:0,ganNeta:479708.68,cerradoEl:'2026-09-03T00:00:00.000Z'},
+  '2026-02':{beneficio:656756.95,gastos:0,nomina:0,interesesCobradosMes:0,ganNeta:656756.95,cerradoEl:'2026-09-03T00:00:00.000Z'},
+  '2026-03':{beneficio:-39450.61,gastos:0,nomina:0,interesesCobradosMes:0,ganNeta:-39450.61,cerradoEl:'2026-09-03T00:00:00.000Z'},
+  '2026-07':{beneficio:1223057.00,gastos:819074.47,nomina:201000.00,interesesCobradosMes:196112.00,ganNeta:399094.53,cerradoEl:'2026-08-08T00:00:00.000Z'}
+};
+// Meses que se muestran en blanco (como si aún no llegaran) en el Resumen acumulado
+// mientras se espera el valor real manual — en cuanto ese mes tenga un cierre guardado
+// en DB.cierresMensuales, ese cierre gana y este arreglo deja de tener efecto solo.
+const MESES_OCULTOS_TEMPORAL=['2026-05','2026-06'];
+function _sembrarCierresManualesUnaVez(){
+  let cambio=false;
+  Object.entries(CIERRES_MANUALES_INICIALES).forEach(([k,v])=>{
+    if(!DB.cierresMensuales[k]){DB.cierresMensuales[k]={...v};cambio=true;}
+  });
+  if(cambio)ss('cierresMensuales',DB.cierresMensuales);
+  return cambio;
 }
+_sembrarCierresManualesUnaVez();
 function sDB(k){ss(k,DB[k]);}
 
 const _fmtN=(n,loc,opts)=>{try{return n.toLocaleString(loc,opts);}catch(e){return n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');}};
@@ -4735,6 +4752,7 @@ async function exportarInformeWord(){
     const mStr=ay+'-'+String(idx+1).padStart(2,'0');
     if(mStr>mes)return{mes:nombre,futuro:true};
     const cerrado=DB.cierresMensuales[mStr];
+    if(!cerrado&&MESES_OCULTOS_TEMPORAL.includes(mStr))return{mes:nombre,futuro:true};
     if(cerrado){
       const actual=mStr===mes?resumenMesActual:calcResumenMesJEYCO(mStr,tasa,isAdmin);
       if(Math.abs(actual.ganNeta-cerrado.ganNeta)>1){
@@ -14865,13 +14883,10 @@ async function fbCargar(){
       }
     }catch(e){console.warn('FB load error:',key,e.message);}
   }
-  // Corrección única: julio 2026 ya se cerró y se entregó el informe con estos valores,
-  // antes de que existiera el guardado permanente de cierres — se fija una sola vez si falta,
-  // para que no se pierda el valor real de ese cierre.
+  // Vuelve a aplicar las correcciones únicas de meses reales (ver CIERRES_MANUALES_INICIALES)
+  // por si el dato remoto de Firebase todavía no las tenía guardadas.
   if(!DB.cierresMensuales)DB.cierresMensuales={};
-  if(!DB.cierresMensuales['2026-07']){
-    DB.cierresMensuales['2026-07']={beneficio:1223057.00,gastos:819074.47,nomina:201000.00,interesesCobradosMes:196112.00,ganNeta:399094.53,cerradoEl:'2026-08-08T00:00:00.000Z'};
-    sDB('cierresMensuales');
+  if(_sembrarCierresManualesUnaVez()){
     fbGuardar('cierresMensuales').catch(()=>{});
   }
   return loaded;
