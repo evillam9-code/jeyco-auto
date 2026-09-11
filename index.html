@@ -3055,7 +3055,7 @@ function renderConsultaCuentas(){
     <div class="page-header">
       <div><h1>🧾 Consulta de Cuentas</h1><p>Busca un banco y una cuenta para ver su estado de cuenta</p></div>
       <div style="display:flex;gap:8px;align-items:center">
-        <input type="month" id="cc-resumen-mes" value="${resumenMes}" title="Mes a imprimir en el Resumen General (vacío = todo el historial)" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
+        <input type="month" id="cc-resumen-mes" value="${resumenMes}" title="Mes de cierre del Resumen General — acumulado hasta el último día de ese mes (vacío = hasta hoy)" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
         <button class="btn btn-secondary btn-sm" onclick="imprimirResumenCuentasGeneral()">🖨️ Imprimir Resumen General</button>
         <button class="btn btn-primary" ${hayBusqueda&&movs.length?'':'disabled'} onclick="exportarConsultaCuentasPDF()">🖨️ Imprimir / Exportar PDF</button>
       </div>
@@ -3168,10 +3168,11 @@ function exportarConsultaCuentasPDF(){
 }
 function imprimirResumenCuentasGeneral(){
   const mes=document.getElementById('cc-resumen-mes')?.value||'';
+  // "Mes" = cierre (acumulado desde el inicio hasta el último día de ese mes), igual
+  // criterio que "Mes de cierre" en Consulta de Cuentas y "Saldo acumulado" en Caja.
   let desde='',hasta='';
   if(mes){
     const [y,m]=mes.split('-').map(Number);
-    desde=`${mes}-01`;
     hasta=new Date(y,m,0).toISOString().split('T')[0];
   }
   const empresa=DB.config.empresa||'JEYCO AUTO';
