@@ -2928,7 +2928,7 @@ function renderCaja(){
           <td><span class="badge ${c.tipo==='ENTRADA'?'badge-green':'badge-red'}">${c.tipo==='ENTRADA'?'📥 Entrada':'📤 Salida'}</span></td>
           <td><span class="badge badge-gray" style="font-size:11px">${escHtml(c.categoria||'—')}</span></td>
           <td>${escHtml(c.descripcion||'—')}</td>
-          <td style="font-weight:700;color:${c.tipo==='ENTRADA'?'var(--green)':'var(--red)'}">${fmt(c.monto)}</td>
+          <td style="font-weight:700;color:${c.tipo==='ENTRADA'?'var(--green)':'var(--red)'}">${c.moneda==='USD'?fmtUSD(c.monto):fmt(c.monto)}</td>
           <td style="font-size:12px;color:var(--gray)">${escHtml(c.banco||'—')}</td>
           <td style="font-size:12px;color:var(--gray)">${escHtml(c.cuenta||'—')}</td>
           <td style="font-size:12px">${escHtml(c.responsable||'—')}</td>
