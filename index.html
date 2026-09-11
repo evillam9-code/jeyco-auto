@@ -2750,7 +2750,7 @@ function renderCaja(){
   });
   DB.caja.forEach(c=>{
     const banco=normalizarBanco(c.banco)||'Sin banco';
-    const cuenta=c.cuenta||'Sin cuenta';
+    const cuenta=limpiarCuenta(c.cuenta||'')||'Sin cuenta';
     const moneda=c.moneda||'RD$';
     const key=`${banco}||${cuenta}||${moneda}`;
     if(!cuentasAcum[key])cuentasAcum[key]={banco,cuenta,moneda,entradas:0,salidas:0};
@@ -2766,7 +2766,7 @@ function renderCaja(){
   });
   cajaFilt.forEach(c=>{
     const banco=normalizarBanco(c.banco)||'Sin banco';
-    const cuenta=c.cuenta||'Sin cuenta';
+    const cuenta=limpiarCuenta(c.cuenta||'')||'Sin cuenta';
     const moneda=c.moneda||'RD$';
     const key=`${banco}||${cuenta}||${moneda}`;
     if(!cuentasMes[key])cuentasMes[key]={banco,cuenta,moneda,entradas:0,salidas:0};
@@ -3026,6 +3026,7 @@ function renderConsultaCuentas(){
   const mesCierre=document.getElementById('cc-mes')?.value||'';
   const desde=document.getElementById('cc-desde')?.value||'';
   const hasta=document.getElementById('cc-hasta')?.value||'';
+  const resumenMes=document.getElementById('cc-resumen-mes')?.value||'';
 
   const bancoOpts=`<option value="">Seleccionar banco...</option>`+bcs.map(b=>`<option value="${escHtml(b.banco)}" ${b.banco===bancoSel?'selected':''}>${escHtml(b.banco)}</option>`).join('');
   const cuentaOpts=`<option value="">Seleccionar cuenta...</option>`+(bancoObj?.cuentas||[]).map(c=>{const v=c.tipo+' — '+c.numero;return`<option value="${escHtml(v)}" ${v===cuentaSel?'selected':''}>${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`;}).join('');
@@ -3049,7 +3050,8 @@ function renderConsultaCuentas(){
   document.getElementById('page-consultaCuentas').innerHTML=`
     <div class="page-header">
       <div><h1>🧾 Consulta de Cuentas</h1><p>Busca un banco y una cuenta para ver su estado de cuenta</p></div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="month" id="cc-resumen-mes" value="${resumenMes}" title="Mes a imprimir en el Resumen General (vacío = todo el historial)" style="padding:7px 10px;border:1.5px solid var(--gray3);border-radius:var(--radius-sm);font-size:13px">
         <button class="btn btn-secondary btn-sm" onclick="imprimirResumenCuentasGeneral()">🖨️ Imprimir Resumen General</button>
         <button class="btn btn-primary" ${hayBusqueda&&movs.length?'':'disabled'} onclick="exportarConsultaCuentasPDF()">🖨️ Imprimir / Exportar PDF</button>
       </div>
@@ -3161,8 +3163,13 @@ function exportarConsultaCuentasPDF(){
   win.document.close();
 }
 function imprimirResumenCuentasGeneral(){
-  const desde=document.getElementById('cc-desde')?.value||'';
-  const hasta=document.getElementById('cc-hasta')?.value||'';
+  const mes=document.getElementById('cc-resumen-mes')?.value||'';
+  let desde='',hasta='';
+  if(mes){
+    const [y,m]=mes.split('-').map(Number);
+    desde=`${mes}-01`;
+    hasta=new Date(y,m,0).toISOString().split('T')[0];
+  }
   const empresa=DB.config.empresa||'JEYCO AUTO';
   const logo=DB.config.logoData||'';
   const rnc=DB.config.rnc||'';
