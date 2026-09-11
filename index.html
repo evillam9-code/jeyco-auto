@@ -2708,6 +2708,10 @@ function renderCaja(){
 
   // Movimientos del mes (para entradas/salidas)
   const cajaFilt=DB.caja.filter(c=>c.fecha?.startsWith(mes));
+  // Acumulado = hasta el último día del mes seleccionado (no "hasta hoy"), para que
+  // cuadre con "Mes de cierre" de Consulta de Cuentas caiga el mes que caiga.
+  const [_acY,_acM]=mes.split('-').map(Number);
+  const finMesAcum=new Date(_acY,_acM,0).toISOString().split('T')[0];
   const entradasRD=cajaFilt.filter(c=>c.tipo==='ENTRADA'&&(c.moneda||'RD$')==='RD$').reduce((a,c)=>a+parseFloat(c.monto||0),0);
   const entradasUSD=cajaFilt.filter(c=>c.tipo==='ENTRADA'&&c.moneda==='USD').reduce((a,c)=>a+parseFloat(c.monto||0),0);
   const salidasRD=cajaFilt.filter(c=>c.tipo==='SALIDA'&&(c.moneda||'RD$')==='RD$').reduce((a,c)=>a+parseFloat(c.monto||0),0);
@@ -2748,7 +2752,7 @@ function renderCaja(){
     const key=`${a.banco}||${a.cuenta}||${a.moneda}`;
     cuentasAcum[key]={banco:a.banco,cuenta:a.cuenta,moneda:a.moneda,entradas:0,salidas:0};
   });
-  DB.caja.forEach(c=>{
+  DB.caja.filter(c=>c.fecha&&c.fecha<=finMesAcum).forEach(c=>{
     const banco=normalizarBanco(c.banco)||'Sin banco';
     const cuenta=limpiarCuenta(c.cuenta||'')||'Sin cuenta';
     const moneda=c.moneda||'RD$';
@@ -2825,7 +2829,7 @@ function renderCaja(){
   const acumEntUSD = Object.values(cuentasData).filter(c=>c.moneda==='USD').reduce((a,c)=>a+c.entradas,0);
   const acumSalUSD = Object.values(cuentasData).filter(c=>c.moneda==='USD').reduce((a,c)=>a+c.salidas,0);
   const totalGeneralRD = totalAcumRD + (totalAcumUSD * tasa);
-  const tituloSaldo = vista==='ACUMULADO'?'💰 SALDO ACUMULADO — TODAS LAS CUENTAS':`💰 SALDO DEL MES — ${mes}`;
+  const tituloSaldo = vista==='ACUMULADO'?`💰 SALDO ACUMULADO HASTA ${fmtDate(finMesAcum)}`:`💰 SALDO DEL MES — ${mes}`;
 
   document.getElementById('page-caja').innerHTML=`
     <div class="page-header">
@@ -2892,7 +2896,7 @@ function renderCaja(){
       </div>
       <div style="font-size:11px;color:var(--gray);margin-top:6px">
         ${vista==='ACUMULADO'
-          ?'Mostrando el saldo acumulado de todos los movimientos históricos por cuenta.'
+          ?`Mostrando el saldo acumulado de todos los movimientos históricos por cuenta, hasta el ${fmtDate(finMesAcum)}.`
           :'Mostrando solo los movimientos del mes seleccionado por cuenta.'}
       </div>
     </div>
