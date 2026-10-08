@@ -751,7 +751,7 @@ function getCuentasDeSelBanco(bancoSelId,selectedCuenta){
   const monedaEl=document.getElementById(bancoSelId.replace('banco','moneda'));
   const monedaSel=monedaEl?.value||'';
   const cuentas=(b?b.cuentas:[]).filter(c=>!monedaSel||(monedaSel==='USD'?(c.tipo||'').includes('USD'):(!(c.tipo||'').includes('USD'))));
-  cuentaEl.innerHTML=cuentas.map(c=>`<option value="${escHtml(c.numero+' — '+c.tipo)}" ${(c.numero+' — '+c.tipo)===selectedCuenta?'selected':''}>${escHtml(c.banco||'')} ${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||'<option value="">Sin cuentas configuradas</option>';
+  cuentaEl.innerHTML=cuentas.map(c=>`<option value="${escHtml(c.tipo+' — '+c.numero)}" ${(c.tipo+' — '+c.numero)===selectedCuenta?'selected':''}>${escHtml(c.banco||'')} ${escHtml(c.tipo)} — ${escHtml(c.numero)}</option>`).join('')||'<option value="">Sin cuentas configuradas</option>';
 }
 /* ====== FUNCIÓN GLOBAL: Moneda → Banco → Cuenta ====== */
 function htmlMonedaBancoCuenta(prefijo, monedaVal, bancoVal, cuentaVal){
@@ -13991,7 +13991,7 @@ function nuevaFacturaExterna(){
       </div>
     </div>
     <div class="form-row c2">
-      ${bancoCuentaHTML('fe-banco','fe-cuenta','','')}
+      ${bancoCuentaHTML('fe-banco','fe-cuenta','','','fe-moneda')}
     </div>
     <div class="form-field"><label>Observaciones</label>
       <textarea id="fe-obs" rows="2" placeholder="Condiciones del vehículo, acuerdos, notas..."></textarea>
@@ -15280,6 +15280,29 @@ window.fbIniciar = async function(){
       sincronizarStatusVehiculos();
       // ══ FIX PERMANENTE: asignar banco a registros de caja usando módulo Cuentas como fuente de verdad ══
       window._fixAsignarBancosCaja(false);
+      // ══ CORRECCIÓN ÚNICA: cuenta guardada como "número — tipo" o "BANCO — número (tipo)" ══
+      // (venía del formulario de Factura Externa) → formato oficial "tipo — número", para que
+      // Caja no la muestre como otra cuenta. Solo cambia el texto; solo si el banco coincide.
+      (()=>{
+        const bcs=DB.config.bancoCuentas||[];
+        const arreglar=r=>{
+          if(!r||!r.banco||!r.cuenta)return false;
+          const b=bcs.find(x=>(x.banco||'').trim().toLowerCase()===r.banco.trim().toLowerCase());
+          const ct=b&&(b.cuentas||[]).find(c=>r.cuenta===c.numero+' — '+c.tipo||r.cuenta===b.banco+' — '+c.numero+' ('+c.tipo+')');
+          if(!ct)return false;
+          r.cuenta=ct.tipo+' — '+ct.numero;
+          return true;
+        };
+        const cambios={};
+        ['caja','facturasExternas','gastosVehiculos'].forEach(k=>{
+          (DB[k]||[]).forEach(r=>{
+            if(arreglar(r))cambios[k]=(cambios[k]||0)+1;
+            (r.pagos||[]).forEach(p=>{if(arreglar(p))cambios[k]=(cambios[k]||0)+1;});
+          });
+        });
+        Object.keys(cambios).forEach(k=>sDB(k));
+        if(Object.keys(cambios).length)console.log('✅ Formato de cuenta corregido:',cambios);
+      })();
       // ══ CORRECCIÓN ÚNICA: re-vincular gastos huérfanos de J-00049 al ID correcto del vehículo ══
       (()=>{
         const vJ49=DB.vehiculos.find(v=>v.codigo==='J-00049');
