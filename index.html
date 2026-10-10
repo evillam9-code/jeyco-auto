@@ -14034,7 +14034,7 @@ function guardarFacturaExterna(nFact){
   };
   if(abono>0){
     const pagoId=uid();
-    f.pagos.push({id:pagoId,fecha:f.fecha,monto:abono,moneda:feMoneda,banco:feBanco,cuenta:feCuenta,nota:'Abono inicial'});
+    f.pagos.push({id:pagoId,fecha:f.fecha,monto:abono,moneda:feMoneda,banco:feBanco,cuenta:feCuenta,nota:'Abono inicial',inicial:true});
     DB.caja.push({id:uid(),fecha:f.fecha,tipo:'ENTRADA',categoria:'Factura Externa',descripcion:`Abono recibido factura externa ${nFact}: ${vehiculo}`,monto:abono,moneda:feMoneda,banco:feBanco,cuenta:feCuenta,referencia:nFact,responsable:currentUser.nombre,origenModulo:'facturasExternas',origenId:f.id,pagoId});
   }
   if(!DB.facturasExternas)DB.facturasExternas=[];
@@ -14159,6 +14159,9 @@ function imprimirFacturaExterna(id){
   const tasa=parseFloat(DB.config.tasaCambio||60);
   const esUSD=f.moneda==='USD';
   const fV=n=>esUSD?'$'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(n);
+  // La factura es el primer documento: muestra solo el abono inicial y el pendiente de ese día
+  const abInicial=_esAbonoInicialFE(f,0)?parseFloat(f.pagos[0].monto||0):0;
+  const pendInicial=Math.max(0,parseFloat(f.monto||0)-abInicial);
   const empresa=DB.config.empresa||'JEYCO AUTO';
   const logo=DB.config.logoData||'';
   const win=window.open('','_blank','width=820,height=700');
@@ -14192,7 +14195,7 @@ function imprimirFacturaExterna(id){
       </div>
     </div>
     <div style="text-align:right">
-      <div style="font-size:22px;font-weight:900;color:${parseFloat(f.pendiente||0)>0?'#f59e0b':'#16a34a'}">FACTURA${parseFloat(f.pendiente||0)>0?'':' — SALDADA'}</div>
+      <div style="font-size:22px;font-weight:900;color:#f59e0b">FACTURA</div>
       <div style="font-family:monospace;font-size:20px;font-weight:900">${escHtml(f.numero)}</div>
       <div style="font-size:11px;color:#6b7280;margin-top:4px">Fecha: ${fmtDate(f.fecha)}</div>
     </div>
@@ -14222,10 +14225,10 @@ function imprimirFacturaExterna(id){
     <div class="sec-titulo">💰 Detalle Financiero</div>
     <table class="fin-tabla">
       <tr><td class="lbl">Precio de Venta</td><td class="val">${fV(f.monto)}</td></tr>
-      <tr><td class="lbl">Total Abonado</td><td class="val" style="color:#16a34a">${fV(f.abono||0)}</td></tr>
-      <tr class="${parseFloat(f.pendiente||0)>0?'fin-pend':'fin-total'}">
-        <td style="font-weight:800">${parseFloat(f.pendiente||0)>0?'PENDIENTE':'SALDADO'}</td>
-        <td class="val" style="font-size:16px">${fV(f.pendiente||0)}</td>
+      <tr><td class="lbl">Abono Inicial</td><td class="val" style="color:#16a34a">${fV(abInicial)}</td></tr>
+      <tr class="${pendInicial>0?'fin-pend':'fin-total'}">
+        <td style="font-weight:800">PENDIENTE</td>
+        <td class="val" style="font-size:16px">${fV(pendInicial)}</td>
       </tr>
     </table>
   </div>
@@ -14241,17 +14244,25 @@ function imprimirFacturaExterna(id){
   </div></body></html>`);
   win.document.close();
 }
+// El abono inicial es el primer pago, guardado al crear la factura (nota "Abono inicial").
+function _esAbonoInicialFE(f,idx){
+  const p=(f.pagos||[])[idx];
+  return idx===0&&!!p&&(p.inicial||/^abono inicial$/i.test((p.nota||'').trim()));
+}
 // Recibo de un abono de factura externa. Pendiente antes/después se calculan de la lista de pagos
 // (no se guardan), así un abono editado o revertido sale correcto al reimprimir.
+// Orden: Factura (con el abono inicial) → Recibo de Abono 1, 2… → Recibo de Saldo (el que deja en cero).
 function imprimirReciboFE(id,pagoId){
   const{item:f,p,idx}=_findPagoGenerico('facturasExternas',id,pagoId);if(!f||!p)return;
+  if(_esAbonoInicialFE(f,idx)){imprimirFacturaExterna(id);return;}
   const pagadoAntes=(f.pagos||[]).slice(0,idx).reduce((a,x)=>a+parseFloat(x.monto||0),0);
   const pendAntes=Math.max(0,parseFloat(f.monto||0)-pagadoAntes);
   const pendDespues=Math.max(0,pendAntes-parseFloat(p.monto||0));
   const esSaldo=pendDespues<=0;
+  const nAbono=_esAbonoInicialFE(f,0)?idx:idx+1;
   const tipo=esSaldo?'Recibo de Saldo':'Recibo de Abono';
-  const nRecibo=(f.numero||'')+(esSaldo?'-S':'-A'+(idx+1));
-  const titulo=`${esSaldo?tipo:tipo+' '+(idx+1)} — ${f.numero||''} — ${f.cliente||''} — ${f.vehiculo||''}`;
+  const nRecibo=(f.numero||'')+(esSaldo?'-S':'-A'+nAbono);
+  const titulo=`${esSaldo?tipo:tipo+' '+nAbono} — ${f.numero||''} — ${f.cliente||''} — ${f.vehiculo||''}`;
   const esUSD=(f.moneda||'RD$')==='USD';
   const fV=n=>esUSD?'$'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(n);
   const empresa=DB.config.empresa||'JEYCO AUTO';
