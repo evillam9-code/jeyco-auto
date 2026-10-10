@@ -13762,6 +13762,10 @@ function _findPagoGenerico(coleccion,itemId,pagoId){
 }
 function editarPagoGenericoModal(coleccion,itemId,pagoId){
   const{item,p}=_findPagoGenerico(coleccion,itemId,pagoId);if(!p)return;
+  // En Facturas Externas el abono va siempre en la moneda de la factura
+  const monedaFija=coleccion==='facturasExternas';
+  let htmlMBC=htmlMonedaBancoCuenta('epg',monedaFija?(item.moneda||'RD$'):(p.moneda||item.moneda||'RD$'),p.banco||undefined,p.cuenta||undefined);
+  if(monedaFija)htmlMBC=htmlMBC.replace('<select id="epg-moneda"','<select id="epg-moneda" disabled');
   openModal('✏️ Editar Pago',`
     <div class="form-row c2">
       <div class="form-field"><label class="required">Monto</label>
@@ -13770,7 +13774,7 @@ function editarPagoGenericoModal(coleccion,itemId,pagoId){
       <div class="form-field"><label>Fecha</label><input type="date" id="epg-fecha" value="${p.fecha||today()}"></div>
     </div>
     <div class="form-row c3">
-      ${htmlMonedaBancoCuenta('epg',p.moneda||item.moneda||'RD$',p.banco||undefined,p.cuenta||undefined)}
+      ${htmlMBC}
     </div>
     <div class="form-field"><label>Nota</label><input type="text" id="epg-nota" value="${escHtml(p.nota||'')}"></div>
     <div style="font-size:11px;color:var(--gray)">⚠️ El pendiente y el movimiento de Caja se actualizarán automáticamente.</div>`,
@@ -13923,9 +13927,9 @@ function renderFacturaExterna(){
           <td style="font-weight:700">${escHtml(f.vehiculo||'—')}</td>
           <td>${escHtml(f.cliente||'—')}</td>
           <td style="font-size:12px;color:var(--gray)">${escHtml(f.propietario||'—')}</td>
-          <td style="font-weight:700;color:var(--green)">${fmt(f.monto||0)}</td>
-          <td style="color:var(--green)">${fmt(f.abono||0)}</td>
-          <td style="font-weight:700;color:${parseFloat(f.pendiente||0)>0?'var(--red)':'var(--green)'}">${fmt(f.pendiente||0)}</td>
+          <td style="font-weight:700;color:var(--green)">${fmtMon(f.monto||0,f.moneda)}</td>
+          <td style="color:var(--green)">${fmtMon(f.abono||0,f.moneda)}</td>
+          <td style="font-weight:700;color:${parseFloat(f.pendiente||0)>0?'var(--red)':'var(--green)'}">${fmtMon(f.pendiente||0,f.moneda)}</td>
           <td>
             <div style="display:flex;gap:4px">
               <button class="btn btn-sm btn-secondary" onclick="imprimirFacturaExterna('${f.id}')" title="Imprimir">🖨️</button>
@@ -14063,7 +14067,7 @@ function abonarFacturaExterna(id){
       <div class="form-field"><label>Fecha</label><input type="date" id="fea-fecha" value="${today()}"></div>
     </div>
     <div class="form-row c3">
-      ${htmlMonedaBancoCuenta('fea',f.moneda||'RD$',f.banco||undefined,f.cuenta||undefined)}
+      ${htmlMonedaBancoCuenta('fea',f.moneda||'RD$',f.banco||undefined,f.cuenta||undefined).replace('<select id="fea-moneda"','<select id="fea-moneda" disabled')}
     </div>
     <div class="form-field"><label>Nota</label><input type="text" id="fea-nota" placeholder="Descripción del abono"></div>`,
     `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
@@ -14076,7 +14080,7 @@ function confirmarAbonoFE(id){
   if(!monto||monto<=0){toast('Ingresa un monto válido','error');return;}
   const pendienteActual=parseFloat(f.pendiente||0);
   if(monto>pendienteActual){toast('El monto no puede superar el pendiente ('+fmtMon(pendienteActual,f.moneda)+')','error');return;}
-  const moneda=document.getElementById('fea-moneda')?.value||f.moneda||'RD$';
+  const moneda=f.moneda||'RD$'; // el abono va siempre en la moneda de la factura
   const banco=document.getElementById('fea-banco')?.value||'';
   const cuenta=document.getElementById('fea-cuenta').value;
   const fecha=document.getElementById('fea-fecha').value;
@@ -14084,7 +14088,7 @@ function confirmarAbonoFE(id){
   f.abono=(parseFloat(f.abono||0)+monto);
   f.pendiente=Math.max(0,pendienteActual-monto);
   f.status=f.pendiente<=0?'PAGADO':'ABONADO';
-  f.moneda=moneda;f.banco=banco;f.cuenta=cuenta;
+  f.banco=banco;f.cuenta=cuenta;
   if(!f.pagos)f.pagos=[];
   const pagoId=uid();
   f.pagos.push({id:pagoId,fecha,monto,moneda,banco,cuenta,nota});
