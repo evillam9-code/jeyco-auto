@@ -13711,7 +13711,7 @@ const _CFG_HIST_PAGOS={
     titulo:g=>'🏢 '+(g.descripcion||g.categoria||'')},
   facturasExternas:{total:'monto',pagado:'abono',pendiente:'pendiente',status:'status',
     vals:{pagado:'PAGADO',abonado:'ABONADO',pendiente:'PENDIENTE'},
-    cajaTipo:'SALIDA',cajaMatch:'referencia',renderFn:'renderFacturaExterna',
+    cajaTipo:'ENTRADA',cajaMatch:'referencia',renderFn:'renderFacturaExterna',
     titulo:f=>'🧾 '+(f.numero||'')+' — '+(f.vehiculo||'')}
 };
 function recalcGenericoDesdePagos(coleccion,itemId){
@@ -13736,6 +13736,7 @@ function verHistorialGenerico(coleccion,itemId){
     <td>${escHtml(p.cuenta||p.banco||'—')}</td>
     <td>${escHtml(p.nota||'—')}</td>
     <td style="white-space:nowrap">
+      ${coleccion==='facturasExternas'?`<button class="btn btn-sm btn-secondary" onclick="imprimirReciboFE('${itemId}','${p._id}')" title="Imprimir recibo">🖨️</button>`:''}
       ${(currentUser?.role==='admin'||canDo('editar'))?`<button class="btn btn-sm" style="background:var(--blue3);color:var(--blue)" onclick="editarPagoGenericoModal('${coleccion}','${itemId}','${p._id}')" title="Editar pago">✏️</button>
       <button class="btn btn-sm" style="background:var(--red2);color:var(--red)" onclick="revertirPagoGenerico('${coleccion}','${itemId}','${p._id}')" title="Revertir/Eliminar pago">↩️</button>`:''}
     </td>
@@ -14034,7 +14035,7 @@ function guardarFacturaExterna(nFact){
   if(abono>0){
     const pagoId=uid();
     f.pagos.push({id:pagoId,fecha:f.fecha,monto:abono,moneda:feMoneda,banco:feBanco,cuenta:feCuenta,nota:'Abono inicial'});
-    DB.caja.push({id:uid(),fecha:f.fecha,tipo:'SALIDA',categoria:'Factura Externa',descripcion:`Pago factura externa ${nFact}: ${vehiculo}`,monto:abono,moneda:feMoneda,banco:feBanco,cuenta:feCuenta,referencia:nFact,responsable:currentUser.nombre,origenModulo:'facturasExternas',origenId:f.id,pagoId});
+    DB.caja.push({id:uid(),fecha:f.fecha,tipo:'ENTRADA',categoria:'Factura Externa',descripcion:`Abono recibido factura externa ${nFact}: ${vehiculo}`,monto:abono,moneda:feMoneda,banco:feBanco,cuenta:feCuenta,referencia:nFact,responsable:currentUser.nombre,origenModulo:'facturasExternas',origenId:f.id,pagoId});
   }
   if(!DB.facturasExternas)DB.facturasExternas=[];
   DB.facturasExternas.push(f);
@@ -14087,11 +14088,12 @@ function confirmarAbonoFE(id){
   if(!f.pagos)f.pagos=[];
   const pagoId=uid();
   f.pagos.push({id:pagoId,fecha,monto,moneda,banco,cuenta,nota});
-  DB.caja.push({id:uid(),fecha,tipo:'SALIDA',categoria:'Factura Externa',descripcion:`Pago factura externa ${f.numero}: ${f.vehiculo}`,monto,moneda,banco,cuenta,referencia:f.numero,responsable:currentUser.nombre,origenModulo:'facturasExternas',origenId:id,pagoId});
+  DB.caja.push({id:uid(),fecha,tipo:'ENTRADA',categoria:'Factura Externa',descripcion:`Abono recibido factura externa ${f.numero}: ${f.vehiculo}`,monto,moneda,banco,cuenta,referencia:f.numero,responsable:currentUser.nombre,origenModulo:'facturasExternas',origenId:id,pagoId});
   sDB('facturasExternas');sDB('caja');
   closeModal();
   toast(f.pendiente<=0?'✅ Factura externa pagada completamente':'💵 Abono registrado ✓','success');
   renderFacturaExterna();
+  imprimirReciboFE(id,pagoId);
 }
 function editarFacturaExterna(id){
   if(currentUser?.role!=='admin'&&!canDo('editar')){toast('No tienes permiso para editar','error');return;}
@@ -14190,7 +14192,7 @@ function imprimirFacturaExterna(id){
       </div>
     </div>
     <div style="text-align:right">
-      <div style="font-size:22px;font-weight:900;color:#f59e0b">FACTURA</div>
+      <div style="font-size:22px;font-weight:900;color:${parseFloat(f.pendiente||0)>0?'#f59e0b':'#16a34a'}">FACTURA${parseFloat(f.pendiente||0)>0?'':' — SALDADA'}</div>
       <div style="font-family:monospace;font-size:20px;font-weight:900">${escHtml(f.numero)}</div>
       <div style="font-size:11px;color:#6b7280;margin-top:4px">Fecha: ${fmtDate(f.fecha)}</div>
     </div>
@@ -14220,7 +14222,7 @@ function imprimirFacturaExterna(id){
     <div class="sec-titulo">💰 Detalle Financiero</div>
     <table class="fin-tabla">
       <tr><td class="lbl">Precio de Venta</td><td class="val">${fV(f.monto)}</td></tr>
-      <tr><td class="lbl">Abono Inicial</td><td class="val" style="color:#16a34a">${fV(f.abono||0)}</td></tr>
+      <tr><td class="lbl">Total Abonado</td><td class="val" style="color:#16a34a">${fV(f.abono||0)}</td></tr>
       <tr class="${parseFloat(f.pendiente||0)>0?'fin-pend':'fin-total'}">
         <td style="font-weight:800">${parseFloat(f.pendiente||0)>0?'PENDIENTE':'SALDADO'}</td>
         <td class="val" style="font-size:16px">${fV(f.pendiente||0)}</td>
@@ -14235,6 +14237,93 @@ function imprimirFacturaExterna(id){
   <div class="pie">${escHtml(empresa)} | ${fmtDate(today())} | Factura Externa — No pertenece al inventario del sistema</div>
   <div class="np" style="margin-top:16px;text-align:center">
     <button onclick="window.print()" style="padding:10px 24px;background:#f59e0b;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-weight:700">🖨️ Imprimir / PDF</button>
+  </div>
+  </div></body></html>`);
+  win.document.close();
+}
+// Recibo de un abono de factura externa. Pendiente antes/después se calculan de la lista de pagos
+// (no se guardan), así un abono editado o revertido sale correcto al reimprimir.
+function imprimirReciboFE(id,pagoId){
+  const{item:f,p,idx}=_findPagoGenerico('facturasExternas',id,pagoId);if(!f||!p)return;
+  const pagadoAntes=(f.pagos||[]).slice(0,idx).reduce((a,x)=>a+parseFloat(x.monto||0),0);
+  const pendAntes=Math.max(0,parseFloat(f.monto||0)-pagadoAntes);
+  const pendDespues=Math.max(0,pendAntes-parseFloat(p.monto||0));
+  const esSaldo=pendDespues<=0;
+  const tipo=esSaldo?'Recibo de Saldo':'Recibo de Abono';
+  const nRecibo=(f.numero||'')+(esSaldo?'-S':'-A'+(idx+1));
+  const titulo=`${esSaldo?tipo:tipo+' '+(idx+1)} — ${f.numero||''} — ${f.cliente||''} — ${f.vehiculo||''}`;
+  const esUSD=(f.moneda||'RD$')==='USD';
+  const fV=n=>esUSD?'$'+parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2})+' USD':fmt(n);
+  const empresa=DB.config.empresa||'JEYCO AUTO';
+  const logo=DB.config.logoData||'';
+  const color=esSaldo?'#16a34a':'#d97706',fondo=esSaldo?'#dcfce7':'#fef3c7';
+  const win=window.open('','_blank','width=720,height=650');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escHtml(titulo)}</title>
+  <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#0f172a;background:#fff}
+  .page{max-width:620px;margin:0 auto;padding:28px}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:14px;border-bottom:4px solid ${color};margin-bottom:18px}
+  .badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:800;background:${fondo};color:${color};margin-top:6px}
+  .sec{margin-bottom:14px}
+  .sec-titulo{font-size:10px;font-weight:800;text-transform:uppercase;color:#fff;background:#0f172a;padding:4px 10px;border-radius:4px;display:inline-block;margin-bottom:8px}
+  .g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .campo label{font-size:9px;font-weight:700;text-transform:uppercase;color:#94a3b8;display:block;margin-bottom:2px}
+  .campo span{font-size:12px;font-weight:600;padding:5px 8px;background:#f8fafc;border-radius:4px;border-left:3px solid #f59e0b;display:block}
+  .resumen{background:#f8fafc;border-radius:8px;padding:14px;border:1px solid #e2e8f0}
+  .resumen-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #e2e8f0;font-size:12px}
+  .monto-abono{background:${fondo};border-radius:6px;padding:10px 14px;display:flex;justify-content:space-between;font-size:15px;font-weight:900;color:${color};margin-top:8px}
+  .saldo-box{margin-top:8px;padding:8px 14px;border-radius:6px;display:flex;justify-content:space-between;font-weight:700;background:${esSaldo?'#dcfce7':'#fee2e2'};color:${esSaldo?'#16a34a':'#dc2626'}}
+  .firmas{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin-top:36px}
+  .firma-linea{border-top:1px solid #000;padding-top:5px;text-align:center;font-size:10px;color:#475569}
+  .firma-nombre{font-size:12px;font-weight:700;color:#0f172a;margin-top:2px}
+  .pie{text-align:center;font-size:9px;color:#94a3b8;margin-top:20px;padding-top:10px;border-top:1px solid #e2e8f0}
+  @page{size:letter;margin:8mm}@media print{.noprint{display:none}body{font-size:11px}.page{padding:12px}}</style></head><body><div class="page">
+  <div class="hdr">
+    <div style="display:flex;align-items:center;gap:12px">
+      ${logo?`<img src="${logo}" style="width:54px;height:54px;object-fit:contain;border-radius:8px">`:`<div style="width:54px;height:54px;background:#f59e0b;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:#fff">${escHtml(empresa[0])}</div>`}
+      <div>
+        <div style="font-size:17px;font-weight:900">${escHtml(empresa)}</div>
+        ${DB.config.telefono?`<div style="font-size:10px;color:#6b7280">Tel: ${escHtml(DB.config.telefono)}</div>`:''}
+        ${DB.config.rnc?`<div style="font-size:10px;color:#6b7280">RNC: ${escHtml(DB.config.rnc)}</div>`:''}
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:15px;font-weight:900;text-transform:uppercase;color:${color}">${tipo}</div>
+      <div style="font-family:monospace;font-size:13px;font-weight:800;margin-top:4px">${escHtml(nRecibo)}</div>
+      <div style="font-size:11px;color:#6b7280;margin-top:2px">Factura: ${escHtml(f.numero||'')}</div>
+      <div style="font-size:11px;color:#6b7280;margin-top:2px">Fecha: ${fmtDate(p.fecha)}</div>
+      <div class="badge">${esSaldo?'✅ FACTURA SALDADA':'💵 ABONO PARCIAL'}</div>
+    </div>
+  </div>
+  <div class="sec">
+    <div class="sec-titulo">👤 Recibido de</div>
+    <div class="g2">
+      <div class="campo"><label>Comprador</label><span>${escHtml(f.cliente||'—')}</span></div>
+      <div class="campo"><label>Cédula / RNC</label><span>${escHtml(f.clienteDoc||'—')}</span></div>
+      <div class="campo"><label>Vehículo</label><span>${escHtml(f.vehiculo||'—')}</span></div>
+      <div class="campo"><label>Chasis / VIN</label><span style="font-family:monospace">${escHtml(f.vin||'—')}</span></div>
+    </div>
+  </div>
+  <div class="sec">
+    <div class="sec-titulo">💰 Detalle del Abono</div>
+    <div class="resumen">
+      <div class="resumen-row"><span>Monto Pendiente</span><span style="font-weight:700">${fV(pendAntes)}</span></div>
+      <div class="monto-abono"><span>Abono Recibido</span><span>${fV(p.monto)}</span></div>
+      <div class="saldo-box"><span>${esSaldo?'✅ Pendiente Después — Factura Saldada':'⏳ Pendiente Después'}</span><span>${fV(pendDespues)}</span></div>
+    </div>
+    <div style="margin-top:8px;font-size:11px;color:#475569">🏦 Depositado en: <strong>${escHtml([p.banco,p.cuenta].filter(Boolean).join(' — ')||'—')}</strong></div>
+    ${p.nota?`<div style="margin-top:8px;font-size:11px;background:#f1f5f9;border-radius:4px;padding:6px 10px;color:#475569">📝 ${escHtml(p.nota)}</div>`:''}
+  </div>
+  <div class="firmas">
+    <div style="text-align:center"><div style="height:40px"></div>
+      <div class="firma-linea"><div class="firma-nombre">${escHtml(f.cliente||'Comprador')}</div>Entregado por (Comprador)</div>
+    </div>
+    <div style="text-align:center"><div style="height:40px"></div>
+      <div class="firma-linea"><div class="firma-nombre">${escHtml(DB.config.responsable||empresa)}</div>Recibido por</div>
+    </div>
+  </div>
+  <div class="pie">Documento generado el ${fmtDate(today())} &nbsp;|&nbsp; ${escHtml(empresa)}</div>
+  <div class="noprint" style="margin-top:20px;text-align:center">
+    <button onclick="window.print()" style="padding:9px 24px;background:${color};color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700">🖨️ Imprimir / Guardar PDF</button>
   </div>
   </div></body></html>`);
   win.document.close();
@@ -14867,6 +14956,22 @@ function _corregirFormatoCuentas(){
   if(Object.keys(cambios).length)console.log('✅ Formato de cuenta corregido:',cambios);
 }
 
+// ══ CORRECCIÓN ÚNICA: abonos de Factura Externa guardados en Caja como SALIDA ══
+// El abono lo paga el comprador y entra a una cuenta de JEYCO → debe ser ENTRADA.
+// Solo toca movimientos de Facturas Externas. Se llama al final de fbCargar(); si ya no hay
+// nada que corregir no hace nada. No afecta meses cerrados (el cierre no usa Caja).
+function _corregirTipoCajaFacturaExterna(){
+  let n=0;
+  (DB.caja||[]).forEach(c=>{
+    if(c.tipo!=='SALIDA')return;
+    if(c.origenModulo!=='facturasExternas'&&!(c.categoria==='Factura Externa'&&/^Pago factura externa /.test(c.descripcion||'')))return;
+    c.tipo='ENTRADA';
+    c.descripcion=(c.descripcion||'').replace(/^Pago factura externa /,'Abono recibido factura externa ');
+    n++;
+  });
+  if(n){ss('caja',DB.caja);fbGuardar('caja').catch(()=>{});console.log('✅ Abonos de factura externa pasados a ENTRADA:',n);}
+}
+
 async function fbCargar(){
   const keys=['config','config_logo','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
     'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos','intereses','presencia','cumpleanosMensajes','log','cierresMensuales'];
@@ -14926,7 +15031,7 @@ async function fbCargar(){
   if(_sembrarCierresManualesUnaVez()){
     fbGuardar('cierresMensuales').catch(()=>{});
   }
-  if(loaded)_corregirFormatoCuentas();
+  if(loaded){_corregirFormatoCuentas();_corregirTipoCajaFacturaExterna();}
   return loaded;
 }
 
