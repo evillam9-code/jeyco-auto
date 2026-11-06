@@ -5665,6 +5665,21 @@ function _desgloseGastosVehiculo(){
   });
   return {total:todos.length,activos,vendidosPendientes,montoPendienteRD};
 }
+// Dónde se concentran esos gastos "aún no vendidos" — por marca y por año del vehículo —
+// para detectar inventario que lleva mucho tiempo sin venderse.
+function _desgloseGastosActivosPorMarcaYAnio(){
+  const porMarca={},porAnio={};
+  (DB.gastosVehiculos||[]).forEach(g=>{
+    const v=DB.vehiculos.find(x=>x.id===g.vehiculoId);
+    if(v&&v.status==='VENDIDO')return;
+    const marca=(v&&v.marca)||'(sin vehículo)';
+    const anio=(v&&v.anio)||'(sin año)';
+    porMarca[marca]=(porMarca[marca]||0)+1;
+    porAnio[anio]=(porAnio[anio]||0)+1;
+  });
+  const top=obj=>Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  return {porMarca:top(porMarca),porAnio:top(porAnio)};
+}
 
 function renderBackup(){
   if(currentUser?.role!=='admin'){
@@ -5710,6 +5725,7 @@ function renderBackup(){
 
   const espacioFb=_calcularEspacioFirebase();
   const desgloseGV=_desgloseGastosVehiculo();
+  const desgloseGVMarcaAnio=_desgloseGastosActivosPorMarcaYAnio();
 
   document.getElementById('page-backup').innerHTML=`
     <div class="page-header">
@@ -5769,6 +5785,10 @@ function renderBackup(){
             <div style="font-size:11px;color:var(--gray);margin-top:4px">
               🚗 ${desgloseGV.activos} de vehículos aún no vendidos (normal que pesen)
               ${desgloseGV.vendidosPendientes>0?` · ⚠️ ${desgloseGV.vendidosPendientes} vendidos con saldo pendiente (RD$ ${fmtMoneyDisplay(desgloseGV.montoPendienteRD)}) — al saldarse, se archivan solos`:' · ✅ ningún vendido con saldo pendiente'}
+            </div>
+            <div style="font-size:11px;color:var(--gray);margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div><strong>Por marca (no vendidos):</strong> ${desgloseGVMarcaAnio.porMarca.map(([k,v])=>`${escHtml(k)} (${v})`).join(', ')||'—'}</div>
+              <div><strong>Por año (no vendidos):</strong> ${desgloseGVMarcaAnio.porAnio.map(([k,v])=>`${k} (${v})`).join(', ')||'—'}</div>
             </div>`:''}
           </div>`).join('')}
       </div>
