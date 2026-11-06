@@ -5680,6 +5680,82 @@ function _desgloseGastosActivosPorMarcaYAnio(){
   const top=obj=>Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,8);
   return {porMarca:top(porMarca),porAnio:top(porAnio)};
 }
+// Exporta/imprime la lista de gastos de vehículos ya VENDIDOS que todavía tienen saldo
+// pendiente — para que se revise cuáles están pagados o no y se puedan saldar/archivar.
+function exportarVendidosConSaldoPendiente(){
+  const filas=(DB.gastosVehiculos||[]).filter(g=>{
+    const v=DB.vehiculos.find(x=>x.id===g.vehiculoId);
+    return v&&v.status==='VENDIDO'&&parseFloat(g.montoPendiente||0)>0;
+  }).map(g=>({g,v:DB.vehiculos.find(x=>x.id===g.vehiculoId)}))
+    .sort((a,b)=>(a.v.codigo||'').localeCompare(b.v.codigo||''));
+  if(!filas.length){toast('No hay vehículos vendidos con saldo pendiente','success');return;}
+  const empresa=DB.config.empresa||'JEYCO AUTO';
+  const logo=DB.config.logoData||'';
+  const rnc=DB.config.rnc||'';
+  const tel=DB.config.telefono||'';
+  const dir=DB.config.direccion||'';
+  const fN=n=>parseFloat(n||0).toLocaleString('es-DO',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const totalRD=filas.reduce((a,f)=>a+aRD(f.g.montoPendiente||0,f.g.moneda,f.g.tasaCambio),0);
+  const win=window.open('','_blank','width=900,height=700');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Vehículos Vendidos con Saldo Pendiente</title>
+  <style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,sans-serif;font-size:10px;color:#0f172a;background:#fff;padding:12px 16px}
+  .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #0f172a;padding-bottom:8px;margin-bottom:10px}
+  .hdr img{max-height:48px;max-width:120px;object-fit:contain;display:block;margin-bottom:3px}
+  .hdr-emp{font-size:9px;color:#475569;line-height:1.5}
+  .hdr-emp strong{font-size:12px;color:#0f172a;display:block;margin-bottom:1px}
+  .hdr-titulo{font-size:17px;font-weight:900;color:#dc2626;letter-spacing:.5px;text-align:right;line-height:1.2}
+  .hdr-sub{font-size:9px;color:#6b7280;text-align:right;margin-top:3px}
+  table{width:100%;border-collapse:collapse}
+  .th th{background:#0f172a;color:#fff;padding:6px 8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.2px}
+  td{padding:5px 8px;border-bottom:1px solid #e2e8f0;font-size:10px}
+  tr:nth-child(even) td{background:#f8fafc}
+  .num{width:26px;text-align:center;color:#94a3b8;font-size:9px}
+  .amt{text-align:right;font-family:'Courier New',monospace;font-weight:700;color:#dc2626}
+  .tot td{background:#0f172a!important;color:#fff;font-weight:900;font-size:12px;padding:8px}
+  @page{size:letter landscape;margin:8mm}
+  @media print{.noprint{display:none}}
+  </style></head><body>
+  <div class="hdr">
+    <div>
+      ${logo?`<img src="${logo}">`:''}
+      <div class="hdr-emp">
+        <strong>${escHtml(empresa)}</strong>
+        ${rnc?`RNC: ${escHtml(rnc)}<br>`:''}
+        ${dir?`${escHtml(dir)}<br>`:''}
+        ${tel?`Tel: ${escHtml(tel)}`:''}
+      </div>
+    </div>
+    <div>
+      <div class="hdr-titulo">Vehículos Vendidos<br>con Saldo Pendiente</div>
+      <div class="hdr-sub">Fecha: ${fmtDate(today())} &nbsp;|&nbsp; ${filas.length} registro(s)</div>
+    </div>
+  </div>
+  <table>
+    <thead class="th"><tr>
+      <th class="num">#</th><th>Vehículo</th><th>Tipo de Gasto</th><th>Suplidor</th>
+      <th>Fecha</th><th style="text-align:right">Pendiente</th>
+    </tr></thead>
+    <tbody>
+      ${filas.map((f,i)=>`<tr>
+        <td class="num">${i+1}</td>
+        <td>${escHtml([f.v.codigo,f.v.marca,f.v.modelo].filter(Boolean).join(' — '))}${f.v.anio?' '+escHtml(String(f.v.anio)):''}</td>
+        <td>${escHtml(f.g.tipo||'—')}</td>
+        <td>${escHtml(f.g.suplidor||'—')}</td>
+        <td>${f.g.fecha?fmtDate(f.g.fecha):'—'}</td>
+        <td class="amt">${f.g.moneda==='USD'?'US$ ':'RD$ '}${fN(f.g.montoPendiente)}</td>
+      </tr>`).join('')}
+      <tr class="tot"><td colspan="5" style="text-align:right">TOTAL PENDIENTE (equiv. RD$)</td><td class="amt" style="color:#fff">RD$ ${fN(totalRD)}</td></tr>
+    </tbody>
+  </table>
+  <div class="noprint" style="margin-top:14px;text-align:center">
+    <button onclick="window.print()" style="padding:8px 28px;background:#0f172a;color:#fff;border:none;border-radius:5px;font-size:12px;cursor:pointer;font-family:Arial">🖨️ Imprimir / Guardar PDF</button>
+  </div>
+  </body></html>`);
+  win.document.close();
+}
 
 function renderBackup(){
   if(currentUser?.role!=='admin'){
@@ -5784,7 +5860,8 @@ function renderBackup(){
             ${m.key==='gastosVehiculos'?`
             <div style="font-size:11px;color:var(--gray);margin-top:4px">
               🚗 ${desgloseGV.activos} de vehículos aún no vendidos (normal que pesen)
-              ${desgloseGV.vendidosPendientes>0?` · ⚠️ ${desgloseGV.vendidosPendientes} vendidos con saldo pendiente (RD$ ${fmtMoneyDisplay(desgloseGV.montoPendienteRD)}) — al saldarse, se archivan solos`:' · ✅ ningún vendido con saldo pendiente'}
+              ${desgloseGV.vendidosPendientes>0?` · ⚠️ ${desgloseGV.vendidosPendientes} vendidos con saldo pendiente (RD$ ${fmtMoneyDisplay(desgloseGV.montoPendienteRD)}) — al saldarse, se archivan solos
+              <button class="btn btn-secondary btn-sm" onclick="exportarVendidosConSaldoPendiente()" style="margin-left:8px;padding:2px 10px;font-size:10px">📄 Exportar lista</button>`:' · ✅ ningún vendido con saldo pendiente'}
             </div>
             <div style="font-size:11px;color:var(--gray);margin-top:6px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
               <div><strong>Por marca (no vendidos):</strong> ${desgloseGVMarcaAnio.porMarca.map(([k,v])=>`${escHtml(k)} (${v})`).join(', ')||'—'}</div>
