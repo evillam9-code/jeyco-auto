@@ -855,6 +855,8 @@ function ejecutarResetDatos(){
   const keys=['vehiculos','clientes','suplidores','ventas','cotizaciones','caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos','intereses'];
   keys.forEach(k=>{DB[k]=[];localStorage.removeItem(k);});
   keys.forEach(k=>{if(window._fbActivo)fbGuardar(k);});
+  // Limpiar también los documentos de archivo de Gastos Vehículo y Caja (ver FB_CLAVES_ARCHIVABLES)
+  if(window._fbActivo){fbGuardar('gastosVehiculos_archivo').catch(()=>{});fbGuardar('caja_archivo').catch(()=>{});}
   closeModal();toast('Datos limpiados ✓','success');showPage('dashboard');
 }
 function filterTable(id,q){const tbl=document.getElementById(id);if(!tbl)return;const sq=q.toLowerCase();tbl.querySelectorAll('tbody tr').forEach(tr=>{tr.style.display=tr.textContent.toLowerCase().includes(sq)?'':'none';});}
@@ -5617,7 +5619,8 @@ const FB_LABELS_ESPACIO={
   gastosVehiculos:'💸 Gastos Vehículo',cxp:'📑 CxP',cxc:'📬 CxC',autorizaciones:'✅ Autorizaciones',
   seguros:'🛡️ Seguros',facturasExternas:'🧾 Facturas Externas',prestamos:'🏦 Préstamos',
   activosFijos:'🏭 Activos Fijos',intereses:'📈 Intereses',presencia:'🟢 Presencia',
-  cumpleanosMensajes:'🎂 Cumpleaños (estado)',log:'📜 Bitácora',cierresMensuales:'🔒 Cierres Mensuales'
+  cumpleanosMensajes:'🎂 Cumpleaños (estado)',log:'📜 Bitácora',cierresMensuales:'🔒 Cierres Mensuales',
+  gastosVehiculos_archivo:'📦 Gastos Vehículo (archivo)',caja_archivo:'📦 Caja (archivo)'
 };
 function _tamanoModuloFirebaseKB(key){
   let val=DB[key]!==undefined?DB[key]:(key==='config'?{}:[]);
@@ -5626,6 +5629,15 @@ function _tamanoModuloFirebaseKB(key){
   }
   if(key==='config_logo'){
     val=(DB.config&&DB.config.logoData)||'';
+  }
+  // Gastos Vehículo y Caja se guardan en 2 documentos (activo + archivo, ver
+  // FB_CLAVES_ARCHIVABLES): mostrar el tamaño real de cada documento por separado.
+  if(FB_CLAVES_ARCHIVABLES[key]){
+    val=(val||[]).filter(r=>!FB_CLAVES_ARCHIVABLES[key].esArchivable(r));
+  } else if(key.endsWith('_archivo')){
+    const liveKey=key.replace('_archivo','');
+    const cfg=FB_CLAVES_ARCHIVABLES[liveKey];
+    val=cfg?(DB[liveKey]||[]).filter(cfg.esArchivable):[];
   }
   try{ return new TextEncoder().encode(JSON.stringify(val===undefined?null:val)).length/1024; }
   catch(e){ return 0; }
@@ -15035,6 +15047,52 @@ function _fbEsErrorPasajero(e){
     msg.includes('timeout')||msg.includes('unavailable')||msg.includes('network')||msg.includes('failed to fetch');
 }
 
+// ══ ARCHIVADO DE DATOS ANTIGUOS (Gastos Vehículo y Caja) ══
+// Los registros ya cerrados (vehículo vendido y pagado hace +1 año; movimientos de Caja
+// de años anteriores al actual) se guardan en un documento aparte de Firebase para que el
+// documento "activo" no siga creciendo. Al cargar, ambos documentos se vuelven a unir en
+// memoria (DB.gastosVehiculos / DB.caja), así que reportes, búsquedas y totales no cambian.
+function _esGastoVehArchivable(g){
+  if(!g||!g.fecha)return false;
+  const v=DB.vehiculos.find(x=>x.id===g.vehiculoId);
+  if(!v||v.status!=='VENDIDO')return false;
+  if(parseFloat(g.montoPendiente||0)>0)return false;
+  const unAnioAtras=new Date();
+  unAnioAtras.setFullYear(unAnioAtras.getFullYear()-1);
+  return new Date(g.fecha)<unAnioAtras;
+}
+function _esCajaArchivable(c){
+  if(!c||!c.fecha)return false;
+  const anioReg=parseInt(String(c.fecha).slice(0,4));
+  return !!anioReg&&anioReg<new Date().getFullYear();
+}
+const FB_CLAVES_ARCHIVABLES={
+  gastosVehiculos:{archivoKey:'gastosVehiculos_archivo',esArchivable:_esGastoVehArchivable},
+  caja:{archivoKey:'caja_archivo',esArchivable:_esCajaArchivable}
+};
+// Separa val en {activos, archivables} y guarda los activos en el doc normal; los
+// archivables se suman (sin duplicar) al doc de archivo, que se lee primero para no perder
+// lo que ya estaba archivado antes.
+async function _fbGuardarConArchivado(key,val){
+  const cfg=FB_CLAVES_ARCHIVABLES[key];
+  const activos=[],archivables=[];
+  (val||[]).forEach(r=>(cfg.esArchivable(r)?archivables:activos).push(r));
+  _fbVerificarTamano(key,activos);
+  await _fbDB.collection(_fbCol).doc(key).set({valor:JSON.stringify(activos)});
+  if(archivables.length===0)return;
+  let archivoPrevio=[];
+  try{
+    const snap=await _fbDB.collection(_fbCol).doc(cfg.archivoKey).get();
+    if(snap.exists){const v=JSON.parse(snap.data().valor);if(Array.isArray(v))archivoPrevio=v;}
+  }catch(e){return;} // si no se puede leer el archivo previo, no arriesgar sobreescribirlo
+  const idsPrevios=new Set(archivoPrevio.map(r=>r.id));
+  const nuevos=archivables.filter(r=>!idsPrevios.has(r.id));
+  if(nuevos.length===0)return;
+  const archivoFinal=archivoPrevio.concat(nuevos);
+  _fbVerificarTamano(cfg.archivoKey,archivoFinal);
+  await _fbDB.collection(_fbCol).doc(cfg.archivoKey).set({valor:JSON.stringify(archivoFinal)});
+}
+
 async function _fbGuardarIntento(key){
   const _timeout=new Promise((_,reject)=>setTimeout(()=>{
     const e=new Error('Tiempo de espera agotado guardando '+key);
@@ -15053,6 +15111,8 @@ async function _fbGuardarIntento(key){
         _fbVerificarTamano('config_logo',logo);
         await _fbDB.collection(_fbCol).doc('config_logo').set({valor:JSON.stringify(logo)});
       }
+    } else if(FB_CLAVES_ARCHIVABLES[key]){
+      await _fbGuardarConArchivado(key,val);
     } else {
       _fbVerificarTamano(key,val);
       await _fbDB.collection(_fbCol).doc(key).set({valor:JSON.stringify(val)});
@@ -15119,7 +15179,8 @@ function _corregirTipoCajaFacturaExterna(){
 
 async function fbCargar(){
   const keys=['config','config_logo','users','vehiculos','clientes','suplidores','ventas','cotizaciones',
-    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos','intereses','presencia','cumpleanosMensajes','log','cierresMensuales'];
+    'caja','gastos','nomina','nominaPagos','gastosVehiculos','cxp','cxc','autorizaciones','seguros','facturasExternas','prestamos','activosFijos','intereses','presencia','cumpleanosMensajes','log','cierresMensuales',
+    'gastosVehiculos_archivo','caja_archivo'];
   let loaded=false;
   // Fix 4A — carga en paralelo con Promise.allSettled (si una falla, las demás siguen)
   const resultados=await Promise.allSettled(
@@ -15150,6 +15211,15 @@ async function fbCargar(){
               }
             });
             DB[key]=merged;
+          } else if(key==='gastosVehiculos_archivo'||key==='caja_archivo'){
+            // Datos archivados (ver _fbGuardarConArchivado): se unen al arreglo activo
+            // para que reportes y búsquedas vean el historial completo, sin duplicar.
+            const liveKey=key.replace('_archivo','');
+            if(!Array.isArray(DB[liveKey]))DB[liveKey]=[];
+            if(Array.isArray(val)){
+              const idsExistentes=new Set(DB[liveKey].map(r=>r.id));
+              val.forEach(r=>{if(!idsExistentes.has(r.id))DB[liveKey].push(r);});
+            }
           } else {
             DB[key]=val;
           }
@@ -15176,8 +15246,17 @@ async function fbCargar(){
   if(_sembrarCierresManualesUnaVez()){
     fbGuardar('cierresMensuales').catch(()=>{});
   }
-  if(loaded){_corregirFormatoCuentas();_corregirTipoCajaFacturaExterna();}
+  if(loaded){_corregirFormatoCuentas();_corregirTipoCajaFacturaExterna();_archivarDatosAntiguos();}
   return loaded;
+}
+
+// Mueve al documento de archivo lo que ya califica (ver FB_CLAVES_ARCHIVABLES) y aún no
+// se había archivado. No hace nada si no hay nada nuevo que archivar.
+function _archivarDatosAntiguos(){
+  Object.keys(FB_CLAVES_ARCHIVABLES).forEach(key=>{
+    const cfg=FB_CLAVES_ARCHIVABLES[key];
+    if((DB[key]||[]).some(cfg.esArchivable))fbGuardar(key).catch(()=>{});
+  });
 }
 
 const _sDB_orig = sDB;
