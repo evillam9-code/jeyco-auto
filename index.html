@@ -5609,6 +5609,37 @@ function totalInteresesCobradosMes(mes){
 
 // ══ MÓDULO BACKUP ══
 
+// ══ ESPACIO USADO EN FIREBASE (por módulo guardado en Firestore) ══
+const FB_LABELS_ESPACIO={
+  config:'⚙️ Configuración',config_logo:'🖼️ Logo',users:'👥 Usuarios',vehiculos:'🚗 Vehículos',
+  clientes:'👤 Clientes',suplidores:'🏭 Suplidores',ventas:'💰 Ventas',cotizaciones:'📋 Cotizaciones',
+  caja:'💳 Caja',gastos:'🏢 Gastos Empresa',nomina:'👷 Nómina',nominaPagos:'💵 Pagos Nómina',
+  gastosVehiculos:'💸 Gastos Vehículo',cxp:'📑 CxP',cxc:'📬 CxC',autorizaciones:'✅ Autorizaciones',
+  seguros:'🛡️ Seguros',facturasExternas:'🧾 Facturas Externas',prestamos:'🏦 Préstamos',
+  activosFijos:'🏭 Activos Fijos',intereses:'📈 Intereses',presencia:'🟢 Presencia',
+  cumpleanosMensajes:'🎂 Cumpleaños (estado)',log:'📜 Bitácora',cierresMensuales:'🔒 Cierres Mensuales'
+};
+function _tamanoModuloFirebaseKB(key){
+  let val=DB[key]!==undefined?DB[key]:(key==='config'?{}:[]);
+  if(key==='config'&&typeof val==='object'&&val!==null){
+    val=Object.assign({},val,{logoData:''}); // el logo se guarda aparte, en config_logo
+  }
+  if(key==='config_logo'){
+    val=(DB.config&&DB.config.logoData)||'';
+  }
+  try{ return new TextEncoder().encode(JSON.stringify(val===undefined?null:val)).length/1024; }
+  catch(e){ return 0; }
+}
+function _calcularEspacioFirebase(){
+  const LIMITE_KB=1024; // límite real de un documento de Firestore (~1 MiB)
+  return Object.keys(FB_LABELS_ESPACIO).map(key=>{
+    const kb=_tamanoModuloFirebaseKB(key);
+    const pct=Math.min(100,(kb/LIMITE_KB)*100);
+    const color=pct>=90?'var(--red)':pct>=70?'var(--amber)':'var(--green)';
+    return {key,label:FB_LABELS_ESPACIO[key],kb,pct,color};
+  }).sort((a,b)=>b.pct-a.pct);
+}
+
 function renderBackup(){
   if(currentUser?.role!=='admin'){
     document.getElementById('page-backup').innerHTML='<div style="text-align:center;padding:48px"><div style="font-size:48px;margin-bottom:12px">🔒</div><div style="font-size:18px;font-weight:700;color:var(--navy)">Acceso restringido</div><p style="color:var(--gray);margin-top:8px">Solo el administrador puede acceder al backup.</p></div>';
@@ -5651,6 +5682,8 @@ function renderBackup(){
     {label:'Seguros',val:(DB.seguros||[]).length,ico:'🛡️'},
   ];
 
+  const espacioFb=_calcularEspacioFirebase();
+
   document.getElementById('page-backup').innerHTML=`
     <div class="page-header">
       <div><h1>💾 Backup del Sistema</h1><p>Respaldo de todos los datos del sistema</p></div>
@@ -5684,6 +5717,27 @@ function renderBackup(){
             <div style="font-size:24px;margin-bottom:6px">${r.ico}</div>
             <div style="font-size:22px;font-weight:800;color:var(--navy)">${r.val}</div>
             <div style="font-size:11px;color:var(--gray);font-weight:600;text-transform:uppercase;letter-spacing:.3px">${r.label}</div>
+          </div>`).join('')}
+      </div>
+    </div>
+
+    <!-- Espacio usado en Firebase -->
+    <div class="card">
+      <div class="card-title">📦 Espacio usado en Firebase</div>
+      <p style="font-size:12px;color:var(--gray);margin-bottom:16px">
+        Cada módulo se guarda en un documento de Firebase con un límite de <strong>1024 KB</strong>.
+        🟢 Verde: sin problema. 🟡 Amarillo: acercándose al límite. 🔴 Rojo: crítico, puede dejar de guardar.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        ${espacioFb.map(m=>`
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;color:var(--navy);margin-bottom:4px">
+              <span>${m.label}</span>
+              <span style="color:${m.color}">${m.kb.toFixed(1)} KB / 1024 KB (${m.pct.toFixed(0)}%)</span>
+            </div>
+            <div style="background:var(--gray2);border-radius:6px;height:10px;overflow:hidden">
+              <div style="width:${m.pct}%;height:100%;background:${m.color};border-radius:6px"></div>
+            </div>
           </div>`).join('')}
       </div>
     </div>
@@ -14920,22 +14974,106 @@ function _verificarCumpleanosHoy(){
     </div>`;
   document.body.appendChild(av);
 }
-async function fbGuardar(key){
-  const _timeout=new Promise((_,reject)=>setTimeout(()=>reject(new Error('timeout guardando '+key)),12000));
+// ══ CAPACIDAD Y ROBUSTEZ DE FIREBASE ══
+const FB_SAVE_TIMEOUT_MS=30000;      // antes 12000 — dar más margen en conexiones lentas
+const FB_SAVE_MAX_REINTENTOS=2;      // reintentos automáticos ante fallos pasajeros
+const FB_TAM_AVISO_BYTES=700*1024;   // aviso tipo toast
+const FB_TAM_BLOQUEO_BYTES=950*1024; // bloqueo claro (límite real de Firestore: ~1MiB = 1048576 bytes)
+window._fbAvisoTamanoEn={};
+
+// Tamaño en bytes (UTF-8) que ocupará un valor al guardarse como JSON en Firestore
+function _fbTamanoBytes(val){
+  try{ return new TextEncoder().encode(JSON.stringify(val===undefined?null:val)).length; }
+  catch(e){ return 0; }
+}
+
+// Revisa el tamaño de un documento antes de guardarlo: avisa cerca del límite y bloquea si lo supera
+function _fbVerificarTamano(key,val){
+  const bytes=_fbTamanoBytes(val);
+  const kb=bytes/1024;
+  if(bytes>=FB_TAM_BLOQUEO_BYTES){
+    const e=new Error('El módulo "'+key+'" alcanzó el límite de tamaño de Firebase ('+kb.toFixed(0)+' KB de 1024 KB). No se pudo guardar — contacte al administrador para depurar datos antiguos de ese módulo.');
+    e.code='modulo-lleno';
+    throw e;
+  }
+  if(bytes>=FB_TAM_AVISO_BYTES){
+    const ahora=Date.now();
+    if(!window._fbAvisoTamanoEn[key]||ahora-window._fbAvisoTamanoEn[key]>60000){
+      window._fbAvisoTamanoEn[key]=ahora;
+      if(typeof toast==='function')toast('⚠️ El módulo "'+key+'" está cerca del límite de Firebase ('+kb.toFixed(0)+' KB de 1024 KB)','warning');
+    }
+  }
+  return bytes;
+}
+
+// Clasifica el error real de un guardado fallido, en vez del genérico "Sin conexión"
+function _fbClasificarError(e){
+  const code=(e&&e.code)||'';
+  const msg=((e&&e.message)||'').toLowerCase();
+  if(code==='modulo-lleno'){
+    return {corto:'Módulo lleno',titulo:'Módulo casi lleno en Firebase',mensaje:e.message};
+  }
+  if(code==='permission-denied'){
+    return {corto:'Sin permiso',titulo:'Sin permiso para guardar',mensaje:'Firebase rechazó el guardado por falta de permisos. Contacte al administrador del sistema.'};
+  }
+  if(code==='unauthenticated'){
+    return {corto:'Sesión expirada',titulo:'Sesión expirada',mensaje:'La sesión con Firebase expiró. Recargue la página e intente de nuevo.'};
+  }
+  if(code==='unavailable'||code==='deadline-exceeded'||code==='aborted'||code==='resource-exhausted'||
+     msg.includes('timeout')||msg.includes('unavailable')||msg.includes('network')||msg.includes('offline')||msg.includes('failed to fetch')){
+    return {corto:'Sin conexión',titulo:'Sin conexión a Firebase',mensaje:'No se pudo guardar por falta de conexión a internet. Verifique su conexión e intente de nuevo.'};
+  }
+  return {corto:'Error al guardar',titulo:'Error al guardar',mensaje:e&&e.message?e.message:'Ocurrió un error inesperado al guardar en Firebase.'};
+}
+
+// Un error pasajero (timeout, sin red, servidor ocupado) vale la pena reintentarlo;
+// uno de permisos, sesión o módulo lleno no cambia solo con reintentar
+function _fbEsErrorPasajero(e){
+  const code=(e&&e.code)||'';
+  const msg=((e&&e.message)||'').toLowerCase();
+  return code==='unavailable'||code==='deadline-exceeded'||code==='aborted'||code==='resource-exhausted'||
+    msg.includes('timeout')||msg.includes('unavailable')||msg.includes('network')||msg.includes('failed to fetch');
+}
+
+async function _fbGuardarIntento(key){
+  const _timeout=new Promise((_,reject)=>setTimeout(()=>{
+    const e=new Error('Tiempo de espera agotado guardando '+key);
+    e.code='deadline-exceeded';
+    reject(e);
+  },FB_SAVE_TIMEOUT_MS));
   const _guardar=async()=>{
     let val=DB[key]!==undefined?DB[key]:(key==='config'?{}:[]);
     // Para config: guardar logoData separado para evitar límite de tamaño
     if(key==='config'&&typeof val==='object'&&val!==null){
       const logo=val.logoData||'';
       const sinLogo=Object.assign({},val,{logoData:''});
+      _fbVerificarTamano(key,sinLogo);
       await _fbDB.collection(_fbCol).doc(key).set({valor:JSON.stringify(sinLogo)});
-      if(logo) await _fbDB.collection(_fbCol).doc('config_logo').set({valor:JSON.stringify(logo)});
+      if(logo){
+        _fbVerificarTamano('config_logo',logo);
+        await _fbDB.collection(_fbCol).doc('config_logo').set({valor:JSON.stringify(logo)});
+      }
     } else {
+      _fbVerificarTamano(key,val);
       await _fbDB.collection(_fbCol).doc(key).set({valor:JSON.stringify(val)});
     }
   };
   // NO silenciar errores — dejar que suban al indicador
   await Promise.race([_guardar(),_timeout]);
+}
+
+async function fbGuardar(key){
+  let intento=0;
+  while(true){
+    try{
+      await _fbGuardarIntento(key);
+      return;
+    }catch(e){
+      if(intento>=FB_SAVE_MAX_REINTENTOS||!_fbEsErrorPasajero(e))throw e;
+      intento++;
+      await new Promise(r=>setTimeout(r,800*intento));
+    }
+  }
 }
 
 // ══ CORRECCIÓN ÚNICA: cuenta guardada como "número — tipo" o "BANCO — número (tipo)" ══
@@ -15045,18 +15183,17 @@ async function fbCargar(){
 const _sDB_orig = sDB;
 window._fbActivo = false;
 window._fbCargado = false;
-function _mostrarErrorSinFirebase(){
+function _mostrarErrorSinFirebase(titulo,mensajeHtml){
   if(document.getElementById('fb-noconn-overlay'))return;
+  const _titulo=titulo||'Sin conexión a Firebase';
+  const _mensaje=mensajeHtml||'No es posible <strong>guardar, editar ni actualizar</strong> datos en este momento.<br>Verifique su conexión a internet o contacte al administrador.';
   const ov=document.createElement('div');
   ov.id='fb-noconn-overlay';
   ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px';
   ov.innerHTML=`<div style="background:#fff;border-radius:16px;padding:32px;max-width:420px;width:100%;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.35)">
     <div style="font-size:52px;margin-bottom:10px">🚫</div>
-    <div style="font-size:20px;font-weight:800;color:#dc2626;margin-bottom:8px">Sin conexión a Firebase</div>
-    <div style="font-size:14px;color:#4b5563;margin-bottom:16px;line-height:1.6">
-      No es posible <strong>guardar, editar ni actualizar</strong> datos en este momento.<br>
-      Verifique su conexión a internet o contacte al administrador.
-    </div>
+    <div style="font-size:20px;font-weight:800;color:#dc2626;margin-bottom:8px">${_titulo}</div>
+    <div style="font-size:14px;color:#4b5563;margin-bottom:16px;line-height:1.6">${_mensaje}</div>
     <div style="background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;padding:14px 16px;margin-bottom:22px;text-align:left">
       <div style="font-size:11px;font-weight:700;color:#92400e;text-transform:uppercase;margin-bottom:6px">📞 Administrador del sistema</div>
       <div style="font-size:16px;font-weight:800;color:#78350f">Edward Villa</div>
@@ -15104,10 +15241,12 @@ window.sDB = function(key){
   fbGuardar(key).then(()=>{
     if(dot) dot.style.background='#22c55e';
     if(txt) txt.textContent='✓ Firebase';
-  }).catch(()=>{
+  }).catch((e)=>{
+    const _c=_fbClasificarError(e);
     if(dot) dot.style.background='#ef4444';
-    if(txt) txt.textContent='Error al guardar';
-    _mostrarErrorSinFirebase();
+    if(txt) txt.textContent=_c.corto;
+    console.warn('Error guardando',key,':',e&&e.message);
+    _mostrarErrorSinFirebase(_c.titulo,_c.mensaje);
   });
 };
 
