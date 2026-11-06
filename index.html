@@ -5651,6 +5651,20 @@ function _calcularEspacioFirebase(){
     return {key,label:FB_LABELS_ESPACIO[key],kb,pct,color};
   }).sort((a,b)=>b.pct-a.pct);
 }
+// De qué está hecho el peso que queda en Gastos Vehículo: vehículos aún no vendidos
+// (inventario activo, normal que pese) vs. vendidos con saldo pendiente (lo único que,
+// si se salda, se archiva solo). Solo cuenta — no mueve ni cambia nada.
+function _desgloseGastosVehiculo(){
+  const todos=DB.gastosVehiculos||[];
+  let activos=0,vendidosPendientes=0,montoPendienteRD=0;
+  todos.forEach(g=>{
+    const v=DB.vehiculos.find(x=>x.id===g.vehiculoId);
+    if(!v||v.status!=='VENDIDO'){activos++;return;}
+    const pendiente=parseFloat(g.montoPendiente||0);
+    if(pendiente>0){vendidosPendientes++;montoPendienteRD+=aRD(pendiente,g.moneda,g.tasaCambio);}
+  });
+  return {total:todos.length,activos,vendidosPendientes,montoPendienteRD};
+}
 
 function renderBackup(){
   if(currentUser?.role!=='admin'){
@@ -5695,6 +5709,7 @@ function renderBackup(){
   ];
 
   const espacioFb=_calcularEspacioFirebase();
+  const desgloseGV=_desgloseGastosVehiculo();
 
   document.getElementById('page-backup').innerHTML=`
     <div class="page-header">
@@ -5750,6 +5765,11 @@ function renderBackup(){
             <div style="background:var(--gray2);border-radius:6px;height:10px;overflow:hidden">
               <div style="width:${m.pct}%;height:100%;background:${m.color};border-radius:6px"></div>
             </div>
+            ${m.key==='gastosVehiculos'?`
+            <div style="font-size:11px;color:var(--gray);margin-top:4px">
+              🚗 ${desgloseGV.activos} de vehículos aún no vendidos (normal que pesen)
+              ${desgloseGV.vendidosPendientes>0?` · ⚠️ ${desgloseGV.vendidosPendientes} vendidos con saldo pendiente (RD$ ${fmtMoneyDisplay(desgloseGV.montoPendienteRD)}) — al saldarse, se archivan solos`:' · ✅ ningún vendido con saldo pendiente'}
+            </div>`:''}
           </div>`).join('')}
       </div>
     </div>
