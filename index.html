@@ -15048,23 +15048,24 @@ function _fbEsErrorPasajero(e){
 }
 
 // ══ ARCHIVADO DE DATOS ANTIGUOS (Gastos Vehículo y Caja) ══
-// Los registros ya cerrados (vehículo vendido y pagado hace +1 año; movimientos de Caja
-// de años anteriores al actual) se guardan en un documento aparte de Firebase para que el
+// Los registros ya cerrados (gastos de vehículo vendido y 100% pagado; movimientos de Caja
+// de hace más de 90 días) se guardan en un documento aparte de Firebase para que el
 // documento "activo" no siga creciendo. Al cargar, ambos documentos se vuelven a unir en
 // memoria (DB.gastosVehiculos / DB.caja), así que reportes, búsquedas y totales no cambian.
 function _esGastoVehArchivable(g){
   if(!g||!g.fecha)return false;
   const v=DB.vehiculos.find(x=>x.id===g.vehiculoId);
   if(!v||v.status!=='VENDIDO')return false;
-  if(parseFloat(g.montoPendiente||0)>0)return false;
-  const unAnioAtras=new Date();
-  unAnioAtras.setFullYear(unAnioAtras.getFullYear()-1);
-  return new Date(g.fecha)<unAnioAtras;
+  // Vendido y 100% pagado = trato cerrado, ya no se vuelve a tocar: se archiva de inmediato
+  // (sin esperar un año, porque con el negocio recién empezado ningún registro llega a esa edad).
+  return parseFloat(g.montoPendiente||0)<=0;
 }
 function _esCajaArchivable(c){
   if(!c||!c.fecha)return false;
-  const anioReg=parseInt(String(c.fecha).slice(0,4));
-  return !!anioReg&&anioReg<new Date().getFullYear();
+  const DIAS_PARA_ARCHIVAR=90;
+  const limite=new Date();
+  limite.setDate(limite.getDate()-DIAS_PARA_ARCHIVAR);
+  return new Date(c.fecha)<limite;
 }
 const FB_CLAVES_ARCHIVABLES={
   gastosVehiculos:{archivoKey:'gastosVehiculos_archivo',esArchivable:_esGastoVehArchivable},
